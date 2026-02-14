@@ -1,0 +1,30 @@
+{
+  "name": "spark-agent-launcher",
+  "version": "0.1.0",
+  "description": "Install and run the spark CLI (Go binary) via npm",
+  "license": "MIT",
+  "bin": {
+    "spark": "bin/spark.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node bin/install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/REPO_OWNER/REPO_NAME.git"
+  },
+  "keywords": [
+    "spark",
+    "cli",
+    "agent",
+    "launcher"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

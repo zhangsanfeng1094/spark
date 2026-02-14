@@ -1,0 +1,36 @@
+version: 2
+
+project_name: spark
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: spark
+    main: ./cmd/spark
+    binary: spark
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: spark-binaries
+    ids:
+      - spark
+    formats:
+      - binary
+    name_template: "spark-{{ .Os }}-{{ .Arch }}"
+
+release:
+  draft: false
+  prerelease: auto
+
+checksum:
+  name_template: "checksums.txt"

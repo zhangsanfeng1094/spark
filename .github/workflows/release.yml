@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-binaries:
+    name: Release Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-npm:
+    name: Publish npm
+    runs-on: ubuntu-latest
+    needs: release-binaries
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify tag matches npm package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./npm/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) must match npm/package.json version ($PKG_VERSION)."
+            exit 1
+          fi
+
+      - name: Verify npm repository URL is configured
+        run: |
+          REPO_URL="$(node -p "require('./npm/package.json').repository.url || ''")"
+          if echo "$REPO_URL" | grep -q "REPO_OWNER/REPO_NAME"; then
+            echo "npm/package.json repository.url still contains placeholder REPO_OWNER/REPO_NAME."
+            exit 1
+          fi
+        working-directory: .
+
+      - name: Dry-run npm pack
+        run: npm pack --dry-run
+        working-directory: npm
+
+      - name: Publish to npm
+        run: npm publish --access public
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
