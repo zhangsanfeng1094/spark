@@ -35,18 +35,10 @@ const inferredReleaseBaseUrl = inferGitHubReleaseBaseUrl(pkg.repository);
 const releaseBaseUrl =
   process.env.SPARK_BINARY_BASE_URL ||
   inferredReleaseBaseUrl ||
-  "https://github.com/REPO_OWNER/REPO_NAME/releases/download";
+  "https://github.com/zhangsanfeng1094/spark/releases/download";
 const releaseVersion = process.env.SPARK_BINARY_VERSION || `v${pkg.version}`;
 const directUrl = process.env.SPARK_BINARY_URL;
 const url = directUrl || `${releaseBaseUrl}/${releaseVersion}/${binaryName}`;
-
-if (!directUrl && releaseBaseUrl.includes("REPO_OWNER/REPO_NAME")) {
-  console.error(
-    "SPARK_BINARY_BASE_URL is not configured. Set it to your GitHub releases base URL,\n" +
-      "for example: https://github.com/<owner>/<repo>/releases/download"
-  );
-  process.exit(1);
-}
 
 const distDir = path.join(__dirname, "..", "dist");
 const outputName = `spark${ext}`;

@@ -17,7 +17,7 @@ Upload release binaries with these names:
 
 1. Update `package.json`:
 - `name` (your npm package name)
-- `repository.url`
+- `repository.url` (already set to this repository by default)
 - `version` (should match the binary release tag)
 
 2. Ensure binaries are available in GitHub Releases under:
@@ -38,10 +38,15 @@ node bin/spark.js --help
 ## Publish
 
 ```bash
-cd agent-launch/npm
-npm login
-npm publish --access public
+# 1) bump npm/package.json version (for example: 0.2.0)
+# 2) create matching git tag and push
+git tag v0.2.0
+git push origin v0.2.0
 ```
+
+`release.yml` will automatically:
+- build/upload binaries to GitHub Releases
+- publish `npm/` to npm registry
 
 ## GitHub Actions auto release
 
@@ -59,6 +64,8 @@ Required setup:
 
 2. Add GitHub Actions secret:
 - `NPM_TOKEN` (an npm automation token with publish permission)
+
+3. npm package must not have this version already published (workflow now detects this and skips duplicate publish on reruns)
 
 ## User install
 
