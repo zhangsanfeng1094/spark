@@ -48,6 +48,20 @@ git push origin v0.2.0
 - build/upload binaries to GitHub Releases
 - publish `npm/` to npm registry
 
+### One-command release (recommended)
+
+From repository root:
+
+```bash
+scripts/release-npm.sh patch --push
+```
+
+This script will:
+- verify current branch is `main`
+- verify git working tree is clean
+- run `npm version` in `npm/` (creates commit + tag `vX.Y.Z`)
+- push `main` and tags to trigger GitHub Actions release
+
 ## GitHub Actions auto release
 
 Repository workflow: `../.github/workflows/release.yml`

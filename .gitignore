@@ -1,5 +1,5 @@
 ollama
 .agents
 npm/.npm-cache
-spark
+/spark
 .gocache
