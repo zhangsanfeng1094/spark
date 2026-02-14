@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"spark/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
+	"spark/internal/config"
 )
 
 func (m *pmModel) runAction(action int) tea.Cmd {
@@ -78,7 +78,7 @@ func (m *pmModel) save() {
 		return
 	}
 
-	newName := strings.TrimSpace(m.fields[0].value)
+	newName := strings.TrimSpace(m.fields[pmFieldProfileName].value)
 	if newName == "" {
 		m.status = "Profile Name cannot be empty."
 		return
@@ -119,14 +119,10 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 	if p == nil {
 		return fmt.Errorf("profile not found")
 	}
-	p.OpenAIBaseURL = strings.TrimSpace(m.fields[2].value)
-	p.OpenAIAPIKey = strings.TrimSpace(m.fields[3].value)
-	p.OpenAIOrg = strings.TrimSpace(m.fields[4].value)
-	p.OpenAIProject = strings.TrimSpace(m.fields[5].value)
-	p.AnthropicBaseURL = strings.TrimSpace(m.fields[6].value)
-	p.AnthropicAuthToken = strings.TrimSpace(m.fields[7].value)
-	p.Models = parseCSVModels(m.fields[8].value)
-	p.DefaultModel = strings.TrimSpace(m.fields[9].value)
+	p.OpenAIBaseURL = strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value)
+	p.OpenAIAPIKey = strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value)
+	p.Models = parseCSVModels(m.fields[pmFieldModelsCSV].value)
+	p.DefaultModel = strings.TrimSpace(m.fields[pmFieldDefaultModel].value)
 	return nil
 }
 
@@ -144,23 +140,19 @@ func (m *pmModel) testConnection() tea.Cmd {
 		return nil
 	}
 
-	model := strings.TrimSpace(m.fields[9].value) // Default Model field
+	model := strings.TrimSpace(m.fields[pmFieldDefaultModel].value)
 	if model == "" {
-		models := parseCSVModels(m.fields[8].value) // Models (CSV) field
+		models := parseCSVModels(m.fields[pmFieldModelsCSV].value)
 		if len(models) > 0 {
 			model = models[0]
 		}
 	}
 
 	profileCopy := &config.Profile{
-		OpenAIBaseURL:      strings.TrimSpace(m.fields[2].value),
-		OpenAIAPIKey:       strings.TrimSpace(m.fields[3].value),
-		OpenAIOrg:          strings.TrimSpace(m.fields[4].value),
-		OpenAIProject:      strings.TrimSpace(m.fields[5].value),
-		AnthropicBaseURL:   strings.TrimSpace(m.fields[6].value),
-		AnthropicAuthToken: strings.TrimSpace(m.fields[7].value),
-		Models:             parseCSVModels(m.fields[8].value),
-		DefaultModel:       model,
+		OpenAIBaseURL: strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
+		OpenAIAPIKey:  strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
+		Models:        parseCSVModels(m.fields[pmFieldModelsCSV].value),
+		DefaultModel:  model,
 	}
 
 	return func() tea.Msg {

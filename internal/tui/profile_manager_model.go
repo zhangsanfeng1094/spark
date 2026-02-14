@@ -101,6 +101,15 @@ const (
 	pmInputWidth = 42
 )
 
+const (
+	pmFieldProfileName = iota
+	pmFieldProviderType
+	pmFieldOpenAIBaseURL
+	pmFieldOpenAIAPIKey
+	pmFieldModelsCSV
+	pmFieldDefaultModel
+)
+
 type pmField struct {
 	label    string
 	value    string
@@ -163,9 +172,6 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 		cfg: cfg,
 		providerOptions: []pmProviderOption{
 			{name: "OpenAI", kind: "openai"},
-			{name: "Anthropic (Claude)", kind: "anthropic"},
-			{name: "Ollama (Local)", kind: "ollama"},
-			{name: "OpenAI Compatible", kind: "compatible"},
 		},
 		focusArea:   pmFocusProfiles,
 		focusField:  0,

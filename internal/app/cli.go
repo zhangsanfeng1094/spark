@@ -6,10 +6,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"spark/internal/config"
 	"spark/internal/integrations"
 	"spark/internal/tui"
-	"github.com/spf13/cobra"
 )
 
 func NewRootCmd() *cobra.Command {
@@ -201,8 +201,16 @@ func launchIntegration(name, modelFlag, profileFlag string, configOnly bool, pas
 			if err != nil {
 				return err
 			}
+			model = strings.TrimSpace(model)
+			if model == "" {
+				return fmt.Errorf("model cannot be empty")
+			}
 			models = []string{model}
 		}
+	}
+
+	if len(models) == 0 || strings.TrimSpace(models[0]) == "" {
+		return fmt.Errorf("model cannot be empty")
 	}
 
 	cfg.UpsertModelHistory(models[0])

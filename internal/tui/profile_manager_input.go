@@ -94,15 +94,21 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		m.moveDown()
 		return nil, true
 	case "left", "h":
-		if m.focusArea == pmFocusActions && m.actionIndex > 0 {
-			m.actionIndex--
+		if m.focusArea == pmFocusActions {
+			if m.actionIndex > 0 {
+				m.actionIndex--
+			}
+			return nil, true
 		}
-		return nil, true
+		return nil, false
 	case "right", "l":
-		if m.focusArea == pmFocusActions && m.actionIndex < pmActSave {
-			m.actionIndex++
+		if m.focusArea == pmFocusActions {
+			if m.actionIndex < pmActSave {
+				m.actionIndex++
+			}
+			return nil, true
 		}
-		return nil, true
+		return nil, false
 	case "enter":
 		if m.focusArea == pmFocusActions {
 			return m.runAction(m.actionIndex), true

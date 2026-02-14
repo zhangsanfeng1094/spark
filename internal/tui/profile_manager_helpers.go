@@ -13,7 +13,9 @@ func (m *pmModel) switchProfile(next int) {
 		return
 	}
 	cur := m.currentProfileName()
-	_ = m.applyFieldsToProfile(cur)
+	if err := m.applyFieldsToProfile(cur); err != nil {
+		m.status = "Warning: failed to apply current fields: " + err.Error()
+	}
 	m.selected = next
 	m.loadSelectedProfileFields()
 }
@@ -62,10 +64,6 @@ func (m *pmModel) loadSelectedProfileFields() {
 		{label: "Provider Type", value: detectProviderType(p), readOnly: true},
 		{label: "OpenAI Base URL", value: p.OpenAIBaseURL},
 		{label: "OpenAI API Key", value: p.OpenAIAPIKey, masked: true},
-		{label: "OpenAI Org", value: p.OpenAIOrg},
-		{label: "OpenAI Project", value: p.OpenAIProject},
-		{label: "Anthropic Base URL", value: p.AnthropicBaseURL},
-		{label: "Anthropic Token", value: p.AnthropicAuthToken, masked: true},
 		{label: "Models (CSV)", value: strings.Join(p.Models, ", ")},
 		{label: "Default Model", value: p.DefaultModel},
 	}
@@ -79,12 +77,9 @@ func (m *pmModel) loadSelectedProfileFields() {
 
 func detectProviderType(p *config.Profile) string {
 	base := strings.ToLower(strings.TrimSpace(p.OpenAIBaseURL))
-	anth := strings.TrimSpace(p.AnthropicBaseURL)
 	switch {
 	case strings.Contains(base, "localhost:11434") || strings.Contains(base, "127.0.0.1:11434"):
 		return "Ollama"
-	case anth != "":
-		return "Anthropic"
 	case base == "https://api.openai.com/v1" || base == "":
 		return "OpenAI"
 	default:
