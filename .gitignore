@@ -1,4 +1,4 @@
 ollama
-agent-launch/.agents
-agent-launch/npm/.npm-cache
+.agents
+npm/.npm-cache
 spark
