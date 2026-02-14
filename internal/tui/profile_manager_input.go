@@ -18,6 +18,7 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) {
 		m.focusArea = pmFocusActions
 		if x <= leftX1+9 {
 			m.actionIndex = pmActAdd
+			m.modalIgnoreNextClick = true
 			m.runAction(pmActAdd)
 		} else {
 			m.actionIndex = pmActDel

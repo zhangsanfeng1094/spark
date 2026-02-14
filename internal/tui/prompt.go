@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -172,8 +173,8 @@ func (m *selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case tea.MouseMsg:
-		// 鼠标点击处理
-		if msg.Type == tea.MouseRelease {
+		// 部分 Windows 终端更稳定地上报 MouseLeft，而不是 MouseRelease。
+		if isPrimaryClick(msg.Type) {
 			// 计算点击的行数（减去标题和空行的偏移量）
 			// View 渲染顺序: Title(1行) + 空行(1行) + Options...
 			clickY := msg.Y - 2
@@ -278,7 +279,7 @@ func (m *confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case tea.MouseMsg:
-		if msg.Type == tea.MouseRelease {
+		if isPrimaryClick(msg.Type) {
 			clickY := msg.Y - 2 // 标题偏移
 			if clickY >= 0 && clickY < len(m.options) {
 				m.cursor = clickY
@@ -288,6 +289,13 @@ func (m *confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func isPrimaryClick(t tea.MouseEventType) bool {
+	if runtime.GOOS == "windows" {
+		return t == tea.MouseLeft
+	}
+	return t == tea.MouseRelease
 }
 
 func (m *confirmModel) View() string {

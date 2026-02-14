@@ -53,14 +53,15 @@ git push origin v0.2.0
 From repository root:
 
 ```bash
-scripts/release-npm.sh patch --push
+scripts/release-npm.sh
 ```
 
 This script will:
+- ask you to choose release type (`patch` / `minor` / `major` / `prerelease` / custom version)
 - verify current branch is `main`
 - verify git working tree is clean
 - run `npm version` in `npm/` (creates commit + tag `vX.Y.Z`)
-- push `main` and tags to trigger GitHub Actions release
+- ask whether to push `main` and tags (or pass `--push` to auto-push)
 
 ## GitHub Actions auto release
 
@@ -87,3 +88,28 @@ Required setup:
 npm install -g <your-package-name>
 spark
 ```
+
+## Troubleshooting
+
+### npm publish returns `E403` with 2FA message
+
+Use an npm token that can publish in CI:
+- preferred: `Automation` token
+- or granular token with package `publish` permission and `Bypass 2FA` enabled
+
+Then update GitHub Actions secret `NPM_TOKEN` and publish a new version tag.
+
+### npm install fails with `getaddrinfo EAI_AGAIN github.com`
+
+This means DNS/network to GitHub is temporarily unavailable. Retry install, or set a reachable binary URL:
+
+```bash
+SPARK_BINARY_URL="https://<reachable-url>/spark-linux-amd64" npm install -g spark-agent-launcher
+```
+
+You can also set `SPARK_BINARY_BASE_URL` to your mirror release base URL.
+
+### Windows mouse click behavior
+
+The TUI click handling is tuned for Windows terminal mouse events (`MouseLeft`) and Unix-like terminals (`MouseRelease`).
+If click behavior is abnormal, test first in Windows Terminal / PowerShell, then update to the latest release binary.

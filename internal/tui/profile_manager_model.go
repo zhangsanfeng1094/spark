@@ -142,6 +142,9 @@ type pmModel struct {
 
 	modalOpen   bool
 	modalCursor int
+	// When modal is opened by a mouse click, ignore the next click event
+	// to avoid immediately closing the modal from the same physical click.
+	modalIgnoreNextClick bool
 
 	providerOptions []pmProviderOption
 
@@ -212,10 +215,14 @@ func (m *pmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if msg.Type != tea.MouseRelease {
+		if !isPrimaryClick(msg.Type) {
 			return m, nil
 		}
 		if m.modalOpen {
+			if m.modalIgnoreNextClick {
+				m.modalIgnoreNextClick = false
+				return m, nil
+			}
 			m.handleModalMouse(msg)
 		} else {
 			m.handleMainMouse(msg)

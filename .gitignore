@@ -3,3 +3,5 @@ ollama
 npm/.npm-cache
 /spark
 .gocache
+.gomodcache
+dist
