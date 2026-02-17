@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"spark/internal/config"
 )
@@ -40,14 +41,35 @@ func anthropicBaseURL(profile *config.Profile) string {
 	return "http://localhost:11434"
 }
 
+func resolveClaudeModel(profile *config.Profile, model string) string {
+	m := strings.TrimSpace(model)
+	if m != "" {
+		return m
+	}
+	if profile == nil {
+		return ""
+	}
+	if strings.TrimSpace(profile.DefaultModel) != "" {
+		return strings.TrimSpace(profile.DefaultModel)
+	}
+	if len(profile.Models) > 0 {
+		return strings.TrimSpace(profile.Models[0])
+	}
+	return ""
+}
+
 func (c *Claude) Run(profile *config.Profile, model string, args []string) error {
 	claudePath, err := c.findPath()
 	if err != nil {
 		return fmt.Errorf("claude is not installed, install from https://code.claude.com/docs/en/quickstart")
 	}
+	effectiveModel := resolveClaudeModel(profile, model)
+	if effectiveModel == "" {
+		return fmt.Errorf("claude model is empty: configure profile default_model or pass --model")
+	}
 	cmdArgs := []string{}
-	if model != "" {
-		cmdArgs = append(cmdArgs, "--model", model)
+	if effectiveModel != "" {
+		cmdArgs = append(cmdArgs, "--model", effectiveModel)
 	}
 	cmdArgs = append(cmdArgs, args...)
 	baseURL := anthropicBaseURL(profile)
@@ -59,7 +81,7 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 	// If user explicitly configured Anthropic endpoint, respect it.
 	// Otherwise, use OpenAI profile config via local Anthropic->OpenAI proxy.
 	if profile == nil || profile.AnthropicBaseURL == "" {
-		proxy, err := startAnthropicCompatProxy(profileBase(profile), profileKey(profile))
+		proxy, err := startAnthropicCompatProxy(profileBase(profile), profileKey(profile), effectiveModel)
 		if err != nil {
 			return err
 		}
@@ -84,10 +106,10 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 		"ANTHROPIC_BASE_URL=" + baseURL,
 		"ANTHROPIC_API_KEY=" + apiKey,
 		"ANTHROPIC_AUTH_TOKEN=" + token,
-		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + model,
-		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + model,
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + model,
-		"CLAUDE_CODE_SUBAGENT_MODEL=" + model,
+		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + effectiveModel,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + effectiveModel,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + effectiveModel,
+		"CLAUDE_CODE_SUBAGENT_MODEL=" + effectiveModel,
 	}
 	return runCmd(claudePath, cmdArgs, env)
 }

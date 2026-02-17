@@ -272,6 +272,10 @@ func (p *responsesCompatProxy) forwardNonStream(w http.ResponseWriter, upResp *h
 	}
 	if usage, ok := chatUsageToResponsesUsage(chatResp); ok {
 		out["usage"] = usage
+		p.logf("non-stream usage present response_id=%s model=%s %s", id, model, formatUsageForLog(usage))
+	} else {
+		p.logf("non-stream usage missing response_id=%s model=%s", id, model)
+		p.warnf("upstream non-stream response missing token usage")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
@@ -731,6 +735,10 @@ func (p *responsesCompatProxy) forwardStream(w http.ResponseWriter, upResp *http
 	}
 	if len(lastUsage) > 0 {
 		resp["usage"] = lastUsage
+		p.logf("stream usage present response_id=%s model=%s %s", respID, model, formatUsageForLog(lastUsage))
+	} else {
+		p.logf("stream usage missing response_id=%s model=%s chunks=%d saw_done=%t", respID, model, chunkCount, sawDone)
+		p.warnf("upstream stream completed without token usage")
 	}
 	writeSSE(w, map[string]any{
 		"type":     "response.completed",
@@ -786,13 +794,15 @@ func chatUsageToResponsesUsage(payload map[string]any) (map[string]any, bool) {
 		return nil, false
 	}
 
+	// Codex expects all TokenUsage fields at top level (all required per Rust struct)
 	out := map[string]any{
-		"input_tokens":  input,
-		"output_tokens": output,
+		"input_tokens":            input,
+		"output_tokens":           output,
+		"total_tokens":            total,
+		"cached_input_tokens":     cached,
+		"reasoning_output_tokens": reasoning,
 	}
-	if total > 0 {
-		out["total_tokens"] = total
-	}
+	// Keep *_details for backward compatibility
 	if cached > 0 {
 		out["input_tokens_details"] = map[string]any{
 			"cached_tokens": cached,
@@ -810,36 +820,58 @@ func mergeResponsesUsage(base map[string]any, incoming map[string]any) map[strin
 	if len(base) == 0 {
 		return incoming
 	}
-	out := map[string]any{
-		"input_tokens":  intFromAny(base["input_tokens"]),
-		"output_tokens": intFromAny(base["output_tokens"]),
-	}
-	if v := intFromAny(base["total_tokens"]); v > 0 {
-		out["total_tokens"] = v
-	}
-	if v := intFromAny(mapValue(base["input_tokens_details"])["cached_tokens"]); v > 0 {
-		out["input_tokens_details"] = map[string]any{"cached_tokens": v}
-	}
-	if v := intFromAny(mapValue(base["output_tokens_details"])["reasoning_tokens"]); v > 0 {
-		out["output_tokens_details"] = map[string]any{"reasoning_tokens": v}
-	}
+	// Always include all required TokenUsage fields (Codex expects them all)
+	out := map[string]any{}
 
+	// Start with base values, prefer non-zero incoming values
+	out["input_tokens"] = intFromAny(base["input_tokens"])
 	if v := intFromAny(incoming["input_tokens"]); v > 0 {
 		out["input_tokens"] = v
 	}
+
+	out["output_tokens"] = intFromAny(base["output_tokens"])
 	if v := intFromAny(incoming["output_tokens"]); v > 0 {
 		out["output_tokens"] = v
 	}
+
+	out["total_tokens"] = intFromAny(base["total_tokens"])
 	if v := intFromAny(incoming["total_tokens"]); v > 0 {
 		out["total_tokens"] = v
 	}
+
+	out["cached_input_tokens"] = intFromAny(base["cached_input_tokens"])
+	if v := intFromAny(incoming["cached_input_tokens"]); v > 0 {
+		out["cached_input_tokens"] = v
+	}
 	if v := intFromAny(mapValue(incoming["input_tokens_details"])["cached_tokens"]); v > 0 {
+		out["cached_input_tokens"] = v
 		out["input_tokens_details"] = map[string]any{"cached_tokens": v}
 	}
+
+	out["reasoning_output_tokens"] = intFromAny(base["reasoning_output_tokens"])
+	if v := intFromAny(incoming["reasoning_output_tokens"]); v > 0 {
+		out["reasoning_output_tokens"] = v
+	}
 	if v := intFromAny(mapValue(incoming["output_tokens_details"])["reasoning_tokens"]); v > 0 {
+		out["reasoning_output_tokens"] = v
 		out["output_tokens_details"] = map[string]any{"reasoning_tokens": v}
 	}
+
 	return out
+}
+func formatUsageForLog(usage map[string]any) string {
+	input := intFromAny(usage["input_tokens"])
+	output := intFromAny(usage["output_tokens"])
+	total := intFromAny(usage["total_tokens"])
+	cached := intFromAny(usage["cached_input_tokens"])
+	if cached == 0 {
+		cached = intFromAny(mapValue(usage["input_tokens_details"])["cached_tokens"])
+	}
+	reasoning := intFromAny(usage["reasoning_output_tokens"])
+	if reasoning == 0 {
+		reasoning = intFromAny(mapValue(usage["output_tokens_details"])["reasoning_tokens"])
+	}
+	return fmt.Sprintf("usage input=%d output=%d total=%d cached=%d reasoning=%d", input, output, total, cached, reasoning)
 }
 
 func writeSSE(w io.Writer, payload any) {
