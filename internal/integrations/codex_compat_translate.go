@@ -21,6 +21,13 @@ func responsesToChatCompletions(req map[string]any) map[string]any {
 		"messages": messages,
 		"stream":   boolValue(req["stream"]),
 	}
+	if boolValue(req["stream"]) {
+		// Request upstream usage in stream mode so response.completed can carry
+		// stable token accounting for Codex.
+		out["stream_options"] = map[string]any{
+			"include_usage": true,
+		}
+	}
 	if max, ok := intValue(req["max_output_tokens"]); ok {
 		out["max_tokens"] = max
 	}

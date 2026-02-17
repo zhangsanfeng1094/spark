@@ -28,6 +28,10 @@ func TestResponsesToChatCompletions_StringInput(t *testing.T) {
 	if out["stream"] != true {
 		t.Fatalf("stream mismatch: %v", out["stream"])
 	}
+	streamOptions, ok := out["stream_options"].(map[string]any)
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage mismatch: %#v", out["stream_options"])
+	}
 	if out["max_tokens"] != 32 {
 		t.Fatalf("max_tokens mismatch: %v", out["max_tokens"])
 	}
@@ -487,8 +491,14 @@ func TestChatUsageToResponsesUsage_MapsDetails(t *testing.T) {
 	if intFromAny(mapValue(got["input_tokens_details"])["cached_tokens"]) != 3 {
 		t.Fatalf("expected cached_tokens in input_tokens_details, got %#v", got["input_tokens_details"])
 	}
+	if intFromAny(got["cached_input_tokens"]) != 3 {
+		t.Fatalf("expected cached_input_tokens=3, got %#v", got["cached_input_tokens"])
+	}
 	if intFromAny(mapValue(got["output_tokens_details"])["reasoning_tokens"]) != 2 {
 		t.Fatalf("expected reasoning_tokens in output_tokens_details, got %#v", got["output_tokens_details"])
+	}
+	if intFromAny(got["reasoning_output_tokens"]) != 2 {
+		t.Fatalf("expected reasoning_output_tokens=2, got %#v", got["reasoning_output_tokens"])
 	}
 }
 
@@ -520,8 +530,14 @@ func TestMergeResponsesUsage_PrefersIncomingNonZero(t *testing.T) {
 	if intFromAny(mapValue(got["input_tokens_details"])["cached_tokens"]) != 2 {
 		t.Fatalf("expected cached_tokens=2, got %#v", got)
 	}
+	if intFromAny(got["cached_input_tokens"]) != 2 {
+		t.Fatalf("expected cached_input_tokens=2, got %#v", got)
+	}
 	if intFromAny(mapValue(got["output_tokens_details"])["reasoning_tokens"]) != 1 {
 		t.Fatalf("expected reasoning_tokens=1, got %#v", got)
+	}
+	if intFromAny(got["reasoning_output_tokens"]) != 1 {
+		t.Fatalf("expected reasoning_output_tokens=1, got %#v", got)
 	}
 }
 

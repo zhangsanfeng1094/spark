@@ -20,13 +20,14 @@ type anthropicCompatProxy struct {
 	baseURL      string
 	upstreamBase string
 	upstreamKey  string
+	preferredModel string
 	client       *http.Client
 	logFile      io.WriteCloser
 	logMu        sync.Mutex
 	logPath      string
 }
 
-func startAnthropicCompatProxy(upstreamBase, upstreamKey string) (*anthropicCompatProxy, error) {
+func startAnthropicCompatProxy(upstreamBase, upstreamKey, preferredModel string) (*anthropicCompatProxy, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
@@ -40,6 +41,7 @@ func startAnthropicCompatProxy(upstreamBase, upstreamKey string) (*anthropicComp
 		baseURL:      "http://" + ln.Addr().String(),
 		upstreamBase: strings.TrimRight(upstreamBase, "/"),
 		upstreamKey:  upstreamKey,
+		preferredModel: strings.TrimSpace(preferredModel),
 		client:       newStreamingHTTPClient(),
 		logFile:      logFile,
 		logPath:      logPath,
@@ -99,6 +101,13 @@ func (p *anthropicCompatProxy) handleMessages(w http.ResponseWriter, r *http.Req
 	}
 	stream := boolValue(req["stream"])
 	chatReq["stream"] = stream
+	if p.preferredModel != "" {
+		incomingModel := stringValue(chatReq["model"])
+		if incomingModel != p.preferredModel {
+			p.logf("override chat model incoming=%q preferred=%q", incomingModel, p.preferredModel)
+		}
+		chatReq["model"] = p.preferredModel
+	}
 	p.logf("mapped chat request=%s", mustJSONForLog(chatReq))
 	executor := newAnthropicChatExecutor(p)
 	resp, err := executor.Do(r.Context(), chatReq)
@@ -115,29 +124,82 @@ func (p *anthropicCompatProxy) handleMessages(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writer := newAnthropicResponseWriter(p)
+	requestedModel := stringValue(chatReq["model"])
 	if stream {
-		writer.WriteStream(w, resp.Body, stringValue(req["model"]))
+		writer.WriteStream(w, resp.Body, requestedModel)
 		return
 	}
-	writer.WriteNonStream(w, resp, stringValue(req["model"]))
+	writer.WriteNonStream(w, resp, requestedModel)
 }
 
 func (p *anthropicCompatProxy) postChatCompletions(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
-	body, err := json.Marshal(chatReq)
+	doPost := func(payload map[string]any) (*http.Response, error) {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		url := p.upstreamBase + "/chat/completions"
+		upReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		upReq.Header.Set("Content-Type", "application/json")
+		upReq.Header.Set("Accept-Encoding", "identity")
+		if p.upstreamKey != "" {
+			upReq.Header.Set("Authorization", "Bearer "+p.upstreamKey)
+		}
+		return p.client.Do(upReq)
+	}
+
+	resp, err := doPost(chatReq)
 	if err != nil {
 		return nil, err
 	}
-	url := p.upstreamBase + "/chat/completions"
-	upReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+	if resp.StatusCode < 400 {
+		return resp, nil
 	}
-	upReq.Header.Set("Content-Type", "application/json")
-	upReq.Header.Set("Accept-Encoding", "identity")
-	if p.upstreamKey != "" {
-		upReq.Header.Set("Authorization", "Bearer "+p.upstreamKey)
+
+	data, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	bodyText := string(data)
+	lowerBody := strings.ToLower(bodyText)
+	model := stringValue(chatReq["model"])
+
+	if model == "" || !strings.Contains(lowerBody, "unknown model") {
+		resp.Body = io.NopCloser(bytes.NewReader(data))
+		resp.ContentLength = int64(len(data))
+		return resp, nil
 	}
-	return p.client.Do(upReq)
+
+	retryModel := retryUnknownModelVariant(model)
+	if retryModel == "" || retryModel == model {
+		resp.Body = io.NopCloser(bytes.NewReader(data))
+		resp.ContentLength = int64(len(data))
+		return resp, nil
+	}
+
+	p.logf("unknown model from upstream, retrying with variant original=%q retry=%q", model, retryModel)
+	retryReq := make(map[string]any, len(chatReq))
+	for k, v := range chatReq {
+		retryReq[k] = v
+	}
+	retryReq["model"] = retryModel
+	return doPost(retryReq)
+}
+
+func retryUnknownModelVariant(model string) string {
+	m := strings.TrimSpace(model)
+	if m == "" {
+		return ""
+	}
+	// Claude Code may lower-case model IDs; some gateways are case-sensitive.
+	if strings.ToLower(m) != m {
+		return ""
+	}
+	if idx := strings.Index(m, "/"); idx > 0 && idx < len(m)-1 {
+		return m[:idx+1] + strings.ToUpper(m[idx+1:])
+	}
+	return strings.ToUpper(m)
 }
 
 func (p *anthropicCompatProxy) writeAnthropicStreamFromMessage(w http.ResponseWriter, msg map[string]any) {
