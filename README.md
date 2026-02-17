@@ -240,21 +240,28 @@ go build -o spark ./cmd/spark
 go run ./cmd/spark
 ```
 
-### Release binaries for npm wrapper
+### Release flow
 
-The repository includes `./.goreleaser.yml` with binary names expected by `npm/bin/install.js`:
+Detailed SOP: `docs/deployment-workflow.md`
 
+Recommended flow:
+1. Merge changes to `main`.
+2. `Release Please` (`.github/workflows/release-please.yml`) opens or updates a release PR.
+3. Merge the release PR to create and push tag `vX.Y.Z`.
+4. `Release` (`.github/workflows/release.yml`) runs on that tag and publishes:
+   - GitHub release binaries via GoReleaser
+   - npm package from `npm/`
+
+Manual fallback:
+- `release.yml` also supports `workflow_dispatch` with an existing tag input (for example `v0.1.6`).
+
+The GoReleaser output names are defined in `./.goreleaser.yml` and must stay aligned with `npm/bin/install.js`:
 - `spark-darwin-amd64`
 - `spark-darwin-arm64`
 - `spark-linux-amd64`
 - `spark-linux-arm64`
 - `spark-windows-amd64.exe`
 - `spark-windows-arm64.exe`
-
-```bash
-# Tag and push first, then run:
-goreleaser release --clean
-```
 
 ### Project Structure
 

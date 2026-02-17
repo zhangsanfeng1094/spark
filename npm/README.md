@@ -37,18 +37,15 @@ node bin/spark.js --help
 
 ## Publish
 
-```bash
-# 1) bump npm/package.json version (for example: 0.2.0)
-# 2) create matching git tag and push
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-`release.yml` will automatically:
-- build/upload binaries to GitHub Releases
-- publish `npm/` to npm registry
+Recommended:
+1. Merge feature/fix PRs into `main`.
+2. Wait for `Release Please` (`.github/workflows/release-please.yml`) to open/update the release PR.
+3. Merge the release PR. It updates version files and creates tag `vX.Y.Z`.
+4. `Release` (`.github/workflows/release.yml`) publishes binaries and npm automatically.
 
 ### One-command release (recommended)
+
+Legacy/manual path (if you do not use release PR flow):
 
 From repository root:
 
@@ -70,6 +67,7 @@ Repository workflow: `../.github/workflows/release.yml`
 It runs on tags like `v0.1.0` and will:
 1. Build and upload binaries with GoReleaser
 2. Publish the npm package from `npm/`
+3. It can also be triggered manually with `workflow_dispatch` by passing an existing tag
 
 Required setup:
 
@@ -77,8 +75,9 @@ Required setup:
 - `version` must match the git tag (without leading `v`)
 - `repository.url` must be a real GitHub repo URL
 
-2. Add GitHub Actions secret:
-- `NPM_TOKEN` (an npm automation token with publish permission)
+2. npm auth for publish:
+- current: `NPM_TOKEN` secret (automation token with publish permission)
+- preferred target: npm Trusted Publishing (OIDC), then token can be removed
 
 3. npm package must not have this version already published (workflow now detects this and skips duplicate publish on reruns)
 
