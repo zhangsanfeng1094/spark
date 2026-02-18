@@ -17,11 +17,18 @@
 发布前必须满足：
 1. 默认发布分支为 `main`
 2. GitHub Actions 已启用
-3. 仓库设置 `Settings -> Actions -> General` 中，`Workflow permissions` 已设置为 `Read and write permissions`
-4. 仓库设置中已勾选 `Allow GitHub Actions to create and approve pull requests`（若依赖 `GITHUB_TOKEN` 创建 Release PR）
-5. 已配置 Actions Secret：`NPM_TOKEN`（npm 发布）
-6. 建议配置 Actions Secret：`RELEASE_PLEASE_TOKEN`（用于 `Release Please` 创建/更新 PR，推荐使用 PAT）
-7. `npm/package.json` 中 `repository.url` 已配置为真实仓库地址
+3. 已配置 Actions Secret：`RELEASE_PLEASE_TOKEN`（PAT 或 GitHub App token，用于 `Release Please` 创建/更新 PR 和推送 release tag）
+4. 已配置 Actions Secret：`NPM_TOKEN`（npm 发布）
+5. `npm/package.json` 中 `repository.url` 已配置为真实仓库地址
+
+Token 角色说明（重要）：
+- `RELEASE_PLEASE_TOKEN`：只用于 `release-please` 阶段（建/更 Release PR、创建 tag）
+- `GITHUB_TOKEN`：用于 `release.yml` 内发布 GitHub Release 资产（GoReleaser）
+- `NPM_TOKEN`：用于 `npm publish`
+
+为什么 `release-please` 不直接用 `GITHUB_TOKEN`：
+- 官方说明：由 `GITHUB_TOKEN` 产生的事件（例如创建的 release/tag）不会触发新的 workflow 运行
+- 你的链路是 `release-please` 打 tag -> `release.yml` 监听 tag，因此必须使用 PAT/GitHub App token
 
 ## 3. 标准发布流程（推荐）
 
@@ -104,11 +111,10 @@ scripts/release-npm.sh patch --push
 - 处理：正常行为；若需重新发布请使用新版本号
 
 4. `release-please failed: GitHub Actions is not permitted to create or approve pull requests`
-- 原因：`GITHUB_TOKEN` 在仓库设置中没有 PR 写权限，或未允许 Actions 创建 PR
+- 原因：`release-please` 使用的 token 没有足够权限创建/更新 PR
 - 处理：
-  - 开启仓库 `Workflow permissions: Read and write`
-  - 开启 `Allow GitHub Actions to create and approve pull requests`
-  - 配置 `RELEASE_PLEASE_TOKEN`（PAT，需具备 `contents` 和 `pull requests` 写权限），工作流会优先使用该 token
+  - 配置 `RELEASE_PLEASE_TOKEN`（PAT 或 GitHub App token）
+  - 确保该 token 具备仓库 `contents` 与 `pull requests` 写权限
 
 ## 8. 后续优化建议
 
