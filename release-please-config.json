@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
+      "bootstrap-sha": "44546b0f23b1b110e6204909595131c2eb5a5480",
       "include-component-in-tag": false,
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
