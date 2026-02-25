@@ -35,8 +35,10 @@ func TestModelConnection(profile *config.Profile, model string) TestResult {
 		baseURL = "https://" + baseURL
 	}
 
-	// Construct chat completions endpoint
-	endpoint := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	apiTypes := config.ParseOpenAIAPITypes(profile.OpenAIAPIType)
+	if len(apiTypes) == 0 {
+		apiTypes = []string{config.OpenAIAPITypeAuto}
+	}
 
 	apiKey := strings.TrimSpace(profile.OpenAIAPIKey)
 
@@ -52,57 +54,89 @@ func TestModelConnection(profile *config.Profile, model string) TestResult {
 		}
 	}
 
-	reqBody := map[string]interface{}{
-		"model": testModel,
-		"messages": []map[string]string{
-			{"role": "user", "content": "ping"},
-		},
-		"max_tokens": 1,
-		"stream":     false,
-	}
-
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return TestResult{Success: false, Message: "Failed to build request: " + err.Error()}
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return TestResult{Success: false, Message: "Failed to create request: " + err.Error()}
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	if profile.OpenAIOrg != "" {
-		req.Header.Set("OpenAI-Organization", profile.OpenAIOrg)
-	}
-
 	client := &http.Client{Timeout: 20 * time.Second}
-	start := time.Now()
-	resp, err := client.Do(req)
-	latency := time.Since(start)
 
-	if err != nil {
-		if urlErr, ok := err.(*url.Error); ok && urlErr.Timeout() {
+	endpointOrder := make([]string, 0, 2)
+	if apiTypes[0] == config.OpenAIAPITypeAuto || config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeResponses) {
+		endpointOrder = append(endpointOrder, config.OpenAIAPITypeResponses)
+	}
+	if apiTypes[0] == config.OpenAIAPITypeAuto || config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeChatCompletions) {
+		endpointOrder = append(endpointOrder, config.OpenAIAPITypeChatCompletions)
+	}
+	if len(endpointOrder) == 0 {
+		endpointOrder = append(endpointOrder, config.OpenAIAPITypeResponses)
+	}
+
+	var respBody []byte
+	var latency time.Duration
+	var lastErr error
+	var lastStatus int
+	for _, endpointType := range endpointOrder {
+		endpoint := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+		reqBody := map[string]interface{}{
+			"model": testModel,
+			"messages": []map[string]string{
+				{"role": "user", "content": "ping"},
+			},
+			"max_tokens": 1,
+			"stream":     false,
+		}
+		if endpointType == config.OpenAIAPITypeResponses {
+			endpoint = strings.TrimSuffix(baseURL, "/") + "/responses"
+			reqBody = map[string]interface{}{
+				"model":             testModel,
+				"input":             "ping",
+				"max_output_tokens": 1,
+				"stream":            false,
+			}
+		}
+
+		bodyBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			return TestResult{Success: false, Message: "Failed to build request: " + err.Error()}
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return TestResult{Success: false, Message: "Failed to create request: " + err.Error()}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		if profile.OpenAIOrg != "" {
+			req.Header.Set("OpenAI-Organization", profile.OpenAIOrg)
+		}
+
+		start := time.Now()
+		resp, err := client.Do(req)
+		latency = time.Since(start)
+		if err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		respBody, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		lastStatus = resp.StatusCode
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return TestResult{
+				Success: true,
+				Message: fmt.Sprintf("OK (model: %s)", testModel),
+				Latency: latency,
+			}
+		}
+	}
+
+	if lastErr != nil {
+		if urlErr, ok := lastErr.(*url.Error); ok && urlErr.Timeout() {
 			return TestResult{Success: false, Message: "Connection timeout (15s)", Latency: latency}
 		}
-		return TestResult{Success: false, Message: "Connection failed: " + err.Error(), Latency: latency}
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return TestResult{
-			Success: true,
-			Message: fmt.Sprintf("OK (model: %s)", testModel),
-			Latency: latency,
-		}
+		return TestResult{Success: false, Message: "Connection failed: " + lastErr.Error(), Latency: latency}
 	}
 
 	// Try to extract error message from response
@@ -122,7 +156,100 @@ func TestModelConnection(profile *config.Profile, model string) TestResult {
 
 	return TestResult{
 		Success: false,
-		Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))),
+		Message: fmt.Sprintf("HTTP %d: %s", lastStatus, strings.TrimSpace(string(respBody))),
 		Latency: latency,
 	}
+}
+
+func DetectOpenAIAPIType(profile *config.Profile, model string) (string, error) {
+	if profile == nil {
+		return "", fmt.Errorf("profile is nil")
+	}
+	baseURL := strings.TrimSpace(profile.OpenAIBaseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("base URL is empty")
+	}
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		baseURL = "https://" + baseURL
+	}
+
+	testModel := model
+	if testModel == "" {
+		testModel = "gpt-3.5-turbo"
+		if len(profile.Models) > 0 {
+			testModel = profile.Models[0]
+		}
+		if profile.DefaultModel != "" {
+			testModel = profile.DefaultModel
+		}
+	}
+
+	apiKey := strings.TrimSpace(profile.OpenAIAPIKey)
+	client := &http.Client{Timeout: 12 * time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	responsesStatus, responsesErr := probeOpenAIEndpoint(
+		ctx,
+		client,
+		strings.TrimSuffix(baseURL, "/")+"/responses",
+		apiKey,
+		map[string]any{
+			"model":             testModel,
+			"input":             "ping",
+			"max_output_tokens": 1,
+			"stream":            false,
+		},
+	)
+	if responsesErr == nil && responsesStatus >= 200 && responsesStatus < 300 {
+		return config.OpenAIAPITypeResponses, nil
+	}
+
+	chatStatus, chatErr := probeOpenAIEndpoint(
+		ctx,
+		client,
+		strings.TrimSuffix(baseURL, "/")+"/chat/completions",
+		apiKey,
+		map[string]any{
+			"model": testModel,
+			"messages": []map[string]string{
+				{"role": "user", "content": "ping"},
+			},
+			"max_tokens": 1,
+			"stream":     false,
+		},
+	)
+	if chatErr == nil && chatStatus >= 200 && chatStatus < 300 {
+		return config.OpenAIAPITypeChatCompletions, nil
+	}
+
+	if responsesErr != nil {
+		return "", responsesErr
+	}
+	if chatErr != nil {
+		return "", chatErr
+	}
+	return "", fmt.Errorf("probe failed (responses=%d chat_completions=%d)", responsesStatus, chatStatus)
+}
+
+func probeOpenAIEndpoint(ctx context.Context, client *http.Client, endpoint, apiKey string, body map[string]any) (int, error) {
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
 }

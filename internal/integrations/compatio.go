@@ -195,6 +195,16 @@ func openProxyLogFile(envKey, defaultFileName, prefix string) (io.WriteCloser, s
 	return w, rollingPath, nil
 }
 
+func appendLaunchRouteLog(line string) string {
+	w, path, err := openProxyLogFile("AGENT_LAUNCH_ROUTE_LOG", "launch-route.log", "route")
+	if err != nil {
+		return ""
+	}
+	defer w.Close()
+	_, _ = fmt.Fprintf(w, "%s\n", strings.TrimSpace(line))
+	return path
+}
+
 func newStreamingHTTPClient() *http.Client {
 	tr, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {

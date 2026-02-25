@@ -35,6 +35,9 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) {
 			if i < len(m.fieldStartRelY) && fieldY >= m.fieldStartRelY[i] && fieldY <= m.fieldEndRelY[i] {
 				m.focusArea = pmFocusFields
 				m.focusField = i
+				if i == pmFieldOpenAIAPIType {
+					m.openAPITypeModal()
+				}
 				return
 			}
 		}
@@ -56,15 +59,50 @@ func (m *pmModel) handleModalMouse(msg tea.MouseMsg) {
 	x, y := msg.X, msg.Y
 	if x < m.modalX || x >= m.modalX+m.modalW || y < m.modalY || y >= m.modalY+m.modalH {
 		m.modalOpen = false
+		m.modalKind = pmModalKindNone
 		return
 	}
 
 	optionStartY := m.modalY + 4
 	idx := y - optionStartY
-	if idx >= 0 && idx < len(m.providerOptions) {
-		m.modalCursor = idx
-		m.createProfileFromModal()
+	switch m.modalKind {
+	case pmModalKindAddProfile:
+		if idx >= 0 && idx < len(m.providerOptions) {
+			m.modalCursor = idx
+			m.createProfileFromModal()
+		}
+	case pmModalKindOpenAIAPIType:
+		if idx >= 0 && idx < len(m.apiTypeOptions) {
+			m.modalCursor = idx
+			m.toggleAPITypeOptionAtCursor()
+		}
 	}
+}
+
+func (m *pmModel) openFieldModalIfNeeded() bool {
+	if m.focusArea != pmFocusFields {
+		return false
+	}
+	if m.focusField == pmFieldOpenAIAPIType {
+		m.openAPITypeModal()
+		return true
+	}
+	return false
+}
+
+func (m *pmModel) handleFieldShortcut(msg tea.KeyMsg) bool {
+	if m.focusArea != pmFocusFields {
+		return false
+	}
+	if m.focusField != pmFieldOpenAIAPIType {
+		return false
+	}
+	switch msg.String() {
+	case " ", "space":
+		m.openAPITypeModal()
+		return true
+	}
+	return false
 }
 
 func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
@@ -113,9 +151,17 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "enter":
 		if m.focusArea == pmFocusActions {
 			return m.runAction(m.actionIndex), true
-		} else if m.focusArea == pmFocusProfiles {
-			m.focusArea = pmFocusFields
 		}
+		if m.focusArea == pmFocusProfiles {
+			m.focusArea = pmFocusFields
+			return nil, true
+		}
+		if m.openFieldModalIfNeeded() {
+			return nil, true
+		}
+		return nil, true
+	}
+	if m.handleFieldShortcut(msg) {
 		return nil, true
 	}
 	return nil, false
@@ -209,15 +255,29 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) {
 	switch msg.String() {
 	case "esc", "q":
 		m.modalOpen = false
+		m.modalKind = pmModalKindNone
 	case "up", "k":
 		if m.modalCursor > 0 {
 			m.modalCursor--
 		}
 	case "down", "j":
-		if m.modalCursor < len(m.providerOptions)-1 {
+		maxItems := len(m.providerOptions)
+		if m.modalKind == pmModalKindOpenAIAPIType {
+			maxItems = len(m.apiTypeOptions)
+		}
+		if m.modalCursor < maxItems-1 {
 			m.modalCursor++
 		}
+	case " ", "space":
+		if m.modalKind == pmModalKindOpenAIAPIType {
+			m.toggleAPITypeOptionAtCursor()
+		}
 	case "enter":
-		m.createProfileFromModal()
+		switch m.modalKind {
+		case pmModalKindAddProfile:
+			m.createProfileFromModal()
+		case pmModalKindOpenAIAPIType:
+			m.confirmAPITypeSelection()
+		}
 	}
 }

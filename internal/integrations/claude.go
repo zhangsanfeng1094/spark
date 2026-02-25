@@ -58,6 +58,29 @@ func resolveClaudeModel(profile *config.Profile, model string) string {
 	return ""
 }
 
+func resolveAnthropicAPIKey(profile *config.Profile) (string, string) {
+	if k := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); k != "" {
+		return k, "env.ANTHROPIC_API_KEY"
+	}
+	if k := strings.TrimSpace(profileKey(profile)); k != "" {
+		return k, "profile.openai_api_key"
+	}
+	return "", "none"
+}
+
+func resolveAnthropicAuthToken(profile *config.Profile, usingCompatProxy bool) (string, string) {
+	if t := strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")); t != "" {
+		return t, "env.ANTHROPIC_AUTH_TOKEN"
+	}
+	if profile != nil && strings.TrimSpace(profile.AnthropicAuthToken) != "" {
+		return strings.TrimSpace(profile.AnthropicAuthToken), "profile.anthropic_auth_token"
+	}
+	if usingCompatProxy {
+		return "ollama", "compat.default"
+	}
+	return "ollama", "default"
+}
+
 func (c *Claude) Run(profile *config.Profile, model string, args []string) error {
 	claudePath, err := c.findPath()
 	if err != nil {
@@ -73,15 +96,17 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 	}
 	cmdArgs = append(cmdArgs, args...)
 	baseURL := anthropicBaseURL(profile)
-	apiKey := profileKey(profile)
+	apiKey, apiKeySource := resolveAnthropicAPIKey(profile)
 	token := ""
+	tokenSource := "none"
 	usingCompatProxy := false
 	quietCompatStderr := shouldQuietCompatStderr()
+	upstreamKey, upstreamKeySource := resolveOpenAIAPIKey(profileKey(profile))
 
 	// If user explicitly configured Anthropic endpoint, respect it.
 	// Otherwise, use OpenAI profile config via local Anthropic->OpenAI proxy.
 	if profile == nil || profile.AnthropicBaseURL == "" {
-		proxy, err := startAnthropicCompatProxy(profileBase(profile), profileKey(profile), effectiveModel)
+		proxy, err := startAnthropicCompatProxy(profileBase(profile), upstreamKey, effectiveModel)
 		if err != nil {
 			return err
 		}
@@ -89,27 +114,37 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 		baseURL = proxy.BaseURL()
 		// Match Ollama's Claude launch behavior: key is required by client but ignored by backend.
 		apiKey = ""
-		token = "ollama"
 		usingCompatProxy = true
+		token, tokenSource = resolveAnthropicAuthToken(profile, usingCompatProxy)
+		routeLine := fmt.Sprintf("[route] mode=compat integration=claude upstream=%s proxy=%s log=%s upstream_key_source=%s upstream_key_set=%t", profileBase(profile), baseURL, proxy.LogPath(), upstreamKeySource, strings.TrimSpace(upstreamKey) != "")
+		routeLogPath := appendLaunchRouteLog(routeLine)
+		if routeLogPath != "" {
+			routeLine = routeLine + " route_log=" + routeLogPath
+		}
+		fmt.Fprintln(os.Stderr, routeLine)
 		if !quietCompatStderr {
 			fmt.Fprintf(os.Stderr, "Using anthropic compatibility adapter: %s -> %s\n", baseURL, profileBase(profile))
 			fmt.Fprintf(os.Stderr, "Anthropic compatibility adapter log file: %s\n", proxy.LogPath())
 		}
-	}
-	if profile != nil && profile.AnthropicAuthToken != "" {
-		token = profile.AnthropicAuthToken
-	}
-	if !usingCompatProxy && token == "" {
-		token = "ollama"
+	} else {
+		token, tokenSource = resolveAnthropicAuthToken(profile, usingCompatProxy)
+		routeLine := fmt.Sprintf("[route] mode=direct integration=claude upstream=%s api_key_source=%s api_key_set=%t token_source=%s token_set=%t", baseURL, apiKeySource, strings.TrimSpace(apiKey) != "", tokenSource, strings.TrimSpace(token) != "")
+		routeLogPath := appendLaunchRouteLog(routeLine)
+		if routeLogPath != "" {
+			routeLine = routeLine + " route_log=" + routeLogPath
+		}
+		fmt.Fprintln(os.Stderr, routeLine)
 	}
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + baseURL,
-		"ANTHROPIC_API_KEY=" + apiKey,
 		"ANTHROPIC_AUTH_TOKEN=" + token,
 		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + effectiveModel,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + effectiveModel,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + effectiveModel,
 		"CLAUDE_CODE_SUBAGENT_MODEL=" + effectiveModel,
+	}
+	if strings.TrimSpace(apiKey) != "" {
+		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
 	}
 	return runCmd(claudePath, cmdArgs, env)
 }

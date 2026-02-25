@@ -80,8 +80,8 @@ func (m *pmModel) renderLeftPane() string {
 	}
 	lines = append(lines, "")
 
-	addBtn := pmBtnStyle.Render("+ Add")
-	delBtn := pmBtnStyle.Render("- Del")
+	addBtn := pmBtnStyle.Render("Add")
+	delBtn := pmBtnStyle.Render("Del")
 	if m.focusArea == pmFocusActions {
 		if m.actionIndex == pmActAdd {
 			addBtn = pmActiveBtnStyle.Render("+ Add")
@@ -164,24 +164,47 @@ func (m *pmModel) renderRightPane() string {
 func (m *pmModel) overlayModal(bg string) string {
 	_ = bg
 	var options []string
-	options = append(options, "Select Provider Type:")
-	options = append(options, "")
-
-	for i, opt := range m.providerOptions {
-		prefix := "   "
-		style := pmItemStyle
-		if i == m.modalCursor {
-			prefix = " ➤ "
-			style = pmSelectedItemStyle
+	switch m.modalKind {
+	case pmModalKindOpenAIAPIType:
+		options = append(options, "Select OpenAI API Types:")
+		options = append(options, "")
+		for i, opt := range m.apiTypeOptions {
+			cursor := "   "
+			style := pmItemStyle
+			if i == m.modalCursor {
+				cursor = " ➤ "
+				style = pmSelectedItemStyle
+			}
+			check := "[ ]"
+			if m.apiTypeSelected[opt] {
+				check = "[x]"
+			}
+			options = append(options, style.Render(cursor+check+" "+opt))
 		}
-		options = append(options, style.Render(prefix+opt.name))
+		options = append(options, "")
+		options = append(options, "[Space] Toggle  [Enter] Confirm  [Esc] Cancel")
+	default:
+		options = append(options, "Select Provider Type:")
+		options = append(options, "")
+		for i, opt := range m.providerOptions {
+			prefix := "   "
+			style := pmItemStyle
+			if i == m.modalCursor {
+				prefix = " ➤ "
+				style = pmSelectedItemStyle
+			}
+			options = append(options, style.Render(prefix+opt.name))
+		}
+		options = append(options, "")
+		options = append(options, "[Enter] Confirm  [Esc] Cancel")
 	}
 
-	options = append(options, "")
-	options = append(options, "[Enter] Confirm  [Esc] Cancel")
-
 	modalContent := lipgloss.JoinVertical(lipgloss.Left, options...)
-	modalBox := pmModalStyle.Width(40).Render(modalContent)
+	modalWidth := 40
+	if m.modalKind == pmModalKindOpenAIAPIType {
+		modalWidth = 52
+	}
+	modalBox := pmModalStyle.Width(modalWidth).Render(modalContent)
 	m.modalW = lipgloss.Width(modalBox)
 	m.modalH = lipgloss.Height(modalBox)
 	m.modalX = (m.width - m.modalW) / 2

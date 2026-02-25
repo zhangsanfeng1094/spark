@@ -28,6 +28,27 @@ func (m *pmModel) runAction(action int) tea.Cmd {
 func (m *pmModel) openAddModal() {
 	m.modalOpen = true
 	m.modalCursor = 0
+	m.modalKind = pmModalKindAddProfile
+}
+
+func (m *pmModel) openAPITypeModal() {
+	m.modalOpen = true
+	m.modalKind = pmModalKindOpenAIAPIType
+	m.modalCursor = 0
+	m.apiTypeSelected = map[string]bool{}
+	current := config.ParseOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value)
+	for _, apiType := range current {
+		m.apiTypeSelected[apiType] = true
+	}
+	if len(m.apiTypeSelected) == 0 {
+		m.apiTypeSelected[config.OpenAIAPITypeAuto] = true
+	}
+	for i, opt := range m.apiTypeOptions {
+		if m.apiTypeSelected[opt] {
+			m.modalCursor = i
+			break
+		}
+	}
 }
 
 func (m *pmModel) createProfileFromModal() {
@@ -38,8 +59,53 @@ func (m *pmModel) createProfileFromModal() {
 	m.selectByName(name)
 	m.loadSelectedProfileFields()
 	m.modalOpen = false
+	m.modalKind = pmModalKindNone
 	m.dirty = true
 	m.status = fmt.Sprintf("Created '%s'. Edit fields and Save.", name)
+}
+
+func (m *pmModel) toggleAPITypeOptionAtCursor() {
+	if m.modalCursor < 0 || m.modalCursor >= len(m.apiTypeOptions) {
+		return
+	}
+	selected := m.apiTypeOptions[m.modalCursor]
+	if selected == config.OpenAIAPITypeAuto {
+		m.apiTypeSelected = map[string]bool{
+			config.OpenAIAPITypeAuto: true,
+		}
+		return
+	}
+	delete(m.apiTypeSelected, config.OpenAIAPITypeAuto)
+	if m.apiTypeSelected[selected] {
+		delete(m.apiTypeSelected, selected)
+	} else {
+		m.apiTypeSelected[selected] = true
+	}
+	if len(m.apiTypeSelected) == 0 {
+		m.apiTypeSelected[config.OpenAIAPITypeAuto] = true
+	}
+}
+
+func (m *pmModel) confirmAPITypeSelection() {
+	selected := make([]string, 0, 2)
+	if m.apiTypeSelected[config.OpenAIAPITypeResponses] {
+		selected = append(selected, config.OpenAIAPITypeResponses)
+	}
+	if m.apiTypeSelected[config.OpenAIAPITypeChatCompletions] {
+		selected = append(selected, config.OpenAIAPITypeChatCompletions)
+	}
+	value := config.OpenAIAPITypeAuto
+	if len(selected) == 1 {
+		value = selected[0]
+	} else if len(selected) == 2 {
+		value = strings.Join(selected, ",")
+	}
+	m.fields[pmFieldOpenAIAPIType].value = value
+	m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(value))
+	m.modalOpen = false
+	m.modalKind = pmModalKindNone
+	m.dirty = true
+	m.status = "OpenAI API Type updated. Save to persist."
 }
 
 func (m *pmModel) deleteSelectedProfile() {
@@ -77,6 +143,16 @@ func (m *pmModel) save() {
 		m.status = "Error: " + err.Error()
 		return
 	}
+	detectedAPIType := ""
+	if p := m.cfg.Profiles[oldName]; p != nil && config.CanonicalizeOpenAIAPITypes(p.OpenAIAPIType) == config.OpenAIAPITypeAuto {
+		detected, err := DetectOpenAIAPIType(p, strings.TrimSpace(m.fields[pmFieldDefaultModel].value))
+		if err == nil && detected != "" {
+			p.OpenAIAPIType = detected
+			detectedAPIType = detected
+			m.fields[pmFieldOpenAIAPIType].value = detected
+			m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(detected))
+		}
+	}
 
 	newName := strings.TrimSpace(m.fields[pmFieldProfileName].value)
 	if newName == "" {
@@ -111,6 +187,10 @@ func (m *pmModel) save() {
 	m.selectByName(newName)
 	m.loadSelectedProfileFields()
 	m.dirty = false
+	if detectedAPIType != "" {
+		m.status = fmt.Sprintf("Configuration saved successfully. Detected OpenAI API Type: %s.", detectedAPIType)
+		return
+	}
 	m.status = "Configuration saved successfully."
 }
 
@@ -121,6 +201,7 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 	}
 	p.OpenAIBaseURL = strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value)
 	p.OpenAIAPIKey = strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value)
+	p.OpenAIAPIType = config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value)
 	p.Models = parseCSVModels(m.fields[pmFieldModelsCSV].value)
 	p.DefaultModel = strings.TrimSpace(m.fields[pmFieldDefaultModel].value)
 	return nil
@@ -151,6 +232,7 @@ func (m *pmModel) testConnection() tea.Cmd {
 	profileCopy := &config.Profile{
 		OpenAIBaseURL: strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
 		OpenAIAPIKey:  strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
+		OpenAIAPIType: config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value),
 		Models:        parseCSVModels(m.fields[pmFieldModelsCSV].value),
 		DefaultModel:  model,
 	}

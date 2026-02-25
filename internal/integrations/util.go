@@ -81,6 +81,16 @@ func profileKey(profile *config.Profile) string {
 	return profile.OpenAIAPIKey
 }
 
+func profileOpenAIAPIType(profile *config.Profile) string {
+	if profile == nil {
+		return config.OpenAIAPITypeAuto
+	}
+	if canonical := config.CanonicalizeOpenAIAPITypes(profile.OpenAIAPIType); canonical != "" {
+		return canonical
+	}
+	return config.OpenAIAPITypeAuto
+}
+
 func firstModel(models []string) (string, error) {
 	if len(models) == 0 || models[0] == "" {
 		return "", fmt.Errorf("no models selected")

@@ -64,6 +64,7 @@ func (m *pmModel) loadSelectedProfileFields() {
 		{label: "Provider Type", value: detectProviderType(p), readOnly: true},
 		{label: "OpenAI Base URL", value: p.OpenAIBaseURL},
 		{label: "OpenAI API Key", value: p.OpenAIAPIKey, masked: true},
+		{label: "OpenAI API Type", value: displayOpenAIAPIType(p.OpenAIAPIType), readOnly: true},
 		{label: "Models (CSV)", value: strings.Join(p.Models, ", ")},
 		{label: "Default Model", value: p.DefaultModel},
 	}
@@ -73,6 +74,14 @@ func (m *pmModel) loadSelectedProfileFields() {
 	if m.focusField >= len(m.fields) {
 		m.focusField = len(m.fields) - 1
 	}
+}
+
+func displayOpenAIAPIType(v string) string {
+	canonical := config.CanonicalizeOpenAIAPITypes(v)
+	if canonical == "" {
+		return config.OpenAIAPITypeAuto
+	}
+	return canonical
 }
 
 func detectProviderType(p *config.Profile) string {

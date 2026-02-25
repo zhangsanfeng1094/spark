@@ -192,6 +192,24 @@ func TestShouldRetryWithMinimalChatReq(t *testing.T) {
 	}
 }
 
+func TestShouldFallbackFromResponses(t *testing.T) {
+	if !shouldFallbackFromResponses(http.StatusNotFound, []byte(`{"error":"not found"}`)) {
+		t.Fatal("expected fallback on 404")
+	}
+	if !shouldFallbackFromResponses(http.StatusMethodNotAllowed, []byte(`{"error":"method not allowed"}`)) {
+		t.Fatal("expected fallback on 405")
+	}
+	if !shouldFallbackFromResponses(http.StatusBadRequest, []byte(`{"error":{"message":"unknown parameter: input"}}`)) {
+		t.Fatal("expected fallback for responses-only field rejection")
+	}
+	if shouldFallbackFromResponses(http.StatusUnauthorized, []byte(`{"error":"unauthorized"}`)) {
+		t.Fatal("unexpected fallback on auth error")
+	}
+	if shouldFallbackFromResponses(http.StatusBadRequest, []byte(`{"error":{"message":"invalid api key"}}`)) {
+		t.Fatal("unexpected fallback on generic bad request")
+	}
+}
+
 func TestUltraMinimalChatCompletionsRequest(t *testing.T) {
 	chatReq := map[string]any{
 		"model": "GLM-4.7",

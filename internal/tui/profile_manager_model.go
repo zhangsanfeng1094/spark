@@ -106,6 +106,7 @@ const (
 	pmFieldProviderType
 	pmFieldOpenAIBaseURL
 	pmFieldOpenAIAPIKey
+	pmFieldOpenAIAPIType
 	pmFieldModelsCSV
 	pmFieldDefaultModel
 )
@@ -122,6 +123,12 @@ type pmProviderOption struct {
 	name string
 	kind string
 }
+
+const (
+	pmModalKindNone = iota
+	pmModalKindAddProfile
+	pmModalKindOpenAIAPIType
+)
 
 type pmModel struct {
 	cfg *config.RootConfig
@@ -142,11 +149,14 @@ type pmModel struct {
 
 	modalOpen   bool
 	modalCursor int
+	modalKind   int
 	// When modal is opened by a mouse click, ignore the next click event
 	// to avoid immediately closing the modal from the same physical click.
 	modalIgnoreNextClick bool
 
 	providerOptions []pmProviderOption
+	apiTypeOptions  []string
+	apiTypeSelected map[string]bool
 
 	leftContentX     int
 	leftContentY     int
@@ -176,10 +186,16 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 		providerOptions: []pmProviderOption{
 			{name: "OpenAI", kind: "openai"},
 		},
-		focusArea:   pmFocusProfiles,
-		focusField:  0,
-		actionIndex: pmActSave,
-		status:      "Ready. Press [Tab] to navigate, [Enter] to select.",
+		apiTypeOptions: []string{
+			config.OpenAIAPITypeAuto,
+			config.OpenAIAPITypeResponses,
+			config.OpenAIAPITypeChatCompletions,
+		},
+		apiTypeSelected: map[string]bool{},
+		focusArea:       pmFocusProfiles,
+		focusField:      0,
+		actionIndex:     pmActSave,
+		status:          "Ready. Press [Tab] to navigate, [Enter] to select.",
 	}
 	m.refreshNames()
 	m.selectByName(cfg.DefaultProfile)
