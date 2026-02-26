@@ -36,14 +36,27 @@ func TestResolveModelsPrecedence(t *testing.T) {
 	}
 
 	got = resolveModels("", profile)
-	want = []string{"profile-model-a", "profile-model-b"}
+	want = []string{"profile-default-model", "profile-model-a", "profile-model-b"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("profile models precedence mismatch, got %v want %v", got, want)
+		t.Fatalf("default model precedence mismatch, got %v want %v", got, want)
 	}
 
 	got = resolveModels("", &config.Profile{DefaultModel: "profile-model"})
 	want = []string{"profile-model"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("default model fallback mismatch, got %v want %v", got, want)
+	}
+}
+
+func TestResolveModelsDefaultModelDedupAndReorder(t *testing.T) {
+	profile := &config.Profile{
+		Models:       []string{"model-a", "model-b", "model-a"},
+		DefaultModel: "model-b",
+	}
+
+	got := resolveModels("", profile)
+	want := []string{"model-b", "model-a"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("default model reorder mismatch, got %v want %v", got, want)
 	}
 }

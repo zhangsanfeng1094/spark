@@ -977,18 +977,32 @@ func mergeResponsesUsage(base map[string]any, incoming map[string]any) map[strin
 		out["total_tokens"] = v
 	}
 
-	out["cached_input_tokens"] = intFromAny(base["cached_input_tokens"])
+	baseCached := intFromAny(base["cached_input_tokens"])
+	if baseCached == 0 {
+		baseCached = intFromAny(mapValue(base["input_tokens_details"])["cached_tokens"])
+	}
+	out["cached_input_tokens"] = baseCached
 	if v := intFromAny(incoming["cached_input_tokens"]); v > 0 {
 		out["cached_input_tokens"] = v
+	}
+	if v := intFromAny(mapValue(base["input_tokens_details"])["cached_tokens"]); v > 0 {
+		out["input_tokens_details"] = map[string]any{"cached_tokens": v}
 	}
 	if v := intFromAny(mapValue(incoming["input_tokens_details"])["cached_tokens"]); v > 0 {
 		out["cached_input_tokens"] = v
 		out["input_tokens_details"] = map[string]any{"cached_tokens": v}
 	}
 
-	out["reasoning_output_tokens"] = intFromAny(base["reasoning_output_tokens"])
+	baseReasoning := intFromAny(base["reasoning_output_tokens"])
+	if baseReasoning == 0 {
+		baseReasoning = intFromAny(mapValue(base["output_tokens_details"])["reasoning_tokens"])
+	}
+	out["reasoning_output_tokens"] = baseReasoning
 	if v := intFromAny(incoming["reasoning_output_tokens"]); v > 0 {
 		out["reasoning_output_tokens"] = v
+	}
+	if v := intFromAny(mapValue(base["output_tokens_details"])["reasoning_tokens"]); v > 0 {
+		out["output_tokens_details"] = map[string]any{"reasoning_tokens": v}
 	}
 	if v := intFromAny(mapValue(incoming["output_tokens_details"])["reasoning_tokens"]); v > 0 {
 		out["reasoning_output_tokens"] = v

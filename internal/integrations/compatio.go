@@ -89,6 +89,12 @@ type dailyRollingLogWriter struct {
 	currentPath string
 }
 
+var (
+	launchRouteLogMu     sync.Mutex
+	launchRouteLogWriter io.WriteCloser
+	launchRouteLogPath   string
+)
+
 func newDailyRollingLogWriter(basePath string, keepDays int) (*dailyRollingLogWriter, string, error) {
 	if keepDays <= 0 {
 		keepDays = 7
@@ -179,6 +185,10 @@ func (w *dailyRollingLogWriter) cleanupLocked(now time.Time) {
 }
 
 func openProxyLogFile(envKey, defaultFileName, prefix string) (io.WriteCloser, string, error) {
+	return openProxyLogFileWithInit(envKey, defaultFileName, prefix, true)
+}
+
+func openProxyLogFileWithInit(envKey, defaultFileName, prefix string, writeInitLine bool) (io.WriteCloser, string, error) {
 	logPath := strings.TrimSpace(os.Getenv(envKey))
 	if logPath == "" {
 		home, err := os.UserHomeDir()
@@ -191,16 +201,32 @@ func openProxyLogFile(envKey, defaultFileName, prefix string) (io.WriteCloser, s
 	if err != nil {
 		return nil, "", err
 	}
-	_, _ = fmt.Fprintf(w, "%s [%s] logger initialized\n", time.Now().Format(time.RFC3339), prefix)
+	if writeInitLine {
+		_, _ = fmt.Fprintf(w, "%s [%s] logger initialized\n", time.Now().Format(time.RFC3339), prefix)
+	}
 	return w, rollingPath, nil
 }
 
+func launchRouteLogger() (io.WriteCloser, string, error) {
+	launchRouteLogMu.Lock()
+	defer launchRouteLogMu.Unlock()
+	if launchRouteLogWriter != nil {
+		return launchRouteLogWriter, launchRouteLogPath, nil
+	}
+	w, path, err := openProxyLogFileWithInit("AGENT_LAUNCH_ROUTE_LOG", "launch-route.log", "route", false)
+	if err != nil {
+		return nil, "", err
+	}
+	launchRouteLogWriter = w
+	launchRouteLogPath = path
+	return launchRouteLogWriter, launchRouteLogPath, nil
+}
+
 func appendLaunchRouteLog(line string) string {
-	w, path, err := openProxyLogFile("AGENT_LAUNCH_ROUTE_LOG", "launch-route.log", "route")
+	w, path, err := launchRouteLogger()
 	if err != nil {
 		return ""
 	}
-	defer w.Close()
 	_, _ = fmt.Fprintf(w, "%s\n", strings.TrimSpace(line))
 	return path
 }

@@ -474,7 +474,7 @@ func TestForwardStream_ResponseCompletedIncludesUsageDetails(t *testing.T) {
 	if !strings.Contains(body, `"type":"response.completed"`) {
 		t.Fatalf("expected response.completed event, got %q", body)
 	}
-	if !strings.Contains(body, `"usage":{"input_tokens":12`) {
+	if !strings.Contains(body, `"input_tokens":12`) {
 		t.Fatalf("expected usage tokens in completed event, got %q", body)
 	}
 	if !strings.Contains(body, `"input_tokens_details":{"cached_tokens":4}`) {

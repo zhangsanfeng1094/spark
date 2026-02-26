@@ -184,11 +184,11 @@ func Load() (*RootConfig, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
-	normalize(&cfg)
+	Normalize(&cfg)
 	return &cfg, nil
 }
 
-func normalize(cfg *RootConfig) {
+func Normalize(cfg *RootConfig) {
 	if cfg.Version == 0 {
 		cfg.Version = currentVersion
 	}
@@ -214,8 +214,29 @@ func normalize(cfg *RootConfig) {
 	}
 }
 
+func NormalizeModels(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, m := range in {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		if _, ok := seen[m]; ok {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	return out
+}
+
+func ParseModelsCSV(csv string) []string {
+	return NormalizeModels(strings.Split(csv, ","))
+}
+
 func Save(cfg *RootConfig) error {
-	normalize(cfg)
+	Normalize(cfg)
 	path, err := ConfigPath()
 	if err != nil {
 		return err

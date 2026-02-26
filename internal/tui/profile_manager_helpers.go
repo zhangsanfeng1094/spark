@@ -59,20 +59,58 @@ func (m *pmModel) loadSelectedProfileFields() {
 		p = &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1"}
 		m.cfg.Profiles[name] = p
 	}
+	m.modelsDraft = config.NormalizeModels(p.Models)
+	m.defaultModel = strings.TrimSpace(p.DefaultModel)
+	if m.defaultModel == "" && len(m.modelsDraft) > 0 {
+		m.defaultModel = m.modelsDraft[0]
+	}
+	if m.defaultModel != "" {
+		found := false
+		for _, mdl := range m.modelsDraft {
+			if mdl == m.defaultModel {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.modelsDraft = append([]string{m.defaultModel}, m.modelsDraft...)
+			m.modelsDraft = config.NormalizeModels(m.modelsDraft)
+		}
+	}
+
 	m.fields = []pmField{
 		{label: "Profile Name", value: name},
 		{label: "Provider Type", value: detectProviderType(p), readOnly: true},
 		{label: "OpenAI Base URL", value: p.OpenAIBaseURL},
 		{label: "OpenAI API Key", value: p.OpenAIAPIKey, masked: true},
 		{label: "OpenAI API Type", value: displayOpenAIAPIType(p.OpenAIAPIType), readOnly: true},
-		{label: "Models (CSV)", value: strings.Join(p.Models, ", ")},
-		{label: "Default Model", value: p.DefaultModel},
+		{label: "Models", value: formatModelsSummary(m.modelsDraft, m.defaultModel), readOnly: true},
 	}
 	for i := range m.fields {
 		m.fields[i].cursor = len([]rune(m.fields[i].value))
 	}
 	if m.focusField >= len(m.fields) {
 		m.focusField = len(m.fields) - 1
+	}
+}
+
+func formatModelsSummary(models []string, defaultModel string) string {
+	if len(models) == 0 {
+		if defaultModel == "" {
+			return "0 models"
+		}
+		return "0 models (default: " + defaultModel + ")"
+	}
+	if defaultModel == "" {
+		return fmt.Sprintf("%d models", len(models))
+	}
+	return fmt.Sprintf("%d models (default: %s)", len(models), defaultModel)
+}
+
+func (m *pmModel) syncModelFieldViews() {
+	if pmFieldModelsCSV < len(m.fields) {
+		m.fields[pmFieldModelsCSV].value = formatModelsSummary(m.modelsDraft, m.defaultModel)
+		m.fields[pmFieldModelsCSV].cursor = len([]rune(m.fields[pmFieldModelsCSV].value))
 	}
 }
 
@@ -122,21 +160,7 @@ func pmSlug(s string) string {
 }
 
 func parseCSVModels(csv string) []string {
-	parts := strings.Split(csv, ",")
-	out := make([]string, 0, len(parts))
-	seen := map[string]struct{}{}
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if _, ok := seen[p]; ok {
-			continue
-		}
-		seen[p] = struct{}{}
-		out = append(out, p)
-	}
-	return out
+	return config.ParseModelsCSV(csv)
 }
 
 func (m *pmModel) uniqueProfileName(base string) string {
