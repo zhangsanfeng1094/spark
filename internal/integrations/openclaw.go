@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"spark/internal/config"
 )
@@ -26,6 +27,14 @@ func (o *Openclaw) Edit(profile *config.Profile, models []string) error {
 	if err != nil {
 		return err
 	}
+	normalizedModels := normalizeOpenclawModels(models)
+	primary := normalizeOpenclawModelID(model)
+	if primary == "" {
+		return fmt.Errorf("no models selected")
+	}
+	if len(normalizedModels) == 0 {
+		normalizedModels = []string{primary}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -44,7 +53,7 @@ func (o *Openclaw) Edit(profile *config.Profile, models []string) error {
 		providers = map[string]any{}
 	}
 	var list []any
-	for _, mdl := range models {
+	for _, mdl := range normalizedModels {
 		list = append(list, map[string]any{"id": mdl, "name": mdl})
 	}
 	providers["agentlaunch"] = map[string]any{
@@ -54,6 +63,9 @@ func (o *Openclaw) Edit(profile *config.Profile, models []string) error {
 		"models":  list,
 	}
 	modelsSection["providers"] = providers
+	// Keep runtime models.json aligned with spark-managed providers.
+	// OpenClaw defaults to merge mode, which can preserve stale provider keys.
+	modelsSection["mode"] = "replace"
 	cfg["models"] = modelsSection
 
 	agents, _ := cfg["agents"].(map[string]any)
@@ -64,7 +76,18 @@ func (o *Openclaw) Edit(profile *config.Profile, models []string) error {
 	if defaults == nil {
 		defaults = map[string]any{}
 	}
-	defaults["model"] = map[string]any{"primary": "agentlaunch/" + model}
+	defaults["model"] = map[string]any{"primary": "agentlaunch/" + primary}
+	allowlist, _ := defaults["models"].(map[string]any)
+	if allowlist == nil {
+		allowlist = map[string]any{}
+	}
+	for _, mdl := range normalizedModels {
+		key := "agentlaunch/" + mdl
+		if _, ok := allowlist[key]; !ok {
+			allowlist[key] = map[string]any{}
+		}
+	}
+	defaults["models"] = allowlist
 	agents["defaults"] = defaults
 	cfg["agents"] = agents
 
@@ -87,4 +110,32 @@ func (o *Openclaw) Run(profile *config.Profile, model string, args []string) err
 		return err
 	}
 	return runCmd(bin, append([]string{"gateway"}, args...), nil)
+}
+
+func normalizeOpenclawModels(models []string) []string {
+	out := make([]string, 0, len(models))
+	seen := map[string]struct{}{}
+	for _, mdl := range models {
+		id := normalizeOpenclawModelID(mdl)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func normalizeOpenclawModelID(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	if i := strings.Index(model, "/"); i >= 0 {
+		return strings.TrimSpace(model[i+1:])
+	}
+	return model
 }

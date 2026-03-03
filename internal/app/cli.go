@@ -245,30 +245,29 @@ func resolveModels(modelFlag string, profile *config.Profile) []string {
 	if strings.TrimSpace(modelFlag) != "" {
 		return []string{strings.TrimSpace(modelFlag)}
 	}
-	if profile != nil && len(profile.Models) > 0 {
-		return normalizeModels(profile.Models)
+	if profile == nil {
+		return nil
 	}
-	if profile != nil && strings.TrimSpace(profile.DefaultModel) != "" {
-		return []string{strings.TrimSpace(profile.DefaultModel)}
+	models := config.NormalizeModels(profile.Models)
+	defaultModel := strings.TrimSpace(profile.DefaultModel)
+	if defaultModel != "" {
+		if len(models) == 0 {
+			return []string{defaultModel}
+		}
+		ordered := make([]string, 0, len(models)+1)
+		ordered = append(ordered, defaultModel)
+		for _, m := range models {
+			if m == defaultModel {
+				continue
+			}
+			ordered = append(ordered, m)
+		}
+		return ordered
+	}
+	if len(models) > 0 {
+		return models
 	}
 	return nil
-}
-
-func normalizeModels(in []string) []string {
-	out := make([]string, 0, len(in))
-	seen := map[string]struct{}{}
-	for _, m := range in {
-		m = strings.TrimSpace(m)
-		if m == "" {
-			continue
-		}
-		if _, ok := seen[m]; ok {
-			continue
-		}
-		seen[m] = struct{}{}
-		out = append(out, m)
-	}
-	return out
 }
 
 func profileNames(cfg *config.RootConfig) []string {

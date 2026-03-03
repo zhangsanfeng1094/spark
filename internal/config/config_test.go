@@ -99,6 +99,81 @@ func TestSetDefaultProfileRequiresExistingProfile(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpenAIAPIType(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "", want: ""},
+		{in: "responses", want: OpenAIAPITypeResponses},
+		{in: "response", want: OpenAIAPITypeResponses},
+		{in: "openai-responses", want: OpenAIAPITypeResponses},
+		{in: "auto", want: OpenAIAPITypeAuto},
+		{in: "prefer_responses", want: OpenAIAPITypeAuto},
+		{in: "chat_completions", want: OpenAIAPITypeChatCompletions},
+		{in: "chat/completions", want: OpenAIAPITypeChatCompletions},
+		{in: "openai-completions", want: OpenAIAPITypeChatCompletions},
+		{in: "unknown", want: ""},
+	}
+	for _, tt := range tests {
+		if got := NormalizeOpenAIAPIType(tt.in); got != tt.want {
+			t.Fatalf("NormalizeOpenAIAPIType(%q)=%q want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseOpenAIAPITypes(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{in: "", want: nil},
+		{in: "responses", want: []string{OpenAIAPITypeResponses}},
+		{in: "chat_completions", want: []string{OpenAIAPITypeChatCompletions}},
+		{in: "auto", want: []string{OpenAIAPITypeAuto}},
+		{in: "responses,chat_completions", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
+		{in: "chat_completions,responses", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
+		{in: "responses|chat/completions", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
+		{in: "responses,unknown", want: []string{OpenAIAPITypeResponses}},
+		{in: "unknown", want: nil},
+	}
+	for _, tt := range tests {
+		if got := ParseOpenAIAPITypes(tt.in); !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("ParseOpenAIAPITypes(%q)=%v want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestCanonicalizeOpenAIAPITypes(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "", want: ""},
+		{in: "responses", want: OpenAIAPITypeResponses},
+		{in: "chat_completions,responses", want: "responses,chat_completions"},
+		{in: "responses|chat_completions", want: "responses,chat_completions"},
+		{in: "auto,responses", want: OpenAIAPITypeAuto},
+	}
+	for _, tt := range tests {
+		if got := CanonicalizeOpenAIAPITypes(tt.in); got != tt.want {
+			t.Fatalf("CanonicalizeOpenAIAPITypes(%q)=%q want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestSupportsOpenAIAPIType(t *testing.T) {
+	if !SupportsOpenAIAPIType("responses,chat_completions", OpenAIAPITypeResponses) {
+		t.Fatalf("expected responses support")
+	}
+	if !SupportsOpenAIAPIType("responses,chat_completions", OpenAIAPITypeChatCompletions) {
+		t.Fatalf("expected chat support")
+	}
+	if SupportsOpenAIAPIType("responses", OpenAIAPITypeChatCompletions) {
+		t.Fatalf("did not expect chat support")
+	}
+}
+
 func homeDirFromTest(t *testing.T) string {
 	t.Helper()
 	return os.Getenv("HOME")

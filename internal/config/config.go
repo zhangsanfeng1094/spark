@@ -11,15 +11,108 @@ import (
 
 const currentVersion = 1
 
+const (
+	OpenAIAPITypeResponses       = "responses"
+	OpenAIAPITypeChatCompletions = "chat_completions"
+	OpenAIAPITypeAuto            = "auto"
+)
+
 type Profile struct {
 	OpenAIBaseURL      string   `json:"openai_base_url"`
 	OpenAIAPIKey       string   `json:"openai_api_key"`
+	OpenAIAPIType      string   `json:"openai_api_type,omitempty"`
 	OpenAIOrg          string   `json:"openai_org,omitempty"`
 	OpenAIProject      string   `json:"openai_project,omitempty"`
 	AnthropicBaseURL   string   `json:"anthropic_base_url,omitempty"`
 	AnthropicAuthToken string   `json:"anthropic_auth_token,omitempty"`
 	Models             []string `json:"models,omitempty"`
 	DefaultModel       string   `json:"default_model,omitempty"`
+}
+
+func NormalizeOpenAIAPIType(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case OpenAIAPITypeResponses, "response", "openai-responses", "openai_response":
+		return OpenAIAPITypeResponses
+	case OpenAIAPITypeAuto, "prefer_responses", "responses_or_chat_completions":
+		return OpenAIAPITypeAuto
+	case OpenAIAPITypeChatCompletions, "chat-completions", "chat/completions", "openai-completions", "openai_chat_completions":
+		return OpenAIAPITypeChatCompletions
+	default:
+		return ""
+	}
+}
+
+func ParseOpenAIAPITypes(v string) []string {
+	trimmed := strings.TrimSpace(v)
+	if trimmed == "" {
+		return nil
+	}
+	if normalized := NormalizeOpenAIAPIType(trimmed); normalized != "" {
+		return []string{normalized}
+	}
+
+	parts := strings.FieldsFunc(trimmed, func(r rune) bool {
+		switch r {
+		case ',', ';', '|', '+', ' ':
+			return true
+		default:
+			return false
+		}
+	})
+	if len(parts) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 2)
+	for _, part := range parts {
+		normalized := NormalizeOpenAIAPIType(part)
+		if normalized == "" {
+			continue
+		}
+		if normalized == OpenAIAPITypeAuto {
+			return []string{OpenAIAPITypeAuto}
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+
+	canonical := make([]string, 0, 2)
+	if _, ok := seen[OpenAIAPITypeResponses]; ok {
+		canonical = append(canonical, OpenAIAPITypeResponses)
+	}
+	if _, ok := seen[OpenAIAPITypeChatCompletions]; ok {
+		canonical = append(canonical, OpenAIAPITypeChatCompletions)
+	}
+	if len(canonical) > 0 {
+		return canonical
+	}
+	return nil
+}
+
+func CanonicalizeOpenAIAPITypes(v string) string {
+	parsed := ParseOpenAIAPITypes(v)
+	if len(parsed) == 0 {
+		return ""
+	}
+	if len(parsed) == 1 {
+		return parsed[0]
+	}
+	return strings.Join(parsed, ",")
+}
+
+func SupportsOpenAIAPIType(v, target string) bool {
+	if target == "" {
+		return false
+	}
+	for _, apiType := range ParseOpenAIAPITypes(v) {
+		if apiType == target {
+			return true
+		}
+	}
+	return false
 }
 
 type IntegrationConfig struct {
@@ -91,11 +184,11 @@ func Load() (*RootConfig, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
-	normalize(&cfg)
+	Normalize(&cfg)
 	return &cfg, nil
 }
 
-func normalize(cfg *RootConfig) {
+func Normalize(cfg *RootConfig) {
 	if cfg.Version == 0 {
 		cfg.Version = currentVersion
 	}
@@ -121,8 +214,29 @@ func normalize(cfg *RootConfig) {
 	}
 }
 
+func NormalizeModels(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, m := range in {
+		m = strings.TrimSpace(m)
+		if m == "" {
+			continue
+		}
+		if _, ok := seen[m]; ok {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	return out
+}
+
+func ParseModelsCSV(csv string) []string {
+	return NormalizeModels(strings.Split(csv, ","))
+}
+
 func Save(cfg *RootConfig) error {
-	normalize(cfg)
+	Normalize(cfg)
 	path, err := ConfigPath()
 	if err != nil {
 		return err

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"spark/internal/config"
 )
@@ -18,6 +19,9 @@ func (c *Codex) args(model, baseURL string, extra []string) []string {
 	cmdArgs := []string{
 		"-c", fmt.Sprintf(`model_providers.%s.name="Spark"`, codexProviderName),
 		"-c", fmt.Sprintf(`model_providers.%s.base_url="%s"`, codexProviderName, baseURL),
+		"-c", fmt.Sprintf(`model_providers.%s.env_key="OPENAI_API_KEY"`, codexProviderName),
+		"-c", fmt.Sprintf(`model_providers.%s.wire_api="responses"`, codexProviderName),
+		"-c", fmt.Sprintf(`model_providers.%s.requires_openai_auth=false`, codexProviderName),
 		"-c", fmt.Sprintf(`model_provider="%s"`, codexProviderName),
 	}
 	if model != "" {
@@ -34,27 +38,83 @@ func (c *Codex) Run(profile *config.Profile, model string, args []string) error 
 
 	baseURL := profileBase(profile)
 	apiKey := profileKey(profile)
+	resolvedUpstreamKey, upstreamKeySource := resolveOpenAIAPIKey(apiKey)
+	apiType := profileOpenAIAPIType(profile)
 	quietCompatStderr := shouldQuietCompatStderr()
-	proxy, err := startResponsesCompatProxy(baseURL, apiKey, quietCompatStderr)
-	if err != nil {
-		return err
+	if apiType == config.OpenAIAPITypeAuto {
+		detectedType, err := detectOpenAIAPIType(baseURL, resolvedUpstreamKey, model)
+		if err == nil && detectedType != "" {
+			apiType = detectedType
+			if !quietCompatStderr {
+				fmt.Fprintf(os.Stderr, "Detected OpenAI API type: %s\n", apiType)
+			}
+		}
 	}
-	defer proxy.Close()
 
-	envBaseURL := proxy.BaseURL()
-	envKey := "spark-compat"
-	if !quietCompatStderr {
-		fmt.Fprintf(os.Stderr, "Using compatibility adapter: %s -> %s\n", envBaseURL, baseURL)
-		fmt.Fprintf(os.Stderr, "Compatibility adapter log file: %s\n", proxy.LogPath())
+	envBaseURL := baseURL
+	envKey := resolvedUpstreamKey
+
+	if proxyMode, useProxy := codexProxyModeForAPIType(apiType); useProxy {
+		proxy, err := startResponsesCompatProxy(baseURL, resolvedUpstreamKey, quietCompatStderr, proxyMode)
+		if err != nil {
+			return err
+		}
+		defer proxy.Close()
+		envBaseURL = proxy.BaseURL()
+		envKey = "spark-compat"
+		routeLine := fmt.Sprintf("[route] mode=compat proxy_mode=%s upstream=%s proxy=%s log=%s api_type=%s upstream_key_source=%s upstream_key_set=%t", proxyMode, baseURL, envBaseURL, proxy.LogPath(), apiType, upstreamKeySource, strings.TrimSpace(resolvedUpstreamKey) != "")
+		routeLogPath := appendLaunchRouteLog(routeLine)
+		if routeLogPath != "" {
+			routeLine = routeLine + " route_log=" + routeLogPath
+		}
+		fmt.Fprintln(os.Stderr, routeLine)
+		if !quietCompatStderr {
+			fmt.Fprintf(os.Stderr, "Using compatibility adapter: %s -> %s\n", envBaseURL, baseURL)
+			fmt.Fprintf(os.Stderr, "Compatibility adapter log file: %s\n", proxy.LogPath())
+		}
+	} else {
+		routeLine := fmt.Sprintf("[route] mode=direct upstream=%s api_type=%s upstream_key_source=%s upstream_key_set=%t", baseURL, apiType, upstreamKeySource, strings.TrimSpace(resolvedUpstreamKey) != "")
+		routeLogPath := appendLaunchRouteLog(routeLine)
+		if routeLogPath != "" {
+			routeLine = routeLine + " route_log=" + routeLogPath
+		}
+		fmt.Fprintln(os.Stderr, routeLine)
 	}
+
 	cmdArgs := c.args(model, envBaseURL, args)
 
 	env := []string{
 		"OPENAI_BASE_URL=" + envBaseURL,
-		"OPENAI_API_KEY=" + envKey,
-		"CODEX_API_KEY=" + envKey,
 		"OPENAI_ORG_ID=" + profile.OpenAIOrg,
 		"OPENAI_PROJECT_ID=" + profile.OpenAIProject,
 	}
+	if strings.TrimSpace(envKey) != "" {
+		env = append(env,
+			"OPENAI_API_KEY="+envKey,
+			"CODEX_API_KEY="+envKey,
+		)
+	}
 	return runCmd("codex", cmdArgs, env)
+}
+
+func resolveOpenAIAPIKey(profileKey string) (key string, source string) {
+	if k := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); k != "" {
+		return k, "env.OPENAI_API_KEY"
+	}
+	if k := strings.TrimSpace(profileKey); k != "" {
+		return k, "profile.openai_api_key"
+	}
+	return "", "none"
+}
+
+func codexProxyModeForAPIType(apiType string) (responsesProxyMode, bool) {
+	if config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeResponses) {
+		return "", false
+	}
+	switch apiType {
+	case config.OpenAIAPITypeAuto:
+		return responsesProxyModePreferResponses, true
+	default:
+		return responsesProxyModeChatCompletionsOnly, true
+	}
 }

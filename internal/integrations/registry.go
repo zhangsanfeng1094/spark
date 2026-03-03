@@ -38,10 +38,14 @@ func Names() []string {
 	return out
 }
 
-func Must(name string) Runner {
+func Must(name string) (Runner, error) {
+	return GetOrErr(name)
+}
+
+func GetOrErr(name string) (Runner, error) {
 	r, ok := Get(name)
 	if !ok {
-		panic(fmt.Sprintf("unknown integration: %s", name))
+		return nil, fmt.Errorf("unknown integration: %s", name)
 	}
-	return r
+	return r, nil
 }

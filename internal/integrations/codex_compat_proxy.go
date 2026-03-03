@@ -22,6 +22,7 @@ type responsesCompatProxy struct {
 	baseURL      string
 	upstreamBase string
 	upstreamKey  string
+	mode         responsesProxyMode
 	client       *http.Client
 	quietStderr  bool
 	logFile      io.WriteCloser
@@ -29,16 +30,27 @@ type responsesCompatProxy struct {
 	logPath      string
 }
 
-func startResponsesCompatProxy(upstreamBase, upstreamKey string, quietStderr bool) (*responsesCompatProxy, error) {
+type responsesProxyMode string
+
+const (
+	responsesProxyModeChatCompletionsOnly responsesProxyMode = "chat_completions_only"
+	responsesProxyModePreferResponses     responsesProxyMode = "prefer_responses"
+)
+
+func startResponsesCompatProxy(upstreamBase, upstreamKey string, quietStderr bool, mode responsesProxyMode) (*responsesCompatProxy, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
+	}
+	if mode == "" {
+		mode = responsesProxyModeChatCompletionsOnly
 	}
 	p := &responsesCompatProxy{
 		listener:     ln,
 		baseURL:      "http://" + ln.Addr().String() + "/v1",
 		upstreamBase: strings.TrimRight(upstreamBase, "/"),
 		upstreamKey:  upstreamKey,
+		mode:         mode,
 		client:       newStreamingHTTPClient(),
 		quietStderr:  quietStderr,
 	}
@@ -48,6 +60,7 @@ func startResponsesCompatProxy(upstreamBase, upstreamKey string, quietStderr boo
 	}
 	p.logFile = logFile
 	p.logPath = logPath
+	p.logf("proxy started mode=%s upstream=%s listen=%s", p.mode, p.upstreamBase, p.baseURL)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/responses", p.handleResponses)
 	p.server = &http.Server{Handler: mux}
@@ -112,6 +125,39 @@ func (p *responsesCompatProxy) handleResponses(w http.ResponseWriter, r *http.Re
 	p.logf("raw incoming body=%s", rawBody)
 	p.logf("decoded responses request=%s", mustJSONForLog(req))
 
+	if p.mode == responsesProxyModePreferResponses {
+		upResp, err := p.postResponses(r.Context(), req)
+		if err != nil {
+			p.logf("upstream responses request failed: %v", err)
+			p.warnf("upstream request failed")
+			writeJSONError(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
+			return
+		}
+		if upResp.StatusCode < 400 {
+			p.logf("route=request->responses_passthrough status=%d", upResp.StatusCode)
+			defer upResp.Body.Close()
+			p.forwardResponsesPassthrough(w, upResp)
+			return
+		}
+		errBody, _ := io.ReadAll(upResp.Body)
+		_ = upResp.Body.Close()
+		if !shouldFallbackFromResponses(upResp.StatusCode, errBody) {
+			p.warnf(fmt.Sprintf("forward responses upstream status %d", upResp.StatusCode))
+			writeUpstreamErrorAsJSON(w, &http.Response{
+				StatusCode: upResp.StatusCode,
+				Body:       io.NopCloser(bytes.NewReader(errBody)),
+				Header:     upResp.Header,
+			})
+			return
+		}
+		p.logf(
+			"responses passthrough fallback triggered status=%d body=%s",
+			upResp.StatusCode,
+			truncateForLog(string(errBody), 16*1024),
+		)
+		p.logf("route=request->chat_fallback reason=responses_not_supported status=%d", upResp.StatusCode)
+	}
+
 	reqTranslator := newResponsesRequestTranslator()
 	executor := newCodexChatExecutor(p)
 	chatReq, upResp, err := executeTranslatedChat(r.Context(), req, reqTranslator, executor)
@@ -128,11 +174,30 @@ func (p *responsesCompatProxy) handleResponses(w http.ResponseWriter, r *http.Re
 		return
 	}
 	p.logf("mapped chat request(initial)=%s", mustJSONForLog(chatReq))
+	p.logf("route=request->chat_completions status=%d", upResp.StatusCode)
 	defer upResp.Body.Close()
 
 	stream, _ := req["stream"].(bool)
 	writer := newCodexResponseWriter(p)
 	writer.Write(w, upResp, stream)
+}
+
+func (p *responsesCompatProxy) postResponses(ctx context.Context, req map[string]any) (*http.Response, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	upReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.upstreamBase+"/responses", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	upReq.Header.Set("Content-Type", "application/json")
+	upReq.Header.Set("Accept-Encoding", "identity")
+	if p.upstreamKey != "" {
+		upReq.Header.Set("Authorization", "Bearer "+p.upstreamKey)
+	}
+	p.logf("upstream POST %s payload=%s", p.upstreamBase+"/responses", truncateForLog(string(body), 16*1024))
+	return p.client.Do(upReq)
 }
 
 func (p *responsesCompatProxy) postChatCompletions(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
@@ -151,6 +216,42 @@ func (p *responsesCompatProxy) postChatCompletions(ctx context.Context, chatReq 
 	}
 	p.logf("upstream POST %s payload=%s", p.upstreamBase+"/chat/completions", truncateForLog(string(body), 16*1024))
 	return p.client.Do(upReq)
+}
+
+func shouldFallbackFromResponses(status int, data []byte) bool {
+	switch status {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusUnsupportedMediaType, http.StatusNotImplemented:
+		return true
+	}
+	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(string(data)))
+	if msg == "" {
+		return false
+	}
+	unsupportedSignals := []string{
+		"unknown parameter",
+		"unknown field",
+		"unexpected field",
+		"unrecognized field",
+	}
+	hasUnsupportedSignal := false
+	for _, s := range unsupportedSignals {
+		if strings.Contains(msg, s) {
+			hasUnsupportedSignal = true
+			break
+		}
+	}
+	if hasUnsupportedSignal {
+		if strings.Contains(msg, "input") || strings.Contains(msg, "instructions") || strings.Contains(msg, "max_output_tokens") {
+			return true
+		}
+	}
+	if strings.Contains(msg, "responses") && (strings.Contains(msg, "not support") || strings.Contains(msg, "unsupported")) {
+		return true
+	}
+	return false
 }
 
 func shouldRetryWithMinimalChatReq(status int, data []byte) bool {
@@ -206,6 +307,43 @@ func ultraMinimalChatCompletionsRequest(chatReq map[string]any) map[string]any {
 		"stream": chatReq["stream"],
 	}
 	return out
+}
+
+func copyResponseHeaders(dst, src http.Header) {
+	for k, values := range src {
+		for _, v := range values {
+			dst.Add(k, v)
+		}
+	}
+}
+
+func (p *responsesCompatProxy) forwardResponsesPassthrough(w http.ResponseWriter, upResp *http.Response) {
+	copyResponseHeaders(w.Header(), upResp.Header)
+	w.WriteHeader(upResp.StatusCode)
+	flusher, _ := w.(http.Flusher)
+	contentType := strings.ToLower(upResp.Header.Get("Content-Type"))
+	if strings.Contains(contentType, "text/event-stream") {
+		reader := bufio.NewReader(upResp.Body)
+		for {
+			line, err := reader.ReadBytes('\n')
+			if len(line) > 0 {
+				_, _ = w.Write(line)
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if err != nil {
+				if err == io.EOF {
+					return
+				}
+				p.logf("responses passthrough stream read failed: %v", err)
+				return
+			}
+		}
+	}
+	if _, err := io.Copy(w, upResp.Body); err != nil {
+		p.logf("responses passthrough copy failed: %v", err)
+	}
 }
 
 func (p *responsesCompatProxy) forwardNonStream(w http.ResponseWriter, upResp *http.Response) {
@@ -839,18 +977,32 @@ func mergeResponsesUsage(base map[string]any, incoming map[string]any) map[strin
 		out["total_tokens"] = v
 	}
 
-	out["cached_input_tokens"] = intFromAny(base["cached_input_tokens"])
+	baseCached := intFromAny(base["cached_input_tokens"])
+	if baseCached == 0 {
+		baseCached = intFromAny(mapValue(base["input_tokens_details"])["cached_tokens"])
+	}
+	out["cached_input_tokens"] = baseCached
 	if v := intFromAny(incoming["cached_input_tokens"]); v > 0 {
 		out["cached_input_tokens"] = v
+	}
+	if v := intFromAny(mapValue(base["input_tokens_details"])["cached_tokens"]); v > 0 {
+		out["input_tokens_details"] = map[string]any{"cached_tokens": v}
 	}
 	if v := intFromAny(mapValue(incoming["input_tokens_details"])["cached_tokens"]); v > 0 {
 		out["cached_input_tokens"] = v
 		out["input_tokens_details"] = map[string]any{"cached_tokens": v}
 	}
 
-	out["reasoning_output_tokens"] = intFromAny(base["reasoning_output_tokens"])
+	baseReasoning := intFromAny(base["reasoning_output_tokens"])
+	if baseReasoning == 0 {
+		baseReasoning = intFromAny(mapValue(base["output_tokens_details"])["reasoning_tokens"])
+	}
+	out["reasoning_output_tokens"] = baseReasoning
 	if v := intFromAny(incoming["reasoning_output_tokens"]); v > 0 {
 		out["reasoning_output_tokens"] = v
+	}
+	if v := intFromAny(mapValue(base["output_tokens_details"])["reasoning_tokens"]); v > 0 {
+		out["output_tokens_details"] = map[string]any{"reasoning_tokens": v}
 	}
 	if v := intFromAny(mapValue(incoming["output_tokens_details"])["reasoning_tokens"]); v > 0 {
 		out["reasoning_output_tokens"] = v

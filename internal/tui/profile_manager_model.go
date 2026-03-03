@@ -13,7 +13,7 @@ var (
 	colorDim    = lipgloss.Color("#6272a4")
 	colorBg     = lipgloss.Color("#282a36")
 
-	pmAppStyle = lipgloss.NewStyle().Margin(1, 1)
+	pmAppStyle = lipgloss.NewStyle().Margin(0, 1)
 
 	pmTitleStyle = lipgloss.NewStyle().
 			Foreground(colorFocus).
@@ -37,6 +37,11 @@ var (
 				Foreground(lipgloss.Color("#ffffff")).
 				Background(colorFocus).
 				Bold(true)
+	pmFocusedItemStyle = lipgloss.NewStyle().
+				PaddingLeft(1).
+				Foreground(lipgloss.Color("#ffffff")).
+				Background(lipgloss.Color("#3a3d52")).
+				Bold(true)
 
 	pmLabelStyle = lipgloss.NewStyle().
 			Foreground(colorDim).
@@ -48,23 +53,27 @@ var (
 			Foreground(colorText).
 			Background(lipgloss.Color("#1e1f29")).
 			Padding(0, 1).
-			Width(pmInputWidth)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorDim)
 
 	pmFocusedInputStyle = pmInputStyle.Copy().
-				Underline(true).
-				UnderlineSpaces(true).
 				Foreground(lipgloss.Color("#ffffff")).
-				Background(lipgloss.Color("#252738"))
+				Background(lipgloss.Color("#252738")).
+				BorderForeground(colorFocus).
+				Bold(true)
 
 	pmBtnStyle = lipgloss.NewStyle().
 			Foreground(colorText).
 			Background(colorDim).
 			Padding(0, 2).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorDim).
 			MarginRight(1)
 
 	pmActiveBtnStyle = pmBtnStyle.Copy().
 				Foreground(lipgloss.Color("#ffffff")).
 				Background(colorAccent).
+				BorderForeground(colorAccent).
 				Bold(true)
 
 	pmStatusBarStyle = lipgloss.NewStyle().
@@ -72,6 +81,16 @@ var (
 				Background(lipgloss.Color("#44475a")).
 				Padding(0, 1).
 				MarginTop(1)
+	pmStatusOkStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#d7ffd9")).
+			Bold(true)
+	pmStatusErrStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#ffd7d7")).
+				Bold(true)
+	pmStatusInfoStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#f8f8f2"))
+	pmStatusLogStyle = lipgloss.NewStyle().
+				Foreground(colorDim)
 
 	pmModalStyle = lipgloss.NewStyle().
 			Border(lipgloss.DoubleBorder()).
@@ -106,6 +125,7 @@ const (
 	pmFieldProviderType
 	pmFieldOpenAIBaseURL
 	pmFieldOpenAIAPIKey
+	pmFieldOpenAIAPIType
 	pmFieldModelsCSV
 	pmFieldDefaultModel
 )
@@ -122,6 +142,13 @@ type pmProviderOption struct {
 	name string
 	kind string
 }
+
+const (
+	pmModalKindNone = iota
+	pmModalKindAddProfile
+	pmModalKindOpenAIAPIType
+	pmModalKindModels
+)
 
 type pmModel struct {
 	cfg *config.RootConfig
@@ -142,18 +169,35 @@ type pmModel struct {
 
 	modalOpen   bool
 	modalCursor int
+	modalKind   int
 	// When modal is opened by a mouse click, ignore the next click event
 	// to avoid immediately closing the modal from the same physical click.
 	modalIgnoreNextClick bool
 
 	providerOptions []pmProviderOption
+	apiTypeOptions  []string
+	apiTypeSelected map[string]bool
+	modelItems      []string
+	modelsDraft     []string
+	defaultModel    string
+	modelEditMode   bool
+	modelEditIndex  int
+	modelEditBuffer string
+	modelModalNote  string
+	inputWidth      int
 
 	leftContentX     int
 	leftContentY     int
 	rightContentX    int
 	rightContentY    int
 	leftButtonsRelY  int
+	leftButtonsRelH  int
+	leftButtonsRowW  int
+	leftAddBtnW      int
 	rightButtonsRelY int
+	rightButtonsRelH int
+	rightButtonsRowW int
+	rightTestBtnW    int
 	fieldStartRelY   []int
 	fieldEndRelY     []int
 	modalX           int
@@ -170,36 +214,28 @@ func ManageProfilesDashboard(cfg *config.RootConfig) error {
 }
 
 func newPMModel(cfg *config.RootConfig) *pmModel {
-	configMustNormalize(cfg)
+	config.Normalize(cfg)
 	m := &pmModel{
 		cfg: cfg,
 		providerOptions: []pmProviderOption{
 			{name: "OpenAI", kind: "openai"},
 		},
-		focusArea:   pmFocusProfiles,
-		focusField:  0,
-		actionIndex: pmActSave,
-		status:      "Ready. Press [Tab] to navigate, [Enter] to select.",
+		apiTypeOptions: []string{
+			config.OpenAIAPITypeAuto,
+			config.OpenAIAPITypeResponses,
+			config.OpenAIAPITypeChatCompletions,
+		},
+		apiTypeSelected: map[string]bool{},
+		focusArea:       pmFocusProfiles,
+		focusField:      0,
+		actionIndex:     pmActSave,
+		status:          "Ready. Use [Tab]/[Shift+Tab] to move focus, [Enter] to activate.",
+		inputWidth:      pmInputWidth,
 	}
 	m.refreshNames()
 	m.selectByName(cfg.DefaultProfile)
 	m.loadSelectedProfileFields()
 	return m
-}
-
-func configMustNormalize(cfg *config.RootConfig) {
-	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]*config.Profile{}
-	}
-	if cfg.DefaultProfile == "" {
-		cfg.DefaultProfile = "default"
-	}
-	if _, ok := cfg.Profiles[cfg.DefaultProfile]; !ok {
-		cfg.Profiles[cfg.DefaultProfile] = &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1"}
-	}
-	if cfg.Integrations == nil {
-		cfg.Integrations = map[string]*config.IntegrationConfig{}
-	}
 }
 
 func (m *pmModel) Init() tea.Cmd { return nil }
@@ -214,6 +250,10 @@ func (m *pmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handleTestResult(msg)
 		return m, nil
 
+	case fetchModelsResultMsg:
+		m.handleFetchModelsResult(msg)
+		return m, nil
+
 	case tea.MouseMsg:
 		if !isPrimaryClick(msg.Type) {
 			return m, nil
@@ -224,15 +264,13 @@ func (m *pmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.handleModalMouse(msg)
-		} else {
-			m.handleMainMouse(msg)
+			return m, nil
 		}
-		return m, nil
+		return m, m.handleMainMouse(msg)
 
 	case tea.KeyMsg:
 		if m.modalOpen {
-			m.handleModalKey(msg)
-			return m, nil
+			return m, m.handleModalKey(msg)
 		}
 
 		if cmd, handled := m.handleMainKey(msg); handled {
