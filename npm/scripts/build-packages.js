@@ -25,6 +25,7 @@ const PLATFORMS = [
 ];
 
 const PACKAGES_DIR = path.join(__dirname, "..", "packages");
+const MAIN_PKG_PATH = path.join(__dirname, "..", "package.json");
 
 function download(url, dest) {
   return new Promise((resolve, reject) => {
@@ -84,6 +85,34 @@ function generatePackageJson(platform, version) {
       url: `https://github.com/${REPO_OWNER}/${REPO_NAME}.git`
     }
   };
+}
+
+// 更新主包的 optionalDependencies
+function updateMainPackageJson() {
+  const pkgJson = JSON.parse(fs.readFileSync(MAIN_PKG_PATH, "utf8"));
+  
+  // 更新版本号
+  pkgJson.version = VERSION;
+  
+  // 更新 optionalDependencies
+  const optionalDependencies = {};
+  for (const platform of PLATFORMS) {
+    optionalDependencies[`${PACKAGE_NAME}-${platform.name}`] = 
+      `npm:${PACKAGE_NAME}@${VERSION}-${platform.name}`;
+  }
+  pkgJson.optionalDependencies = optionalDependencies;
+  
+  // 写回主包
+  fs.writeFileSync(MAIN_PKG_PATH, JSON.stringify(pkgJson, null, 2) + "\n");
+  
+  console.log("\n========================================");
+  console.log("Updated main package.json");
+  console.log("========================================");
+  console.log(`  Version: ${VERSION}`);
+  console.log(`  optionalDependencies:`);
+  for (const platform of PLATFORMS) {
+    console.log(`    ${PACKAGE_NAME}-${platform.name}: npm:${PACKAGE_NAME}@${VERSION}-${platform.name}`);
+  }
 }
 
 async function buildPlatformPackage(platform) {
@@ -163,6 +192,9 @@ async function main() {
   for (const platform of PLATFORMS) {
     await buildPlatformPackage(platform);
   }
+  
+  // 更新主包的 optionalDependencies
+  updateMainPackageJson();
   
   console.log("\n========================================");
   console.log("✓ All platform packages built successfully!");
