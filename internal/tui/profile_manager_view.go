@@ -99,22 +99,26 @@ func (m *pmModel) renderLeftPane() string {
 	}
 	lines = append(lines, "")
 
-	addBtn := pmBtnStyle.Render("Add")
-	delBtn := pmBtnStyle.Render("Del")
+	addBtn := pmLeftBtnStyle.Render("Add")
+	copyBtn := pmLeftBtnStyle.Render("Copy")
+	delBtn := pmLeftBtnStyle.Render("Del")
 	if m.focusArea == pmFocusActions {
 		if m.actionIndex == pmActAdd {
-			addBtn = pmActiveBtnStyle.Render("+ Add")
+			addBtn = pmLeftActiveBtnStyle.Render("+ Add")
+		} else if m.actionIndex == pmActCopy {
+			copyBtn = pmLeftActiveBtnStyle.Render("> Copy")
 		} else if m.actionIndex == pmActDel {
-			delBtn = pmActiveBtnStyle.Render("- Del")
+			delBtn = pmLeftActiveBtnStyle.Render("- Del")
 		}
 	}
 
-	btnRow := lipgloss.JoinHorizontal(lipgloss.Left, addBtn, delBtn)
+	btnRow := lipgloss.JoinHorizontal(lipgloss.Left, addBtn, copyBtn, delBtn)
 	lines = append(lines, btnRow)
 	m.leftButtonsRelY = len(lines) - 1
 	m.leftButtonsRelH = lipgloss.Height(btnRow)
 	m.leftButtonsRowW = lipgloss.Width(btnRow)
 	m.leftAddBtnW = lipgloss.Width(addBtn)
+	m.leftCopyBtnW = lipgloss.Width(copyBtn)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 

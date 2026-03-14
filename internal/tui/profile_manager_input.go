@@ -39,19 +39,33 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 		if addHitW > 0 {
 			addHitW-- // strip right margin from styled button
 		}
-		delTotalW := leftRowW - leftAddW
+		leftCopyW := m.leftCopyBtnW
+		if leftCopyW <= 0 {
+			leftCopyW = 11
+		}
+		copyHitW := leftCopyW
+		if copyHitW > 0 {
+			copyHitW-- // strip right margin from styled button
+		}
+		delTotalW := leftRowW - leftAddW - leftCopyW
 		delHitW := delTotalW
 		if delHitW > 0 {
 			delHitW-- // strip trailing row margin on the right button
 		}
 		addX1 := leftX1
 		addX2 := addX1 + addHitW - 1
-		delX1 := leftX1 + leftAddW
+		copyX1 := leftX1 + leftAddW
+		copyX2 := copyX1 + copyHitW - 1
+		delX1 := leftX1 + leftAddW + leftCopyW
 		delX2 := delX1 + delHitW - 1
 		if y >= leftBtnsY1 && y <= leftBtnsY2 && x >= addX1 && x <= addX2 {
 			m.actionIndex = pmActAdd
 			m.modalIgnoreNextClick = true
 			return m.runAction(pmActAdd)
+		}
+		if y >= leftBtnsY1 && y <= leftBtnsY2 && x >= copyX1 && x <= copyX2 {
+			m.actionIndex = pmActCopy
+			return m.runAction(pmActCopy)
 		}
 		if y >= leftBtnsY1 && y <= leftBtnsY2 && x >= delX1 && x <= delX2 {
 			m.actionIndex = pmActDel

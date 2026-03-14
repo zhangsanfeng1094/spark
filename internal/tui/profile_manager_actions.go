@@ -13,6 +13,9 @@ func (m *pmModel) runAction(action int) tea.Cmd {
 	case pmActAdd:
 		m.openAddModal()
 		return nil
+	case pmActCopy:
+		m.copySelectedProfile()
+		return nil
 	case pmActDel:
 		m.deleteSelectedProfile()
 		return nil
@@ -304,6 +307,38 @@ func (m *pmModel) deleteSelectedProfile() {
 	m.status = fmt.Sprintf("Deleted '%s'.", name)
 }
 
+func (m *pmModel) copySelectedProfile() {
+	name := m.currentProfileName()
+	profile, ok := m.cfg.Profiles[name]
+	if !ok {
+		m.status = "Profile not found."
+		return
+	}
+	
+	// Generate a unique name for the copied profile
+	newName := m.uniqueProfileName(name + "-copy")
+	
+	// Deep copy the profile
+	newProfile := &config.Profile{
+		OpenAIBaseURL:    profile.OpenAIBaseURL,
+		OpenAIAPIKey:     profile.OpenAIAPIKey,
+		OpenAIAPIType:    profile.OpenAIAPIType,
+		OpenAIOrg:        profile.OpenAIOrg,
+		OpenAIProject:    profile.OpenAIProject,
+		AnthropicBaseURL: profile.AnthropicBaseURL,
+		AnthropicAuthToken: profile.AnthropicAuthToken,
+		Models:           append([]string{}, profile.Models...),
+		DefaultModel:     profile.DefaultModel,
+	}
+	
+	m.cfg.Profiles[newName] = newProfile
+	m.refreshNames()
+	m.selectByName(newName)
+	m.loadSelectedProfileFields()
+	m.dirty = true
+	m.status = fmt.Sprintf("Copied '%s' to '%s'.", name, newName)
+}
+
 func (m *pmModel) save() {
 	oldName := m.currentProfileName()
 	if err := m.applyFieldsToProfile(oldName); err != nil {
@@ -320,13 +355,11 @@ func (m *pmModel) save() {
 			m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(detected))
 		}
 	}
-
 	newName := strings.TrimSpace(m.fields[pmFieldProfileName].value)
 	if newName == "" {
 		m.status = "Profile Name cannot be empty."
 		return
 	}
-
 	if newName != oldName {
 		if _, exists := m.cfg.Profiles[newName]; exists {
 			m.status = "Profile name already exists."
@@ -334,7 +367,6 @@ func (m *pmModel) save() {
 		}
 		m.cfg.Profiles[newName] = m.cfg.Profiles[oldName]
 		delete(m.cfg.Profiles, oldName)
-
 		if m.cfg.DefaultProfile == oldName {
 			m.cfg.DefaultProfile = newName
 		}
@@ -344,12 +376,10 @@ func (m *pmModel) save() {
 			}
 		}
 	}
-
 	if err := config.Save(m.cfg); err != nil {
 		m.status = "Save failed: " + err.Error()
 		return
 	}
-
 	m.refreshNames()
 	m.selectByName(newName)
 	m.loadSelectedProfileFields()
@@ -360,7 +390,6 @@ func (m *pmModel) save() {
 	}
 	m.status = "Configuration saved successfully."
 }
-
 func (m *pmModel) applyFieldsToProfile(name string) error {
 	p := m.cfg.Profiles[name]
 	if p == nil {
@@ -373,12 +402,10 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 	p.DefaultModel = strings.TrimSpace(m.defaultModel)
 	return nil
 }
-
 // testResultMsg is sent when a connection test completes
 type testResultMsg struct {
 	result TestResult
 }
-
 func (m *pmModel) testConnection() tea.Cmd {
 	logPath := appendModelConnectionTestLogf(
 		"ui trigger profile=%q base_url=%q api_type=%q default_model=%q models=%q",
@@ -392,20 +419,17 @@ func (m *pmModel) testConnection() tea.Cmd {
 	if strings.TrimSpace(logPath) != "" {
 		m.status = fmt.Sprintf("Testing connection... (log: %s)", logPath)
 	}
-
 	name := m.currentProfileName()
 	if _, ok := m.cfg.Profiles[name]; !ok {
 		m.status = "Profile not found"
 		return nil
 	}
-
 	model := strings.TrimSpace(m.defaultModel)
 	if model == "" {
 		if len(m.modelsDraft) > 0 {
 			model = m.modelsDraft[0]
 		}
 	}
-
 	profileCopy := &config.Profile{
 		OpenAIBaseURL: strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
 		OpenAIAPIKey:  strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
@@ -413,13 +437,11 @@ func (m *pmModel) testConnection() tea.Cmd {
 		Models:        append([]string{}, m.modelsDraft...),
 		DefaultModel:  model,
 	}
-
 	return func() tea.Msg {
 		result := TestModelConnection(profileCopy, model)
 		return testResultMsg{result: result}
 	}
 }
-
 func (m *pmModel) handleTestResult(msg testResultMsg) {
 	r := msg.result
 	logPath := strings.TrimSpace(r.LogPath)
