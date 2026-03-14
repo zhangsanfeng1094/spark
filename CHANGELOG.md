@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/zhangsanfeng1094/spark/compare/v0.4.0...v0.5.0) (2026-03-14)
+
+
+### Features
+
+* add version command and build-time version injection ([40916ef](https://github.com/zhangsanfeng1094/spark/commit/40916ef1ce71d94b3406852a4d9fc6c5e170217f))
+
 ## [0.4.0](https://github.com/zhangsanfeng1094/spark/compare/v0.3.0...v0.4.0) (2026-03-14)
 
 
