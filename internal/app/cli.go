@@ -47,6 +47,15 @@ func newLaunchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "launch [integration] [-- [extra args...]]",
 		Short: "Configure and launch an integration",
+		Long: `Configure and launch an AI coding agent integration.
+
+Arguments after -- are passed directly to the integration.
+
+Examples:
+  spark launch codex -- resume abc123
+  spark launch codex --model gpt-4o -- --no-auto-approve
+
+Rule: Arguments before -- are for spark, arguments after -- are passed to the integration.`,
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var name string
@@ -78,7 +87,6 @@ func newLaunchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&configOnly, "config", false, "Configure without launching")
 	return cmd
 }
-
 func newConfigCmd() *cobra.Command {
 	var profileFlag string
 	var modelFlag string
