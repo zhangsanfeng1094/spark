@@ -78,10 +78,10 @@ var (
 
 	// Left panel buttons - simpler style without border
 	pmLeftBtnStyle = lipgloss.NewStyle().
-				Foreground(colorText).
-				Background(colorDim).
-				Padding(0, 2).
-				MarginRight(1)
+			Foreground(colorText).
+			Background(colorDim).
+			Padding(0, 2).
+			MarginRight(1)
 
 	pmLeftActiveBtnStyle = pmLeftBtnStyle.Copy().
 				Foreground(lipgloss.Color("#ffffff")).
@@ -163,6 +163,8 @@ const (
 	pmModalKindModels
 )
 
+const pmModelsModalMaxVisible = 10
+
 type pmModel struct {
 	cfg *config.RootConfig
 
@@ -187,17 +189,21 @@ type pmModel struct {
 	// to avoid immediately closing the modal from the same physical click.
 	modalIgnoreNextClick bool
 
-	providerOptions []pmProviderOption
-	apiTypeOptions  []string
-	apiTypeSelected map[string]bool
-	modelItems      []string
-	modelsDraft     []string
-	defaultModel    string
-	modelEditMode   bool
-	modelEditIndex  int
-	modelEditBuffer string
-	modelModalNote  string
-	inputWidth      int
+	providerOptions        []pmProviderOption
+	apiTypeOptions         []string
+	apiTypeSelected        map[string]bool
+	modelItems             []string
+	modelsDraft            []string
+	defaultModel           string
+	modelEditMode          bool
+	modelEditIndex         int
+	modelEditBuffer        string
+	modelModalNote         string
+	modelSearchQuery       string
+	modelSearchFocused     bool
+	modelModalScroll       int
+	modelModalVisibleCount int
+	inputWidth             int
 
 	leftContentX     int
 	leftContentY     int
@@ -269,6 +275,9 @@ func (m *pmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
+		if m.modalOpen && m.handleModalWheel(msg) {
+			return m, nil
+		}
 		if !isPrimaryClick(msg.Type) {
 			return m, nil
 		}

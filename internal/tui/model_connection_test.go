@@ -292,6 +292,136 @@ func TestHandleMainMouse_RightButtons_OnlyInsideBorderAreaTriggers(t *testing.T)
 	}
 }
 
+func TestModalMouseWheel_ModelsModalMovesCursor(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {},
+		},
+	})
+	m.modelsDraft = []string{"m0", "m1", "m2"}
+	m.defaultModel = "m0"
+	m.openModelsModal()
+	m.modalX, m.modalY, m.modalW, m.modalH = 10, 10, 40, 20
+
+	if handled := m.handleModalWheel(tea.MouseMsg{Type: tea.MouseWheelDown, X: 12, Y: 12}); !handled {
+		t.Fatal("expected wheel down to be handled inside models modal")
+	}
+	if m.modalCursor != 1 {
+		t.Fatalf("expected cursor to move down to 1, got %d", m.modalCursor)
+	}
+
+	if handled := m.handleModalWheel(tea.MouseMsg{Type: tea.MouseWheelUp, X: 12, Y: 12}); !handled {
+		t.Fatal("expected wheel up to be handled inside models modal")
+	}
+	if m.modalCursor != 0 {
+		t.Fatalf("expected cursor to move up to 0, got %d", m.modalCursor)
+	}
+}
+
+func TestHandleModalMouse_ModelsModalUsesScrollOffset(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {},
+		},
+	})
+	models := make([]string, 0, 15)
+	for i := 0; i < 15; i++ {
+		models = append(models, "model-"+string(rune('a'+i)))
+	}
+	m.modelsDraft = models
+	m.defaultModel = models[0]
+	m.openModelsModal()
+	m.modelModalVisibleCount = 10
+	m.modalCursor = 11
+	m.syncModelsModalScroll()
+	if m.modelModalScroll <= 0 {
+		t.Fatalf("expected positive scroll offset, got %d", m.modelModalScroll)
+	}
+
+	m.modalX, m.modalY, m.modalW, m.modalH = 0, 0, 80, 30
+	// Search input shifts options by +1, and scroll marker takes one row when offset > 0.
+	m.handleModalMouse(tea.MouseMsg{Type: tea.MouseRelease, X: 2, Y: m.modalY + 6})
+	if m.modalCursor != m.modelModalScroll {
+		t.Fatalf("expected cursor to map to scrolled index %d, got %d", m.modelModalScroll, m.modalCursor)
+	}
+}
+
+func TestModelsModalSearchFiltersAndMovesCursor(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {},
+		},
+	})
+	m.modelsDraft = []string{"gpt-4o", "o3-mini", "claude-3"}
+	m.defaultModel = "gpt-4o"
+	m.openModelsModal()
+
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	if q := m.modelSearchQuery; q != "o" {
+		t.Fatalf("expected search query to be 'o', got %q", q)
+	}
+	filtered := m.filteredModelIndices()
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 filtered models, got %d", len(filtered))
+	}
+	if m.modalCursor != filtered[0] {
+		t.Fatalf("expected cursor on first filtered item %d, got %d", filtered[0], m.modalCursor)
+	}
+
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.modelSearchQuery != "" {
+		t.Fatalf("expected search query to clear, got %q", m.modelSearchQuery)
+	}
+}
+
+func TestModelsModalTabTogglesSearchAndActionKeys(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {},
+		},
+	})
+	m.modelsDraft = []string{"gpt-4o", "o3-mini"}
+	m.defaultModel = "gpt-4o"
+	m.openModelsModal()
+	if !m.modelSearchFocused {
+		t.Fatal("expected search to be focused by default")
+	}
+
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if m.modelSearchQuery != "f" {
+		t.Fatalf("expected search query to capture typed f, got %q", m.modelSearchQuery)
+	}
+
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyTab})
+	if m.modelSearchFocused {
+		t.Fatal("expected tab to switch focus from search to actions")
+	}
+}
+
+func TestModelsModalCtrlShortcutWorksWhileSearchFocused(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {},
+		},
+	})
+	m.modelsDraft = []string{"gpt-4o"}
+	m.defaultModel = "gpt-4o"
+	m.openModelsModal()
+	if !m.modelSearchFocused {
+		t.Fatal("expected search focused by default")
+	}
+
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	if !m.modelEditMode {
+		t.Fatal("expected Ctrl+N to trigger add-model edit mode")
+	}
+}
+
 func TestHandleMainMouse_ProfileListClickMatchesRenderedRow(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "alpha",
