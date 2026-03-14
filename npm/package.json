@@ -1,19 +1,16 @@
 {
-  "name": "spark-agent-launcher",
-  "version": "0.5.0",
-  "description": "Install and run the spark CLI (Go binary) via npm",
+
+  "name": "@ngominhbinh708/spark",
+  "version": "0.1.6",
+  "description": "A unified launcher for AI coding agents",
   "license": "MIT",
   "bin": {
     "spark": "bin/spark.js"
   },
   "files": [
-    "bin",
-    "dist",
-    "README.md"
+    "bin"
   ],
-  "scripts": {
-    "postinstall": "node bin/install.js"
-  },
+  "scripts": {},
   "repository": {
     "type": "git",
     "url": "https://github.com/zhangsanfeng1094/spark.git"
@@ -26,5 +23,13 @@
   ],
   "engines": {
     "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@ngominhbinh708/spark-linux-x64": "npm:@ngominhbinh708/spark@0.1.6-linux-x64",
+    "@ngominhbinh708/spark-linux-arm64": "npm:@ngominhbinh708/spark@0.1.6-linux-arm64",
+    "@ngominhbinh708/spark-darwin-x64": "npm:@ngominhbinh708/spark@0.1.6-darwin-x64",
+    "@ngominhbinh708/spark-darwin-arm64": "npm:@ngominhbinh708/spark@0.1.6-darwin-arm64",
+    "@ngominhbinh708/spark-windows-x64": "npm:@ngominhbinh708/spark@0.1.6-windows-x64",
+    "@ngominhbinh708/spark-windows-arm64": "npm:@ngominhbinh708/spark@0.1.6-windows-arm64"
   }
 }

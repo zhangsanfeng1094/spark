@@ -1,4 +1,4 @@
-# spark-agent-launcher
+# @ngominhbinh708/spark
 
 [English](#english) | [中文](#中文)
 
@@ -7,13 +7,26 @@
 <a name="english"></a>
 ## English
 
-A cross-platform CLI tool for launching Spark agents.
+A unified launcher for AI coding agents with configurable OpenAI-compatible gateways.
 
 ### Installation
 
 ```bash
-npm i -g spark-agent-launcher
+npm i -g @ngominhbinh708/spark
 ```
+
+**How it works**: This package uses [npm alias](https://docs.npmjs.com/cli/v9/commands/npm-install#aliases) to automatically install the correct binary for your platform. No additional download scripts needed.
+
+### Platform Support
+
+| OS | Architecture | npm alias |
+|----|--------------|-----------|
+| macOS | ARM64 (M1/M2) | `@ngominhbinh708/spark-darwin-arm64` |
+| macOS | x64 (Intel) | `@ngominhbinh708/spark-darwin-x64` |
+| Linux | ARM64 | `@ngominhbinh708/spark-linux-arm64` |
+| Linux | x64 | `@ngominhbinh708/spark-linux-x64` |
+| Windows | ARM64 | `@ngominhbinh708/spark-windows-arm64` |
+| Windows | x64 | `@ngominhbinh708/spark-windows-x64` |
 
 ### Usage
 
@@ -21,58 +34,47 @@ npm i -g spark-agent-launcher
 # Run spark
 spark
 
+# Show version
+spark --version
+
 # Show help
 spark --help
 ```
 
-### Configuration
+### npm Alias Architecture
 
-Spark stores configuration in `~/.spark/config.json`. You can configure:
+The main package defines `optionalDependencies` using npm alias syntax:
 
-- OpenAI API key and base URL
-- Default model and profiles
-- Anthropic credentials
-
-```bash
-# Configure your profile
-spark
-# Follow the interactive prompts to set up your API key and model
+```json
+{
+  "optionalDependencies": {
+    "@ngominhbinh708/spark-linux-x64": "npm:@ngominhbinh708/spark@0.1.6-linux-x64",
+    "@ngominhbinh708/spark-darwin-arm64": "npm:@ngominhbinh708/spark@0.1.6-darwin-arm64",
+    ...
+  }
+}
 ```
 
-### Environment Variables
+npm will:
+1. Install the main package
+2. Evaluate each optionalDependency's `os`/`cpu` constraints
+3. Only install the matching platform variant
 
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_BASE_URL` | Override API base URL |
-| `OPENAI_API_KEY` | Override API key |
-| `ANTHROPIC_BASE_URL` | Anthropic-specific endpoint |
-| `ANTHROPIC_AUTH_TOKEN` | Anthropic auth token |
-| `SPARK_BINARY_URL` | Direct download URL for binary |
-| `SPARK_BINARY_BASE_URL` | Base URL for GitHub releases mirror |
-| `SPARK_BINARY_VERSION` | Specific version to download |
-
-### Manual Binary Download
-
-If npm install fails, you can manually download the binary:
-
-1. Visit [GitHub Releases](https://github.com/zhangsanfeng1094/spark/releases)
-2. Download the appropriate binary for your platform
-3. Add it to your PATH
+This is the same approach used by [@openai/codex](https://github.com/openai/codex).
 
 ### Troubleshooting
 
-#### `E403` error during npm publish
+#### Platform package not found
 
-Use an npm **Automation** token with publish permission and bypass 2FA enabled.
+```
+Platform package not found: @ngominhbinh708/spark-darwin-arm64
+```
 
-#### Network errors during install
+Try reinstalling:
 
 ```bash
-# Use a mirror
-SPARK_BINARY_BASE_URL="https://your-mirror.com/releases" npm i -g spark-agent-launcher
-
-# Or direct URL
-SPARK_BINARY_URL="https://direct-url/spark-linux-amd64" npm i -g spark-agent-launcher
+npm uninstall -g @ngominhbinh708/spark
+npm install -g @ngominhbinh708/spark@latest
 ```
 
 ---
@@ -80,13 +82,26 @@ SPARK_BINARY_URL="https://direct-url/spark-linux-amd64" npm i -g spark-agent-lau
 <a name="中文"></a>
 ## 中文
 
-跨平台的 Spark Agent 启动器 CLI 工具。
+一个统一的 AI 编码代理启动器，支持可配置的 OpenAI 兼容网关。
 
 ### 安装
 
 ```bash
-npm i -g spark-agent-launcher
+npm i -g @ngominhbinh708/spark
 ```
+
+**工作原理**：此包使用 [npm alias](https://docs.npmjs.com/cli/v9/commands/npm-install#aliases) 自动安装适合你平台的二进制文件，无需额外的下载脚本。
+
+### 支持的平台
+
+| 操作系统 | 架构 | npm 别名 |
+|---------|------|---------|
+| macOS | ARM64 (M1/M2) | `@ngominhbinh708/spark-darwin-arm64` |
+| macOS | x64 (Intel) | `@ngominhbinh708/spark-darwin-x64` |
+| Linux | ARM64 | `@ngominhbinh708/spark-linux-arm64` |
+| Linux | x64 | `@ngominhbinh708/spark-linux-x64` |
+| Windows | ARM64 | `@ngominhbinh708/spark-windows-arm64` |
+| Windows | x64 | `@ngominhbinh708/spark-windows-x64` |
 
 ### 使用方法
 
@@ -94,59 +109,46 @@ npm i -g spark-agent-launcher
 # 运行 spark
 spark
 
+# 显示版本
+spark --version
+
 # 显示帮助
 spark --help
 ```
 
-### 配置
-
-Spark 将配置存储在 `~/.spark/config.json`，你可以配置：
-
-- OpenAI API 密钥和基础 URL
-- 默认模型和配置文件
-- Anthropic 凭证
-
-```bash
-# 配置你的配置文件
-spark
-# 按照交互提示设置你的 API 密钥和模型
-```
-
-### 环境变量
-
-| 变量 | 描述 |
-|------|------|
-| `OPENAI_BASE_URL` | 覆盖 API 基础 URL |
-| `OPENAI_API_KEY` | 覆盖 API 密钥 |
-| `ANTHROPIC_BASE_URL` | Anthropic 专用端点 |
-| `ANTHROPIC_AUTH_TOKEN` | Anthropic 认证令牌 |
-| `SPARK_BINARY_URL` | 二进制文件的直接下载 URL |
-| `SPARK_BINARY_BASE_URL` | GitHub releases 镜像基础 URL |
-| `SPARK_BINARY_VERSION` | 要下载的特定版本 |
-
-### 手动下载二进制文件
-
-如果 npm 安装失败，你可以手动下载二进制文件：
-
-1. 访问 [GitHub Releases](https://github.com/zhangsanfeng1094/spark/releases)
-2. 下载适合你平台的二进制文件
-3. 将其添加到 PATH 中
-
 ### 故障排除
 
-#### npm 发布时出现 `E403` 错误
+#### 找不到平台包
 
-使用具有发布权限并启用 2FA 绑过的 npm **Automation** 令牌。
+```
+Platform package not found: @ngominhbinh708/spark-darwin-arm64
+```
 
-#### 安装时网络错误
+尝试重新安装：
 
 ```bash
-# 使用镜像
-SPARK_BINARY_BASE_URL="https://your-mirror.com/releases" npm i -g spark-agent-launcher
-
-# 或使用直接 URL
-SPARK_BINARY_URL="https://direct-url/spark-linux-amd64" npm i -g spark-agent-launcher
+npm uninstall -g @ngominhbinh708/spark
+npm install -g @ngominhbinh708/spark@latest
 ```
+
+---
+
+## Development
+
+### Building Platform Packages
+
+```bash
+cd npm
+node scripts/build-packages.js
+```
+
+This downloads binaries from GitHub Releases and creates platform packages.
+
+### Publishing
+
+The release workflow publishes:
+1. Platform packages: `@ngominhbinh708/spark@VERSION-PLATFORM-ARCH`
+2. Main package: `@ngominhbinh708/spark@VERSION`
 
 ---
 
