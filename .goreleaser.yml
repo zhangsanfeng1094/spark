@@ -15,6 +15,11 @@ builds:
     goarch:
       - amd64
       - arm64
+    ldflags:
+      - -s -w
+      - -X spark/internal/version.Version={{ .Version }}
+      - -X spark/internal/version.GitCommit={{ .Commit }}
+      - -X spark/internal/version.BuildDate={{ .Date }}
 
 archives:
   - id: spark-binaries
