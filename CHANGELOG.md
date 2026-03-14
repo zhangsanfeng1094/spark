@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/zhangsanfeng1094/spark/compare/v0.6.1...v0.7.0) (2026-03-14)
+
+
+### Features
+
+* add search and scroll to models modal ([fa8196e](https://github.com/zhangsanfeng1094/spark/commit/fa8196ee4c4020e2b2785269e64db1d8aea30e77))
+
 ## [0.6.1](https://github.com/zhangsanfeng1094/spark/compare/v0.6.0...v0.6.1) (2026-03-14)
 
 
