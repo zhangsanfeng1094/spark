@@ -1,114 +1,155 @@
-# spark npm wrapper
+# spark-agent-launcher
 
-This package installs the `spark` CLI binary and exposes it as a global command.
+[English](#english) | [中文](#中文)
 
-## Binary naming convention
+---
 
-Upload release binaries with these names:
+<a name="english"></a>
+## English
 
-- `spark-darwin-amd64`
-- `spark-darwin-arm64`
-- `spark-linux-amd64`
-- `spark-linux-arm64`
-- `spark-windows-amd64.exe`
-- `spark-windows-arm64.exe`
+A cross-platform CLI tool for launching Spark agents.
 
-## Required configuration before publish
-
-1. Update `package.json`:
-- `name` (your npm package name)
-- `repository.url` (already set to this repository by default)
-- `version` (should match the binary release tag)
-
-2. Ensure binaries are available in GitHub Releases under:
-- `https://github.com/<owner>/<repo>/releases/download/v<version>/...`
-
-3. During install, `bin/install.js` downloads from:
-- `SPARK_BINARY_URL` (highest priority, direct file URL), or
-- `SPARK_BINARY_BASE_URL` + `SPARK_BINARY_VERSION` + `SPARK_BINARY_NAME`
-
-## Local test
+### Installation
 
 ```bash
-cd agent-launch/npm
-SPARK_BINARY_URL="file-or-http-url-to-your-binary" npm install
-node bin/spark.js --help
+npm i -g spark-agent-launcher
 ```
 
-## Publish
-
-Recommended:
-1. Merge feature/fix PRs into `main`.
-2. Wait for `Release Please` (`.github/workflows/release-please.yml`) to open/update the release PR.
-3. Merge the release PR. It updates version files and creates tag `vX.Y.Z`.
-4. `Release` (`.github/workflows/release.yml`) publishes binaries and npm automatically.
-
-### One-command release (recommended)
-
-Legacy/manual path (if you do not use release PR flow):
-
-From repository root:
+### Usage
 
 ```bash
-scripts/release-npm.sh
-```
-
-This script will:
-- ask you to choose release type (`patch` / `minor` / `major` / `prerelease` / custom version)
-- verify current branch is `main`
-- verify git working tree is clean
-- run `npm version` in `npm/` (creates commit + tag `vX.Y.Z`)
-- ask whether to push `main` and tags (or pass `--push` to auto-push)
-
-## GitHub Actions auto release
-
-Repository workflow: `../.github/workflows/release.yml`
-
-It runs on tags like `v0.1.0` and will:
-1. Build and upload binaries with GoReleaser
-2. Publish the npm package from `npm/`
-3. It can also be triggered manually with `workflow_dispatch` by passing an existing tag
-
-Required setup:
-
-1. Set `npm/package.json`:
-- `version` must match the git tag (without leading `v`)
-- `repository.url` must be a real GitHub repo URL
-
-2. npm auth for publish:
-- current: `NPM_TOKEN` secret (automation token with publish permission)
-- preferred target: npm Trusted Publishing (OIDC), then token can be removed
-
-3. npm package must not have this version already published (workflow now detects this and skips duplicate publish on reruns)
-
-## User install
-
-```bash
-npm install -g <your-package-name>
+# Run spark
 spark
+
+# Show help
+spark --help
 ```
 
-## Troubleshooting
+### Configuration
 
-### npm publish returns `E403` with 2FA message
+Spark stores configuration in `~/.spark/config.json`. You can configure:
 
-Use an npm token that can publish in CI:
-- preferred: `Automation` token
-- or granular token with package `publish` permission and `Bypass 2FA` enabled
-
-Then update GitHub Actions secret `NPM_TOKEN` and publish a new version tag.
-
-### npm install fails with `getaddrinfo EAI_AGAIN github.com`
-
-This means DNS/network to GitHub is temporarily unavailable. Retry install, or set a reachable binary URL:
+- OpenAI API key and base URL
+- Default model and profiles
+- Anthropic credentials
 
 ```bash
-SPARK_BINARY_URL="https://<reachable-url>/spark-linux-amd64" npm install -g spark-agent-launcher
+# Configure your profile
+spark
+# Follow the interactive prompts to set up your API key and model
 ```
 
-You can also set `SPARK_BINARY_BASE_URL` to your mirror release base URL.
+### Environment Variables
 
-### Windows mouse click behavior
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_BASE_URL` | Override API base URL |
+| `OPENAI_API_KEY` | Override API key |
+| `ANTHROPIC_BASE_URL` | Anthropic-specific endpoint |
+| `ANTHROPIC_AUTH_TOKEN` | Anthropic auth token |
+| `SPARK_BINARY_URL` | Direct download URL for binary |
+| `SPARK_BINARY_BASE_URL` | Base URL for GitHub releases mirror |
+| `SPARK_BINARY_VERSION` | Specific version to download |
 
-The TUI click handling is tuned for Windows terminal mouse events (`MouseLeft`) and Unix-like terminals (`MouseRelease`).
-If click behavior is abnormal, test first in Windows Terminal / PowerShell, then update to the latest release binary.
+### Manual Binary Download
+
+If npm install fails, you can manually download the binary:
+
+1. Visit [GitHub Releases](https://github.com/zhangsanfeng1094/spark/releases)
+2. Download the appropriate binary for your platform
+3. Add it to your PATH
+
+### Troubleshooting
+
+#### `E403` error during npm publish
+
+Use an npm **Automation** token with publish permission and bypass 2FA enabled.
+
+#### Network errors during install
+
+```bash
+# Use a mirror
+SPARK_BINARY_BASE_URL="https://your-mirror.com/releases" npm i -g spark-agent-launcher
+
+# Or direct URL
+SPARK_BINARY_URL="https://direct-url/spark-linux-amd64" npm i -g spark-agent-launcher
+```
+
+---
+
+<a name="中文"></a>
+## 中文
+
+跨平台的 Spark Agent 启动器 CLI 工具。
+
+### 安装
+
+```bash
+npm i -g spark-agent-launcher
+```
+
+### 使用方法
+
+```bash
+# 运行 spark
+spark
+
+# 显示帮助
+spark --help
+```
+
+### 配置
+
+Spark 将配置存储在 `~/.spark/config.json`，你可以配置：
+
+- OpenAI API 密钥和基础 URL
+- 默认模型和配置文件
+- Anthropic 凭证
+
+```bash
+# 配置你的配置文件
+spark
+# 按照交互提示设置你的 API 密钥和模型
+```
+
+### 环境变量
+
+| 变量 | 描述 |
+|------|------|
+| `OPENAI_BASE_URL` | 覆盖 API 基础 URL |
+| `OPENAI_API_KEY` | 覆盖 API 密钥 |
+| `ANTHROPIC_BASE_URL` | Anthropic 专用端点 |
+| `ANTHROPIC_AUTH_TOKEN` | Anthropic 认证令牌 |
+| `SPARK_BINARY_URL` | 二进制文件的直接下载 URL |
+| `SPARK_BINARY_BASE_URL` | GitHub releases 镜像基础 URL |
+| `SPARK_BINARY_VERSION` | 要下载的特定版本 |
+
+### 手动下载二进制文件
+
+如果 npm 安装失败，你可以手动下载二进制文件：
+
+1. 访问 [GitHub Releases](https://github.com/zhangsanfeng1094/spark/releases)
+2. 下载适合你平台的二进制文件
+3. 将其添加到 PATH 中
+
+### 故障排除
+
+#### npm 发布时出现 `E403` 错误
+
+使用具有发布权限并启用 2FA 绑过的 npm **Automation** 令牌。
+
+#### 安装时网络错误
+
+```bash
+# 使用镜像
+SPARK_BINARY_BASE_URL="https://your-mirror.com/releases" npm i -g spark-agent-launcher
+
+# 或使用直接 URL
+SPARK_BINARY_URL="https://direct-url/spark-linux-amd64" npm i -g spark-agent-launcher
+```
+
+---
+
+## License
+
+MIT
