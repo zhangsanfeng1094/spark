@@ -63,6 +63,10 @@ func (m *pmModel) openModelsModal() {
 	m.modelEditIndex = -1
 	m.modelEditBuffer = ""
 	m.modelModalNote = ""
+	m.modelSearchQuery = ""
+	m.modelSearchFocused = true
+	m.modelModalScroll = 0
+	m.modelModalVisibleCount = 0
 	if len(m.modelItems) > 0 {
 		for i, mdl := range m.modelItems {
 			if mdl == m.defaultModel {
@@ -71,6 +75,7 @@ func (m *pmModel) openModelsModal() {
 			}
 		}
 	}
+	m.syncModelsModalScroll()
 }
 
 func (m *pmModel) createProfileFromModal() {
@@ -145,6 +150,7 @@ func (m *pmModel) confirmModelEdit() {
 	if len(m.modelItems) > 0 && m.modalCursor >= len(m.modelItems) {
 		m.modalCursor = len(m.modelItems) - 1
 	}
+	m.syncModelsModalScroll()
 	m.modelEditMode = false
 	m.modelEditIndex = -1
 	m.modelEditBuffer = ""
@@ -167,6 +173,7 @@ func (m *pmModel) deleteModelAtCursor() {
 	} else if removed == m.defaultModel {
 		m.defaultModel = m.modelItems[0]
 	}
+	m.syncModelsModalScroll()
 	m.modelModalNote = "Deleted selected model."
 }
 
@@ -253,6 +260,7 @@ func (m *pmModel) handleFetchModelsResult(msg fetchModelsResultMsg) {
 	if len(m.modelItems) > 0 && m.modalCursor >= len(m.modelItems) {
 		m.modalCursor = len(m.modelItems) - 1
 	}
+	m.syncModelsModalScroll()
 	m.modelModalNote = fmt.Sprintf("Fetched %d models.", len(msg.models))
 }
 
@@ -314,23 +322,23 @@ func (m *pmModel) copySelectedProfile() {
 		m.status = "Profile not found."
 		return
 	}
-	
+
 	// Generate a unique name for the copied profile
 	newName := m.uniqueProfileName(name + "-copy")
-	
+
 	// Deep copy the profile
 	newProfile := &config.Profile{
-		OpenAIBaseURL:    profile.OpenAIBaseURL,
-		OpenAIAPIKey:     profile.OpenAIAPIKey,
-		OpenAIAPIType:    profile.OpenAIAPIType,
-		OpenAIOrg:        profile.OpenAIOrg,
-		OpenAIProject:    profile.OpenAIProject,
-		AnthropicBaseURL: profile.AnthropicBaseURL,
+		OpenAIBaseURL:      profile.OpenAIBaseURL,
+		OpenAIAPIKey:       profile.OpenAIAPIKey,
+		OpenAIAPIType:      profile.OpenAIAPIType,
+		OpenAIOrg:          profile.OpenAIOrg,
+		OpenAIProject:      profile.OpenAIProject,
+		AnthropicBaseURL:   profile.AnthropicBaseURL,
 		AnthropicAuthToken: profile.AnthropicAuthToken,
-		Models:           append([]string{}, profile.Models...),
-		DefaultModel:     profile.DefaultModel,
+		Models:             append([]string{}, profile.Models...),
+		DefaultModel:       profile.DefaultModel,
 	}
-	
+
 	m.cfg.Profiles[newName] = newProfile
 	m.refreshNames()
 	m.selectByName(newName)
@@ -402,10 +410,12 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 	p.DefaultModel = strings.TrimSpace(m.defaultModel)
 	return nil
 }
+
 // testResultMsg is sent when a connection test completes
 type testResultMsg struct {
 	result TestResult
 }
+
 func (m *pmModel) testConnection() tea.Cmd {
 	logPath := appendModelConnectionTestLogf(
 		"ui trigger profile=%q base_url=%q api_type=%q default_model=%q models=%q",

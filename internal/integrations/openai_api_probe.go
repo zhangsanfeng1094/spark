@@ -111,7 +111,7 @@ func openAIProbePayload(model, endpointType string) (string, map[string]any, err
 		return "/responses", map[string]any{
 			"model":             model,
 			"input":             "ping",
-			"max_output_tokens": 1,
+			"max_output_tokens": 1024,
 			"stream":            false,
 		}, nil
 	case config.OpenAIAPITypeChatCompletions:
@@ -120,7 +120,7 @@ func openAIProbePayload(model, endpointType string) (string, map[string]any, err
 			"messages": []map[string]string{
 				{"role": "user", "content": "ping"},
 			},
-			"max_tokens": 1,
+			"max_tokens": 1024,
 			"stream":     false,
 		}, nil
 	default:

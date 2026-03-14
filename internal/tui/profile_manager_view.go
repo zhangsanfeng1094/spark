@@ -221,14 +221,42 @@ func (m *pmModel) overlayModal(bg string) string {
 		options = append(options, "[Space] Toggle  [Enter] Confirm  [Esc] Cancel")
 	case pmModalKindModels:
 		options = append(options, "Edit Models:")
+		searchLine := "Search: " + m.modelSearchQuery
+		if m.modelSearchFocused && !m.modelEditMode {
+			searchLine += "█"
+		}
+		options = append(options, pmInputStyle.Copy().Width(48).Render(searchLine))
 		options = append(options, "")
+		filtered := m.filteredModelIndices()
 		if len(m.modelItems) == 0 {
+			m.modelModalVisibleCount = 0
+			m.modelModalScroll = 0
 			options = append(options, pmItemStyle.Render("  (empty)"))
+		} else if len(filtered) == 0 {
+			m.modelModalVisibleCount = 0
+			m.modelModalScroll = 0
+			options = append(options, pmItemStyle.Render("  (no match)"))
 		} else {
-			for i, model := range m.modelItems {
+			visible := len(filtered)
+			if visible > pmModelsModalMaxVisible {
+				visible = pmModelsModalMaxVisible
+			}
+			m.modelModalVisibleCount = visible
+			m.syncModelsModalScroll()
+			if m.modelModalScroll > 0 {
+				options = append(options, lipgloss.NewStyle().Foreground(colorDim).Render("  ↑ more"))
+			}
+			start := m.modelModalScroll
+			end := start + visible
+			if end > len(filtered) {
+				end = len(filtered)
+			}
+			for i := start; i < end; i++ {
+				actualIdx := filtered[i]
+				model := m.modelItems[actualIdx]
 				cursor := "   "
 				style := pmItemStyle
-				if i == m.modalCursor {
+				if actualIdx == m.modalCursor {
 					cursor = " ➤ "
 					style = pmSelectedItemStyle
 				}
@@ -238,6 +266,9 @@ func (m *pmModel) overlayModal(bg string) string {
 				}
 				options = append(options, style.Render(cursor+prefix+model))
 			}
+			if end < len(filtered) {
+				options = append(options, lipgloss.NewStyle().Foreground(colorDim).Render("  ↓ more"))
+			}
 		}
 		if m.modelEditMode {
 			options = append(options, "")
@@ -245,7 +276,7 @@ func (m *pmModel) overlayModal(bg string) string {
 			options = append(options, "[Enter] Save Input  [Esc] Cancel Edit")
 		} else {
 			options = append(options, "")
-			options = append(options, "[F] Fetch API  [A] Add  [E] Edit  [D] Delete  [S] Set Default")
+			options = append(options, "[Tab] Toggle Search/Action  [Type] Search  [Wheel/↑/↓] Move  [Ctrl+G] Fetch  [Ctrl+N] Add  [Ctrl+R] Edit  [Ctrl+K] Delete  [Ctrl+T] Default  [Ctrl+L] Clear")
 			options = append(options, "[Enter] Confirm  [Esc] Cancel")
 		}
 		if m.modelModalNote != "" {

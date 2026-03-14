@@ -1,6 +1,182 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+func (m *pmModel) filteredModelIndices() []int {
+	if len(m.modelItems) == 0 {
+		return nil
+	}
+	q := strings.TrimSpace(strings.ToLower(m.modelSearchQuery))
+	if q == "" {
+		idxs := make([]int, len(m.modelItems))
+		for i := range m.modelItems {
+			idxs[i] = i
+		}
+		return idxs
+	}
+	idxs := make([]int, 0, len(m.modelItems))
+	for i, model := range m.modelItems {
+		if strings.Contains(strings.ToLower(model), q) {
+			idxs = append(idxs, i)
+		}
+	}
+	return idxs
+}
+
+func (m *pmModel) modelsModalVisibleCount() int {
+	count := len(m.filteredModelIndices())
+	if count == 0 {
+		return 0
+	}
+	if m.modelModalVisibleCount > 0 && m.modelModalVisibleCount <= count {
+		return m.modelModalVisibleCount
+	}
+	if count < pmModelsModalMaxVisible {
+		return count
+	}
+	return pmModelsModalMaxVisible
+}
+
+func (m *pmModel) ensureModalCursorInFiltered() {
+	if m.modalKind != pmModalKindModels {
+		return
+	}
+	filtered := m.filteredModelIndices()
+	if len(filtered) == 0 {
+		m.modalCursor = 0
+		return
+	}
+	if m.modalCursor >= 0 && m.modalCursor < len(m.modelItems) {
+		for _, idx := range filtered {
+			if idx == m.modalCursor {
+				return
+			}
+		}
+	}
+	m.modalCursor = filtered[0]
+}
+
+func (m *pmModel) syncModelsModalScroll() {
+	if m.modalKind != pmModalKindModels {
+		return
+	}
+	filtered := m.filteredModelIndices()
+	if len(filtered) == 0 {
+		m.modalCursor = 0
+		m.modelModalScroll = 0
+		m.modelModalVisibleCount = 0
+		return
+	}
+	m.ensureModalCursorInFiltered()
+	visible := m.modelsModalVisibleCount()
+	if visible <= 0 {
+		visible = 1
+	}
+	cursorPos := 0
+	for i, idx := range filtered {
+		if idx == m.modalCursor {
+			cursorPos = i
+			break
+		}
+	}
+	maxScroll := len(filtered) - visible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.modelModalScroll > maxScroll {
+		m.modelModalScroll = maxScroll
+	}
+	if m.modelModalScroll < 0 {
+		m.modelModalScroll = 0
+	}
+	if cursorPos < m.modelModalScroll {
+		m.modelModalScroll = cursorPos
+	}
+	if cursorPos >= m.modelModalScroll+visible {
+		m.modelModalScroll = cursorPos - visible + 1
+	}
+	if m.modelModalScroll < 0 {
+		m.modelModalScroll = 0
+	}
+	if m.modelModalScroll > maxScroll {
+		m.modelModalScroll = maxScroll
+	}
+}
+
+func (m *pmModel) handleModelSearchKey(msg tea.KeyMsg) bool {
+	if m.modalKind != pmModalKindModels || m.modelEditMode || !m.modelSearchFocused {
+		return false
+	}
+	switch msg.String() {
+	case "backspace":
+		r := []rune(m.modelSearchQuery)
+		if len(r) == 0 {
+			return false
+		}
+		m.modelSearchQuery = string(r[:len(r)-1])
+		m.syncModelsModalScroll()
+		return true
+	case "delete":
+		if m.modelSearchQuery == "" {
+			return false
+		}
+		m.modelSearchQuery = ""
+		m.syncModelsModalScroll()
+		return true
+	}
+	if len(msg.Runes) > 0 {
+		for _, r := range msg.Runes {
+			if r < 32 {
+				continue
+			}
+			m.modelSearchQuery += string(r)
+		}
+		m.syncModelsModalScroll()
+		return true
+	}
+	return false
+}
+
+func (m *pmModel) handleModalWheel(msg tea.MouseMsg) bool {
+	if m.modalKind != pmModalKindModels || m.modelEditMode {
+		return false
+	}
+	x, y := msg.X, msg.Y
+	if x < m.modalX || x >= m.modalX+m.modalW || y < m.modalY || y >= m.modalY+m.modalH {
+		return false
+	}
+	filtered := m.filteredModelIndices()
+	if len(filtered) == 0 {
+		return false
+	}
+	cursorPos := 0
+	for i, idx := range filtered {
+		if idx == m.modalCursor {
+			cursorPos = i
+			break
+		}
+	}
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		if cursorPos > 0 {
+			m.modalCursor = filtered[cursorPos-1]
+			m.syncModelsModalScroll()
+		}
+		return true
+	case tea.MouseWheelDown:
+		if cursorPos < len(filtered)-1 {
+			m.modalCursor = filtered[cursorPos+1]
+			m.syncModelsModalScroll()
+		}
+		return true
+	default:
+		return false
+	}
+}
 
 func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 	x, y := msg.X, msg.Y
@@ -151,6 +327,9 @@ func (m *pmModel) handleModalMouse(msg tea.MouseMsg) {
 	}
 
 	optionStartY := m.modalY + 4
+	if m.modalKind == pmModalKindModels {
+		optionStartY++ // account for always-visible search input row
+	}
 	idx := y - optionStartY
 	switch m.modalKind {
 	case pmModalKindAddProfile:
@@ -164,8 +343,25 @@ func (m *pmModel) handleModalMouse(msg tea.MouseMsg) {
 			m.toggleAPITypeOptionAtCursor()
 		}
 	case pmModalKindModels:
-		if idx >= 0 && idx < len(m.modelItems) {
-			m.modalCursor = idx
+		filtered := m.filteredModelIndices()
+		visible := m.modelsModalVisibleCount()
+		if len(filtered) == 0 || visible <= 0 {
+			return
+		}
+		row := idx
+		if m.modelModalScroll > 0 {
+			if row == 0 {
+				return
+			}
+			row--
+		}
+		if row < 0 || row >= visible {
+			return
+		}
+		actualPos := m.modelModalScroll + row
+		if actualPos >= 0 && actualPos < len(filtered) {
+			m.modalCursor = filtered[actualPos]
+			m.syncModelsModalScroll()
 		}
 	}
 }
@@ -351,34 +547,106 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 	if m.modalKind == pmModalKindModels && m.modelEditMode {
 		return m.handleModelsEditKey(msg)
 	}
+	if m.modalKind == pmModalKindModels {
+		switch msg.String() {
+		case "tab", "shift+tab":
+			m.modelSearchFocused = !m.modelSearchFocused
+			return nil
+		case "ctrl+l":
+			m.modelSearchQuery = ""
+			m.syncModelsModalScroll()
+			return nil
+		}
+		if m.handleModelSearchKey(msg) {
+			return nil
+		}
+	}
 	switch msg.String() {
 	case "esc", "q":
 		m.modalOpen = false
 		m.modalKind = pmModalKindNone
 		return nil
 	case "up", "k":
+		if m.modalKind == pmModalKindModels {
+			filtered := m.filteredModelIndices()
+			for i, idx := range filtered {
+				if idx == m.modalCursor {
+					if i > 0 {
+						m.modalCursor = filtered[i-1]
+						m.syncModelsModalScroll()
+					}
+					break
+				}
+			}
+			return nil
+		}
 		if m.modalCursor > 0 {
 			m.modalCursor--
 		}
 		return nil
 	case "down", "j":
+		if m.modalKind == pmModalKindModels {
+			filtered := m.filteredModelIndices()
+			for i, idx := range filtered {
+				if idx == m.modalCursor {
+					if i < len(filtered)-1 {
+						m.modalCursor = filtered[i+1]
+						m.syncModelsModalScroll()
+					}
+					break
+				}
+			}
+			return nil
+		}
 		maxItems := len(m.providerOptions)
 		if m.modalKind == pmModalKindOpenAIAPIType {
 			maxItems = len(m.apiTypeOptions)
-		} else if m.modalKind == pmModalKindModels {
-			maxItems = len(m.modelItems)
 		}
 		if m.modalCursor < maxItems-1 {
 			m.modalCursor++
 		}
 		return nil
 	case "tab":
+		if m.modalKind == pmModalKindModels {
+			filtered := m.filteredModelIndices()
+			if len(filtered) > 0 {
+				pos := 0
+				for i, idx := range filtered {
+					if idx == m.modalCursor {
+						pos = i
+						break
+					}
+				}
+				pos = (pos + 1) % len(filtered)
+				m.modalCursor = filtered[pos]
+				m.syncModelsModalScroll()
+			}
+			return nil
+		}
 		maxItems := m.modalItemCount()
 		if maxItems > 0 {
 			m.modalCursor = (m.modalCursor + 1) % maxItems
 		}
 		return nil
 	case "shift+tab":
+		if m.modalKind == pmModalKindModels {
+			filtered := m.filteredModelIndices()
+			if len(filtered) > 0 {
+				pos := len(filtered) - 1
+				for i, idx := range filtered {
+					if idx == m.modalCursor {
+						pos = i - 1
+						break
+					}
+				}
+				if pos < 0 {
+					pos = len(filtered) - 1
+				}
+				m.modalCursor = filtered[pos]
+				m.syncModelsModalScroll()
+			}
+			return nil
+		}
 		maxItems := m.modalItemCount()
 		if maxItems > 0 {
 			m.modalCursor--
@@ -392,27 +660,27 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 			m.toggleAPITypeOptionAtCursor()
 		}
 		return nil
-	case "f":
+	case "ctrl+g":
 		if m.modalKind == pmModalKindModels {
 			return m.fetchModelsFromAPI()
 		}
 		return nil
-	case "a":
+	case "ctrl+n":
 		if m.modalKind == pmModalKindModels {
 			m.startModelAdd()
 		}
 		return nil
-	case "e":
+	case "ctrl+r":
 		if m.modalKind == pmModalKindModels {
 			m.startModelEdit()
 		}
 		return nil
-	case "d":
+	case "ctrl+k":
 		if m.modalKind == pmModalKindModels {
 			m.deleteModelAtCursor()
 		}
 		return nil
-	case "s":
+	case "ctrl+t":
 		if m.modalKind == pmModalKindModels {
 			m.setDefaultModelAtCursor()
 		}
@@ -508,7 +776,7 @@ func (m *pmModel) modalItemCount() int {
 	case pmModalKindOpenAIAPIType:
 		return len(m.apiTypeOptions)
 	case pmModalKindModels:
-		return len(m.modelItems)
+		return len(m.filteredModelIndices())
 	default:
 		return len(m.providerOptions)
 	}

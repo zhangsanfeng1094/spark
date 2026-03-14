@@ -92,9 +92,12 @@ spark launch claude --model claude-sonnet-4-20250514 --profile work
 # Configure only (don't launch)
 spark launch codex --config
 
-# Pass extra arguments to the integration
-spark launch claude -- --dangerously-skip-permissions
+# Pass arguments to the integration
+spark launch codex -- resume abc123
+spark launch codex --model gpt-4o -- --no-auto-approve
 ```
+
+`--` 之前是 spark 自己的参数，`--` 之后的所有内容原样传给集成。
 
 ### Config Command
 
@@ -355,9 +358,12 @@ spark launch claude --model claude-sonnet-4-20250514 --profile work
 # 仅配置（不启动）
 spark launch codex --config
 
-# 传递额外参数给集成
-spark launch claude -- --dangerously-skip-permissions
+# 传递参数给集成
+spark launch codex -- resume abc123
+spark launch codex --model gpt-4o -- --no-auto-approve
 ```
+
+`--` 之前是 spark 自己的参数，`--` 之后的所有内容原样传给集成。
 
 ### 配置命令
 
