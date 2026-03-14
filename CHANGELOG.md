@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/zhangsanfeng1094/spark/compare/v0.5.0...v0.6.0) (2026-03-14)
+
+
+### Features
+
+* implement platform-specific npm packages and build workflow ([a95ab4f](https://github.com/zhangsanfeng1094/spark/commit/a95ab4f03f07affd09546404d9c64b3884de3465))
+* implement platform-specific npm packages and build workflow ([e66d5f5](https://github.com/zhangsanfeng1094/spark/commit/e66d5f5c4eb590222eac9e9c7a40c6b6ff0c4b4b))
+
 ## [0.5.0](https://github.com/zhangsanfeng1094/spark/compare/v0.4.0...v0.5.0) (2026-03-14)
 
 
