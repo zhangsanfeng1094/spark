@@ -1,2 +1,2 @@
-dist/*
-!dist/.gitkeep
+# Generated during build
+packages/

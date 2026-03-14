@@ -80,16 +80,6 @@ jobs:
             exit 1
           fi
 
-          if echo "$REPO_URL" | grep -q "REPO_OWNER/REPO_NAME"; then
-            echo "npm/package.json repository.url still contains placeholder REPO_OWNER/REPO_NAME."
-            exit 1
-          fi
-
-          if grep -R "REPO_OWNER/REPO_NAME" npm/bin/install.js npm/README.md; then
-            echo "Found unreplaced placeholder REPO_OWNER/REPO_NAME in npm wrapper files."
-            exit 1
-          fi
-
           echo "tag_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
           echo "pkg_name=$PKG_NAME" >> "$GITHUB_OUTPUT"
           echo "pkg_version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
@@ -137,23 +127,62 @@ jobs:
           node-version: 20
           registry-url: "https://registry.npmjs.org"
 
-      - name: Dry-run npm pack
-        run: npm pack --dry-run
+      - name: Build platform packages
+        run: node scripts/build-packages.js
         working-directory: npm
+        env:
+          npm_package_version: ${{ needs.validate-release.outputs.pkg_version }}
 
-      - name: Detect existing npm version
-        id: npm-version
+      - name: Check existing versions
+        id: check
         run: |
-          if npm view "${{ needs.validate-release.outputs.pkg_name }}@${{ needs.validate-release.outputs.pkg_version }}" version > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Package version already exists on npm, publish step will be skipped."
+          PKG_VERSION="${{ needs.validate-release.outputs.pkg_version }}"
+          PKG_NAME="${{ needs.validate-release.outputs.pkg_name }}"
+          
+          # Check if main package version exists
+          if npm view "${PKG_NAME}@${PKG_VERSION}" version > /dev/null 2>&1; then
+            echo "main_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Main package version already exists."
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "main_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          
+          # Check if platform version exists (only check one)
+          if npm view "${PKG_NAME}@${PKG_VERSION}-linux-x64" version > /dev/null 2>&1; then
+            echo "platform_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Platform packages already exist."
+          else
+            echo "platform_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish to npm
-        if: steps.npm-version.outputs.exists != 'true'
-        run: npm publish --provenance --access public
-        working-directory: npm
+      - name: Publish platform packages
+        if: steps.check.outputs.platform_exists != 'true'
+        run: |
+          PKG_VERSION="${{ needs.validate-release.outputs.pkg_version }}"
+          PLATFORMS="linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64 windows-arm64"
+          
+          for platform in $PLATFORMS; do
+            echo "Publishing ${PKG_NAME}@${PKG_VERSION}-${platform}..."
+            
+            # Create npm tarball for platform package
+            cd npm/packages/${platform}
+            
+            # Publish with platform-specific dist-tag
+            npm publish --access public --tag ${platform}
+            cd ../../..
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PKG_NAME: ${{ needs.validate-release.outputs.pkg_name }}
+
+      - name: Publish main package
+        if: steps.check.outputs.main_exists != 'true'
+        run: |
+          PKG_VERSION="${{ needs.validate-release.outputs.pkg_version }}"
+          PKG_NAME="${{ needs.validate-release.outputs.pkg_name }}"
+          
+          echo "Publishing ${PKG_NAME}@${PKG_VERSION}..."
+          cd npm
+          npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

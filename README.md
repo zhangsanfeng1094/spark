@@ -22,7 +22,7 @@ A unified launcher for AI coding agents with configurable OpenAI-compatible gate
 ### Install via npm (Recommended)
 
 ```bash
-npm i -g spark-agent-launcher
+npm i -g @ngominhbinh708/spark
 spark
 ```
 
@@ -285,7 +285,7 @@ Make sure the integration is installed:
 ### 通过 npm 安装（推荐）
 
 ```bash
-npm i -g spark-agent-launcher
+npm i -g @ngominhbinh708/spark
 spark
 ```
 
