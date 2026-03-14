@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/zhangsanfeng1094/spark/compare/v0.3.0...v0.4.0) (2026-03-14)
+
+
+### Features
+
+* add profile copy functionality in profile manager ([8432fa3](https://github.com/zhangsanfeng1094/spark/commit/8432fa3a4b37d9acbfd616cf2218f916c36f0c1e))
+
 ## [0.3.0](https://github.com/zhangsanfeng1094/spark/compare/v0.2.0...v0.3.0) (2026-03-03)
 
 
