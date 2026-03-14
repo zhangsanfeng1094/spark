@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/zhangsanfeng1094/spark/compare/v0.6.0...v0.6.1) (2026-03-14)
+
+
+### Bug Fixes
+
+* add automatic version update in package.json build script ([802d9d0](https://github.com/zhangsanfeng1094/spark/commit/802d9d0551e786e1d973182c5bf981793d5fdba6))
+* add automatic version update in package.json build script ([4007a52](https://github.com/zhangsanfeng1094/spark/commit/4007a526872a5ddc8dd95c40dff9b12adbbaacc1))
+
 ## [0.6.0](https://github.com/zhangsanfeng1094/spark/compare/v0.5.0...v0.6.0) (2026-03-14)
 
 
