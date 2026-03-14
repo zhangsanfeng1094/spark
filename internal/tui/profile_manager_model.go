@@ -76,6 +76,18 @@ var (
 				BorderForeground(colorAccent).
 				Bold(true)
 
+	// Left panel buttons - simpler style without border
+	pmLeftBtnStyle = lipgloss.NewStyle().
+				Foreground(colorText).
+				Background(colorDim).
+				Padding(0, 2).
+				MarginRight(1)
+
+	pmLeftActiveBtnStyle = pmLeftBtnStyle.Copy().
+				Foreground(lipgloss.Color("#ffffff")).
+				Background(colorAccent).
+				Bold(true)
+
 	pmStatusBarStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#f8f8f2")).
 				Background(lipgloss.Color("#44475a")).
@@ -107,6 +119,7 @@ const (
 
 const (
 	pmActAdd = iota
+	pmActCopy
 	pmActDel
 	pmActTest
 	pmActSave
@@ -194,6 +207,7 @@ type pmModel struct {
 	leftButtonsRelH  int
 	leftButtonsRowW  int
 	leftAddBtnW      int
+	leftCopyBtnW     int
 	rightButtonsRelY int
 	rightButtonsRelH int
 	rightButtonsRowW int
