@@ -10,22 +10,32 @@ import (
 	"spark/internal/config"
 	"spark/internal/integrations"
 	"spark/internal/tui"
+	"spark/internal/version"
 )
 
 func NewRootCmd() *cobra.Command {
+	var showVersion bool
+
 	root := &cobra.Command{
 		Use:           "spark",
 		Short:         "Launch coding agents with configurable OpenAI-compatible gateways",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if showVersion {
+				fmt.Println(version.Get().String())
+				return nil
+			}
 			return runInteractive()
 		},
 	}
 
+	root.Flags().BoolVarP(&showVersion, "version", "V", false, "Print version information")
+
 	root.AddCommand(newLaunchCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newProfileCmd())
+	root.AddCommand(newVersionCmd())
 	return root
 }
 
@@ -108,6 +118,11 @@ func newProfileCmd() *cobra.Command {
 }
 
 func runInteractive() error {
+	// Check for version updates in background
+	if updateMsg := CheckVersionStartup(); updateMsg != "" {
+		fmt.Fprintf(os.Stderr, "\n%s\n\n", updateMsg)
+	}
+
 	for {
 		options := []string{"Launch integration", "Manage profiles", "Show config file", "Quit"}
 		choice, err := tui.SelectOne("spark", options)
