@@ -212,13 +212,22 @@ func Normalize(cfg *RootConfig) {
 			ic.Profile = cfg.DefaultProfile
 		}
 	}
+	for _, p := range cfg.Profiles {
+		if p == nil {
+			continue
+		}
+		p.Models = NormalizeModels(p.Models)
+		p.DefaultModel = NormalizeModel(p.DefaultModel)
+	}
+	cfg.History.LastModelInput = NormalizeModel(cfg.History.LastModelInput)
+	cfg.History.ModelInputs = NormalizeModels(cfg.History.ModelInputs)
 }
 
 func NormalizeModels(in []string) []string {
 	out := make([]string, 0, len(in))
 	seen := map[string]struct{}{}
 	for _, m := range in {
-		m = strings.TrimSpace(m)
+		m = NormalizeModel(m)
 		if m == "" {
 			continue
 		}
@@ -229,6 +238,10 @@ func NormalizeModels(in []string) []string {
 		out = append(out, m)
 	}
 	return out
+}
+
+func NormalizeModel(in string) string {
+	return strings.TrimSpace(strings.ReplaceAll(in, "\x00", ""))
 }
 
 func ParseModelsCSV(csv string) []string {
@@ -268,7 +281,7 @@ func (c *RootConfig) ProfileByName(name string) (*Profile, error) {
 }
 
 func (c *RootConfig) UpsertModelHistory(model string) {
-	model = strings.TrimSpace(model)
+	model = NormalizeModel(model)
 	if model == "" {
 		return
 	}

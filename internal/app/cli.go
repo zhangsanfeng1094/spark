@@ -265,14 +265,14 @@ func manageProfiles() error {
 }
 
 func resolveModels(modelFlag string, profile *config.Profile) []string {
-	if strings.TrimSpace(modelFlag) != "" {
-		return []string{strings.TrimSpace(modelFlag)}
+	if model := config.NormalizeModel(modelFlag); model != "" {
+		return []string{model}
 	}
 	if profile == nil {
 		return nil
 	}
 	models := config.NormalizeModels(profile.Models)
-	defaultModel := strings.TrimSpace(profile.DefaultModel)
+	defaultModel := config.NormalizeModel(profile.DefaultModel)
 	if defaultModel != "" {
 		if len(models) == 0 {
 			return []string{defaultModel}

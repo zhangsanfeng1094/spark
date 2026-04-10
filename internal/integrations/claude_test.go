@@ -53,3 +53,20 @@ func TestResolveAnthropicAuthToken(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveClaudeModelStripsNUL(t *testing.T) {
+	p := &config.Profile{
+		DefaultModel: " glm-5\x00 ",
+		Models:       []string{"other\x00"},
+	}
+
+	if got := resolveClaudeModel(p, " glm-5\x00 "); got != "glm-5" {
+		t.Fatalf("resolveClaudeModel(flag)=%q", got)
+	}
+	if got := resolveClaudeModel(p, ""); got != "glm-5" {
+		t.Fatalf("resolveClaudeModel(default)=%q", got)
+	}
+	if got := resolveClaudeModel(&config.Profile{Models: []string{"other\x00"}}, ""); got != "other" {
+		t.Fatalf("resolveClaudeModel(models)=%q", got)
+	}
+}
