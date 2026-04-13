@@ -34,6 +34,7 @@ func NewRootCmd() *cobra.Command {
 
 	root.AddCommand(newLaunchCmd())
 	root.AddCommand(newConfigCmd())
+	root.AddCommand(newMcpCmd())
 	root.AddCommand(newProfileCmd())
 	root.AddCommand(newVersionCmd())
 	return root
@@ -56,7 +57,7 @@ Examples:
   spark launch codex --model gpt-4o -- --no-auto-approve
 
 Rule: Arguments before -- are for spark, arguments after -- are passed to the integration.`,
-		Args:  cobra.ArbitraryArgs,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var name string
 			var passArgs []string
@@ -132,7 +133,7 @@ func runInteractive() error {
 	}
 
 	for {
-		options := []string{"Launch integration", "Manage profiles", "Show config file", "Quit"}
+		options := []string{"Launch integration", "Manage profiles", "Manage MCP servers", "Show config file", "Quit"}
 		choice, err := tui.SelectOne("spark", options)
 		if err != nil {
 			return err
@@ -148,6 +149,10 @@ func runInteractive() error {
 			}
 		case "Manage profiles":
 			if err := manageProfiles(); err != nil {
+				return err
+			}
+		case "Manage MCP servers":
+			if err := manageMcpServers(); err != nil {
 				return err
 			}
 		case "Show config file":
@@ -265,14 +270,14 @@ func manageProfiles() error {
 }
 
 func resolveModels(modelFlag string, profile *config.Profile) []string {
-	if strings.TrimSpace(modelFlag) != "" {
-		return []string{strings.TrimSpace(modelFlag)}
+	if model := config.NormalizeModel(modelFlag); model != "" {
+		return []string{model}
 	}
 	if profile == nil {
 		return nil
 	}
 	models := config.NormalizeModels(profile.Models)
-	defaultModel := strings.TrimSpace(profile.DefaultModel)
+	defaultModel := config.NormalizeModel(profile.DefaultModel)
 	if defaultModel != "" {
 		if len(models) == 0 {
 			return []string{defaultModel}

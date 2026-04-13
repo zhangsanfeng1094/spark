@@ -16,33 +16,117 @@ func runCmd(name string, args []string, env []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	var mergedEnv []string
+	var droppedEnv []string
 	if env != nil {
-		cmd.Env = mergeEnv(os.Environ(), env)
+		mergedEnv, droppedEnv = mergeEnvWithDropped(os.Environ(), env)
+		cmd.Env = mergedEnv
 	}
-	return cmd.Run()
+	appendLaunchRouteLog(fmt.Sprintf(
+		"[exec] path=%q args=%s spark_env=%s env_count=%d dropped_env=%s",
+		name,
+		mustJSONForLog(args),
+		mustJSONForLog(describeEnvEntriesForLog(env)),
+		len(mergedEnv),
+		mustJSONForLog(droppedEnv),
+	))
+	err := cmd.Run()
+	if err != nil {
+		appendLaunchRouteLog(fmt.Sprintf(
+			"[exec-error] path=%q args=%s err=%q spark_env=%s dropped_env=%s",
+			name,
+			mustJSONForLog(args),
+			err.Error(),
+			mustJSONForLog(describeEnvEntriesForLog(env)),
+			mustJSONForLog(droppedEnv),
+		))
+	}
+	return err
 }
 
 func mergeEnv(base []string, override []string) []string {
+	out, _ := mergeEnvWithDropped(base, override)
+	return out
+}
+
+func mergeEnvWithDropped(base []string, override []string) ([]string, []string) {
 	keys := map[string]struct{}{}
 	out := make([]string, 0, len(base)+len(override))
+	dropped := make([]string, 0)
 	for _, kv := range override {
+		if !isUsableEnvEntry(kv) {
+			dropped = append(dropped, "override:"+describeEnvEntryForLog(kv))
+			continue
+		}
 		if i := strings.IndexByte(kv, '='); i > 0 {
 			keys[strings.ToUpper(kv[:i])] = struct{}{}
 		}
 	}
 	for _, kv := range base {
-		i := strings.IndexByte(kv, '=')
-		if i <= 0 {
-			out = append(out, kv)
+		if !isUsableEnvEntry(kv) {
+			dropped = append(dropped, "base:"+describeEnvEntryForLog(kv))
 			continue
 		}
+		i := strings.IndexByte(kv, '=')
 		if _, ok := keys[strings.ToUpper(kv[:i])]; ok {
 			continue
 		}
 		out = append(out, kv)
 	}
 	out = append(out, override...)
+	kept, sanitizedDropped := sanitizeEnv(out)
+	dropped = append(dropped, sanitizedDropped...)
+	return kept, dropped
+}
+
+func sanitizeEnv(env []string) ([]string, []string) {
+	out := env[:0]
+	dropped := make([]string, 0)
+	for _, kv := range env {
+		if !isUsableEnvEntry(kv) {
+			dropped = append(dropped, "merged:"+describeEnvEntryForLog(kv))
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out, dropped
+}
+
+func isUsableEnvEntry(s string) bool {
+	if containsNUL(s) {
+		return false
+	}
+	return strings.IndexByte(s, '=') > 0
+}
+
+func containsNUL(s string) bool {
+	return strings.IndexByte(s, 0) >= 0
+}
+
+func describeEnvEntriesForLog(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		out = append(out, describeEnvEntryForLog(kv))
+	}
 	return out
+}
+
+func describeEnvEntryForLog(kv string) string {
+	i := strings.IndexByte(kv, '=')
+	if i <= 0 {
+		return kv
+	}
+	key := kv[:i]
+	value := kv[i+1:]
+	if shouldRedactEnvValue(key) {
+		return fmt.Sprintf("%s=<redacted:%d>", key, len(value))
+	}
+	return kv
+}
+
+func shouldRedactEnvValue(key string) bool {
+	key = strings.ToUpper(strings.TrimSpace(key))
+	return strings.Contains(key, "KEY") || strings.Contains(key, "TOKEN") || strings.Contains(key, "SECRET")
 }
 
 func writeJSON(path string, v any) error {

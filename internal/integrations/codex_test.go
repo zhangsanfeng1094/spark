@@ -25,6 +25,42 @@ func TestCodexArgs(t *testing.T) {
 	}
 }
 
+func TestCodexEnv(t *testing.T) {
+	profile := &config.Profile{
+		OpenAIOrg:     "org-test",
+		OpenAIProject: "proj-test",
+	}
+
+	t.Run("does not inject OPENAI_BASE_URL", func(t *testing.T) {
+		got := codexEnv(profile, "key-123")
+		if containsEnvKey(got, "OPENAI_BASE_URL") {
+			t.Fatalf("expected OPENAI_BASE_URL to be omitted, got %v", got)
+		}
+		if !containsEnvEntry(got, "OPENAI_ORG_ID=org-test") {
+			t.Fatalf("expected OPENAI_ORG_ID to be preserved, got %v", got)
+		}
+		if !containsEnvEntry(got, "OPENAI_PROJECT_ID=proj-test") {
+			t.Fatalf("expected OPENAI_PROJECT_ID to be preserved, got %v", got)
+		}
+		if !containsEnvEntry(got, "OPENAI_API_KEY=key-123") {
+			t.Fatalf("expected OPENAI_API_KEY to be preserved, got %v", got)
+		}
+		if !containsEnvEntry(got, "CODEX_API_KEY=key-123") {
+			t.Fatalf("expected CODEX_API_KEY to be preserved, got %v", got)
+		}
+	})
+
+	t.Run("omits empty key entries", func(t *testing.T) {
+		got := codexEnv(profile, "")
+		if containsEnvKey(got, "OPENAI_API_KEY") {
+			t.Fatalf("expected OPENAI_API_KEY to be omitted, got %v", got)
+		}
+		if containsEnvKey(got, "CODEX_API_KEY") {
+			t.Fatalf("expected CODEX_API_KEY to be omitted, got %v", got)
+		}
+	})
+}
+
 func TestCodexProxyModeForAPIType(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -84,4 +120,23 @@ func TestResolveOpenAIAPIKey(t *testing.T) {
 			t.Fatalf("expected env OPENAI_API_KEY to override profile, got key=%q source=%q", got, source)
 		}
 	})
+}
+
+func containsEnvKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, entry := range env {
+		if len(entry) >= len(prefix) && entry[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
+}
+
+func containsEnvEntry(env []string, want string) bool {
+	for _, entry := range env {
+		if entry == want {
+			return true
+		}
+	}
+	return false
 }

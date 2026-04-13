@@ -42,18 +42,18 @@ func anthropicBaseURL(profile *config.Profile) string {
 }
 
 func resolveClaudeModel(profile *config.Profile, model string) string {
-	m := strings.TrimSpace(model)
+	m := config.NormalizeModel(model)
 	if m != "" {
 		return m
 	}
 	if profile == nil {
 		return ""
 	}
-	if strings.TrimSpace(profile.DefaultModel) != "" {
-		return strings.TrimSpace(profile.DefaultModel)
+	if m = config.NormalizeModel(profile.DefaultModel); m != "" {
+		return m
 	}
 	if len(profile.Models) > 0 {
-		return strings.TrimSpace(profile.Models[0])
+		return config.NormalizeModel(profile.Models[0])
 	}
 	return ""
 }

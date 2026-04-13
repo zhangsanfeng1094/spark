@@ -20,6 +20,11 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		DefaultModel:  "gpt-4.1",
 	}
 	cfg.UpsertModelHistory("gpt-4.1-mini")
+	cfg.SetMcpServer("docs", &McpServerConfig{
+		Command: "npx",
+		Args:    []string{"-y", "@modelcontextprotocol/server-docs"},
+		Enabled: true,
+	})
 
 	if err := Save(cfg); err != nil {
 		t.Fatalf("Save failed: %v", err)
@@ -47,6 +52,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got.History.LastModelInput != "gpt-4.1-mini" {
 		t.Fatalf("history last model mismatch, got %q", got.History.LastModelInput)
+	}
+	if got.GetMcpServer("docs") == nil || got.GetMcpServer("docs").Command != "npx" {
+		t.Fatalf("mcp server not persisted correctly: %#v", got.GetMcpServer("docs"))
 	}
 }
 
@@ -89,6 +97,44 @@ func TestUpsertModelHistoryDedupAndLimit(t *testing.T) {
 	}
 	if cfg.History.ModelInputs[0] != "model-29" {
 		t.Fatalf("latest history item should be first, got %q", cfg.History.ModelInputs[0])
+	}
+}
+
+func TestNormalizeModelStripsNUL(t *testing.T) {
+	got := NormalizeModel(" glm-5\x00 ")
+	if got != "glm-5" {
+		t.Fatalf("NormalizeModel returned %q", got)
+	}
+}
+
+func TestNormalizeSanitizesStoredModels(t *testing.T) {
+	cfg := &RootConfig{
+		DefaultProfile: "default",
+		Profiles: map[string]*Profile{
+			"default": {
+				Models:       []string{"glm-5\x00", " glm-5 ", "other"},
+				DefaultModel: " glm-5\x00 ",
+			},
+		},
+		History: History{
+			LastModelInput: " glm-5\x00 ",
+			ModelInputs:    []string{" glm-5\x00 ", "other"},
+		},
+	}
+
+	Normalize(cfg)
+
+	if cfg.Profiles["default"].DefaultModel != "glm-5" {
+		t.Fatalf("DefaultModel=%q", cfg.Profiles["default"].DefaultModel)
+	}
+	if !reflect.DeepEqual(cfg.Profiles["default"].Models, []string{"glm-5", "other"}) {
+		t.Fatalf("Models=%#v", cfg.Profiles["default"].Models)
+	}
+	if cfg.History.LastModelInput != "glm-5" {
+		t.Fatalf("LastModelInput=%q", cfg.History.LastModelInput)
+	}
+	if !reflect.DeepEqual(cfg.History.ModelInputs, []string{"glm-5", "other"}) {
+		t.Fatalf("ModelInputs=%#v", cfg.History.ModelInputs)
 	}
 }
 

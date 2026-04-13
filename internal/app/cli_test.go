@@ -60,3 +60,22 @@ func TestResolveModelsDefaultModelDedupAndReorder(t *testing.T) {
 		t.Fatalf("default model reorder mismatch, got %v want %v", got, want)
 	}
 }
+
+func TestResolveModelsStripsNUL(t *testing.T) {
+	profile := &config.Profile{
+		Models:       []string{"glm-5\x00", "other"},
+		DefaultModel: " glm-5\x00 ",
+	}
+
+	got := resolveModels("", profile)
+	want := []string{"glm-5", "other"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolveModels mismatch, got %v want %v", got, want)
+	}
+
+	got = resolveModels(" glm-5\x00 ", profile)
+	want = []string{"glm-5"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolveModels flag mismatch, got %v want %v", got, want)
+	}
+}
