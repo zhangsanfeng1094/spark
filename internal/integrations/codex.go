@@ -82,19 +82,7 @@ func (c *Codex) Run(profile *config.Profile, model string, args []string) error 
 	}
 
 	cmdArgs := c.args(model, envBaseURL, args)
-
-	env := []string{
-		"OPENAI_BASE_URL=" + envBaseURL,
-		"OPENAI_ORG_ID=" + profile.OpenAIOrg,
-		"OPENAI_PROJECT_ID=" + profile.OpenAIProject,
-	}
-	if strings.TrimSpace(envKey) != "" {
-		env = append(env,
-			"OPENAI_API_KEY="+envKey,
-			"CODEX_API_KEY="+envKey,
-		)
-	}
-	return runCmd("codex", cmdArgs, env)
+	return runCmd("codex", cmdArgs, codexEnv(profile, envKey))
 }
 
 func resolveOpenAIAPIKey(profileKey string) (key string, source string) {
@@ -117,4 +105,18 @@ func codexProxyModeForAPIType(apiType string) (responsesProxyMode, bool) {
 	default:
 		return responsesProxyModeChatCompletionsOnly, true
 	}
+}
+
+func codexEnv(profile *config.Profile, envKey string) []string {
+	env := []string{
+		"OPENAI_ORG_ID=" + profile.OpenAIOrg,
+		"OPENAI_PROJECT_ID=" + profile.OpenAIProject,
+	}
+	if strings.TrimSpace(envKey) != "" {
+		env = append(env,
+			"OPENAI_API_KEY="+envKey,
+			"CODEX_API_KEY="+envKey,
+		)
+	}
+	return env
 }

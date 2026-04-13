@@ -20,6 +20,11 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		DefaultModel:  "gpt-4.1",
 	}
 	cfg.UpsertModelHistory("gpt-4.1-mini")
+	cfg.SetMcpServer("docs", &McpServerConfig{
+		Command: "npx",
+		Args:    []string{"-y", "@modelcontextprotocol/server-docs"},
+		Enabled: true,
+	})
 
 	if err := Save(cfg); err != nil {
 		t.Fatalf("Save failed: %v", err)
@@ -47,6 +52,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got.History.LastModelInput != "gpt-4.1-mini" {
 		t.Fatalf("history last model mismatch, got %q", got.History.LastModelInput)
+	}
+	if got.GetMcpServer("docs") == nil || got.GetMcpServer("docs").Command != "npx" {
+		t.Fatalf("mcp server not persisted correctly: %#v", got.GetMcpServer("docs"))
 	}
 }
 

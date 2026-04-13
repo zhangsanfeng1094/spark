@@ -132,6 +132,7 @@ type RootConfig struct {
 	Profiles       map[string]*Profile           `json:"profiles"`
 	Integrations   map[string]*IntegrationConfig `json:"integrations"`
 	History        History                       `json:"history,omitempty"`
+	McpServers     map[string]*McpServerConfig   `json:"mcp_servers,omitempty"`
 }
 
 func defaultConfig() *RootConfig {
@@ -144,6 +145,7 @@ func defaultConfig() *RootConfig {
 			},
 		},
 		Integrations: map[string]*IntegrationConfig{},
+		McpServers:   map[string]*McpServerConfig{},
 	}
 }
 
@@ -203,6 +205,9 @@ func Normalize(cfg *RootConfig) {
 	}
 	if cfg.Integrations == nil {
 		cfg.Integrations = map[string]*IntegrationConfig{}
+	}
+	if cfg.McpServers == nil {
+		cfg.McpServers = map[string]*McpServerConfig{}
 	}
 	for _, ic := range cfg.Integrations {
 		if ic == nil {
