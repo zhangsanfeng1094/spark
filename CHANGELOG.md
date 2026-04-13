@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/zhangsanfeng1094/spark/compare/v0.7.0...v0.8.0) (2026-04-13)
+
+
+### Features
+
+* 增加mcp 同步机制 ([2de0c58](https://github.com/zhangsanfeng1094/spark/commit/2de0c586e9e83acea4fea755866122e644c96c3d))
+
 ## [0.7.0](https://github.com/zhangsanfeng1094/spark/compare/v0.6.1...v0.7.0) (2026-03-14)
 
 
