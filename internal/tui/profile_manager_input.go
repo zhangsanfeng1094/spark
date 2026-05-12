@@ -183,69 +183,76 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 	leftX1, leftY1 := m.leftContentX, m.leftContentY
 	rightX1, rightY1 := m.rightContentX, m.rightContentY
 
-	profileIdx := y - (leftY1 + 2)
-	if x >= leftX1 && x <= leftX1+27 && profileIdx >= 0 && profileIdx < len(m.profileNames) {
-		m.focusArea = pmFocusProfiles
-		m.switchProfile(profileIdx)
-		return nil
+	if x >= leftX1 && x <= leftX1+27 {
+		for i, row := range m.leftVisibleRows {
+			if y == leftY1+row && i < len(m.leftVisibleIdxs) {
+				m.focusArea = pmFocusProfiles
+				m.switchProfile(m.leftVisibleIdxs[i])
+				return nil
+			}
+		}
 	}
 
 	leftBtnH := m.leftButtonsRelH
 	if leftBtnH <= 0 {
 		leftBtnH = 1
 	}
-	leftRowW := m.leftButtonsRowW
-	if leftRowW <= 0 {
-		leftRowW = 21
-	}
 	leftAddW := m.leftAddBtnW
 	if leftAddW <= 0 {
 		leftAddW = 10
 	}
+	leftCopyW := m.leftCopyBtnW
+	if leftCopyW <= 0 {
+		leftCopyW = 11
+	}
+	leftDefaultW := m.leftDefaultBtnW
+	if leftDefaultW <= 0 {
+		leftDefaultW = 14
+	}
 	leftBtnsY1 := leftY1 + m.leftButtonsRelY
 	leftBtnsY2 := leftBtnsY1 + leftBtnH - 1
-	// Restrict clicks to inside button borders (exclude top/bottom border rows).
+	leftBtns2Y1 := leftY1 + m.leftButtonsRow2Y
+	leftBtns2Y2 := leftBtns2Y1 + leftBtnH - 1
 	if leftBtnH >= 3 {
 		leftBtnsY1++
 		leftBtnsY2--
+		leftBtns2Y1++
+		leftBtns2Y2--
 	}
-	if leftBtnsY2 >= leftBtnsY1 {
+	if (leftBtnsY2 >= leftBtnsY1 && y >= leftBtnsY1 && y <= leftBtnsY2) || (leftBtns2Y2 >= leftBtns2Y1 && y >= leftBtns2Y1 && y <= leftBtns2Y2) {
 		m.focusArea = pmFocusActions
-		addHitW := leftAddW
-		if addHitW > 0 {
-			addHitW-- // strip right margin from styled button
+		if y >= leftBtnsY1 && y <= leftBtnsY2 {
+			addHitW := max(1, leftAddW-2)
+			copyHitW := max(1, leftCopyW-2)
+			addX1 := leftX1
+			addX2 := addX1 + addHitW - 1
+			copyX1 := leftX1 + leftAddW
+			copyX2 := copyX1 + copyHitW - 1
+			if x >= addX1 && x <= addX2 {
+				m.actionIndex = pmActAdd
+				m.modalIgnoreNextClick = true
+				return m.runAction(pmActAdd)
+			}
+			if x >= copyX1 && x <= copyX2 {
+				m.actionIndex = pmActCopy
+				return m.runAction(pmActCopy)
+			}
 		}
-		leftCopyW := m.leftCopyBtnW
-		if leftCopyW <= 0 {
-			leftCopyW = 11
-		}
-		copyHitW := leftCopyW
-		if copyHitW > 0 {
-			copyHitW-- // strip right margin from styled button
-		}
-		delTotalW := leftRowW - leftAddW - leftCopyW
-		delHitW := delTotalW
-		if delHitW > 0 {
-			delHitW-- // strip trailing row margin on the right button
-		}
-		addX1 := leftX1
-		addX2 := addX1 + addHitW - 1
-		copyX1 := leftX1 + leftAddW
-		copyX2 := copyX1 + copyHitW - 1
-		delX1 := leftX1 + leftAddW + leftCopyW
-		delX2 := delX1 + delHitW - 1
-		if y >= leftBtnsY1 && y <= leftBtnsY2 && x >= addX1 && x <= addX2 {
-			m.actionIndex = pmActAdd
-			m.modalIgnoreNextClick = true
-			return m.runAction(pmActAdd)
-		}
-		if y >= leftBtnsY1 && y <= leftBtnsY2 && x >= copyX1 && x <= copyX2 {
-			m.actionIndex = pmActCopy
-			return m.runAction(pmActCopy)
-		}
-		if y >= leftBtnsY1 && y <= leftBtnsY2 && x >= delX1 && x <= delX2 {
-			m.actionIndex = pmActDel
-			return m.runAction(pmActDel)
+		if y >= leftBtns2Y1 && y <= leftBtns2Y2 {
+			defaultHitW := max(1, leftDefaultW-2)
+			delHitW := max(1, m.leftButtonsRow2W-leftDefaultW-2)
+			defaultX1 := leftX1
+			defaultX2 := defaultX1 + defaultHitW - 1
+			delX1 := leftX1 + leftDefaultW
+			delX2 := delX1 + delHitW - 1
+			if x >= defaultX1 && x <= defaultX2 {
+				m.actionIndex = pmActDefault
+				return m.runAction(pmActDefault)
+			}
+			if x >= delX1 && x <= delX2 {
+				m.actionIndex = pmActDel
+				return m.runAction(pmActDel)
+			}
 		}
 	}
 
@@ -284,6 +291,10 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 	if rightTestW <= 0 {
 		rightTestW = 10
 	}
+	rightGapW := m.rightButtonsGapW
+	if rightGapW < 0 {
+		rightGapW = 0
+	}
 	rightBtnsY1 := rightY1 + m.rightButtonsRelY
 	rightBtnsY2 := rightBtnsY1 + rightBtnH - 1
 	// Restrict clicks to inside button borders (exclude top/bottom border rows).
@@ -297,14 +308,14 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 		if testHitW > 0 {
 			testHitW-- // strip right margin from styled button
 		}
-		saveTotalW := rightRowW - rightTestW
+		saveTotalW := rightRowW - rightTestW - rightGapW
 		saveHitW := saveTotalW
 		if saveHitW > 0 {
 			saveHitW-- // strip trailing row margin on the right button
 		}
 		testX1 := rightX1
 		testX2 := testX1 + testHitW - 1
-		saveX1 := rightX1 + rightTestW
+		saveX1 := rightX1 + rightTestW + rightGapW
 		saveX2 := saveX1 + saveHitW - 1
 		if y >= rightBtnsY1 && y <= rightBtnsY2 && x >= testX1 && x <= testX2 {
 			m.actionIndex = pmActTest
@@ -402,16 +413,42 @@ func (m *pmModel) handleFieldShortcut(msg tea.KeyMsg) bool {
 
 func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch msg.String() {
-	case "ctrl+c", "esc":
+	case "ctrl+c":
 		return tea.Quit, true
+	case "esc":
+		switch m.focusArea {
+		case pmFocusFields, pmFocusActions:
+			m.focusArea = pmFocusProfiles
+			return nil, true
+		default:
+			return tea.Quit, true
+		}
 	case "ctrl+s":
 		m.save()
 		return nil, true
 	case "ctrl+d":
-		m.cfg.DefaultProfile = m.currentProfileName()
-		m.dirty = true
-		m.status = "Set '" + m.cfg.DefaultProfile + "' as default. Save to persist."
+		m.setCurrentProfileDefault()
 		return nil, true
+	case "a":
+		m.focusArea = pmFocusActions
+		m.actionIndex = pmActAdd
+		return m.runAction(pmActAdd), true
+	case "c":
+		m.focusArea = pmFocusActions
+		m.actionIndex = pmActCopy
+		return m.runAction(pmActCopy), true
+	case "d":
+		m.focusArea = pmFocusActions
+		m.actionIndex = pmActDel
+		return m.runAction(pmActDel), true
+	case "f":
+		m.focusArea = pmFocusActions
+		m.actionIndex = pmActDefault
+		return m.runAction(pmActDefault), true
+	case "t":
+		m.focusArea = pmFocusActions
+		m.actionIndex = pmActTest
+		return m.runAction(pmActTest), true
 	case "tab":
 		m.focusNextByTab()
 		return nil, true

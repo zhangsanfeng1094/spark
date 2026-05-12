@@ -821,11 +821,9 @@ func (m *mcpManagerModel) View() string {
 		m.rightPaneStyle(rightW).Render(right),
 	)
 
-	statusText := m.renderStatusBar()
-	if m.confirmDelete {
-		statusText = pmStatusErrStyle.Render(statusText)
-	}
-	statusBar := pmStatusBarStyle.Width(m.width - 4).Render(statusText)
+	statusBar := pmStatusBarStyle.Width(m.width - 4).Render(
+		lipgloss.NewStyle().Align(lipgloss.Right).Foreground(colorMuted).Render(m.contextHelpText()),
+	)
 
 	return fitToViewportHeight(pmAppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, subtitle, body, statusBar)), m.height)
 }
@@ -884,6 +882,32 @@ func (m *mcpManagerModel) renderStatusBar() string {
 		),
 		pmStatusLogStyle.Render("↳ "+statusLog),
 	)
+}
+
+func (m *mcpManagerModel) statusSummaryText() string {
+	main, _ := splitStatusText(m.status)
+	main = strings.TrimSpace(main)
+	if main == "" || strings.EqualFold(main, "Ready.") || strings.EqualFold(main, "Ready") {
+		return "No recent activity"
+	}
+	return main
+}
+
+func (m *mcpManagerModel) renderStatusSection(width int) []string {
+	title := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Status")
+	statusText := m.statusSummaryText()
+	return []string{
+		title,
+		lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(statusText),
+	}
+}
+
+func (m *mcpManagerModel) renderHelpSection(width int) []string {
+	title := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Help")
+	return []string{
+		title,
+		lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(m.contextHelpText()),
+	}
 }
 
 func (m *mcpManagerModel) contextHelpText() string {
@@ -980,6 +1004,10 @@ func (m *mcpManagerModel) renderDetails() string {
 	}
 	lines = append(lines, "", lipgloss.NewStyle().Bold(true).Render("Diagnostics"))
 	lines = append(lines, m.renderDiagnostics(status, m.probes[name])...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderStatusSection(max(36, m.width-50))...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderHelpSection(max(36, m.width-50))...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -997,6 +1025,10 @@ func (m *mcpManagerModel) renderEmptyState() string {
 		"",
 		lipgloss.NewStyle().Foreground(colorDim).Render("The Actions list on the left is the default focus."),
 	}
+	lines = append(lines, "")
+	lines = append(lines, m.renderStatusSection(max(36, m.width-50))...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderHelpSection(max(36, m.width-50))...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -1014,6 +1046,7 @@ func (m *mcpManagerModel) renderEditor() string {
 		modeForm = renderMCPModeToggle("Form", false)
 		modeRaw = renderMCPModeToggle("Raw YAML/JSON", true)
 	}
+	contentWidth := max(36, m.width-50)
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render(title),
 		fmt.Sprintf("View: %s   %s", modeForm, modeRaw),
@@ -1037,10 +1070,19 @@ func (m *mcpManagerModel) renderEditor() string {
 		lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Tab/Shift+Tab move fields. Left/Right changes select fields."))
 	} else {
 		editorText := renderCursorText(m.rawEditor, m.rawCursor)
-		lines = append(lines, pmFocusedInputStyle.Copy().Width(max(36, m.width-50)).Height(max(12, m.height-14)).Render(editorText))
+		lines = append(lines, pmFocusedInputStyle.Copy().Width(contentWidth).Height(max(12, m.height-14)).Render(editorText))
 		lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Tab exits editor. Format must be valid YAML/JSON."))
 	}
-	lines = append(lines, "", lipgloss.NewStyle().Foreground(colorText).Render("[ Ctrl+S Save ]   [ Ctrl+P Save & Probe ]   [ Esc Cancel ]"))
+	actionTitle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Actions")
+	saveBtn := pmPrimaryBtnStyle.Copy().MarginRight(0).Render("[Ctrl+S] Save")
+	probeBtn := pmBtnStyle.Copy().MarginRight(0).Render("[Ctrl+P] Save & Probe")
+	cancelBtn := pmBtnStyle.Copy().MarginRight(0).Render("[Esc] Cancel")
+	actionRow1 := lipgloss.JoinHorizontal(lipgloss.Top, probeBtn, lipgloss.PlaceHorizontal(max(2, contentWidth-lipgloss.Width(probeBtn)-lipgloss.Width(saveBtn)), lipgloss.Right, saveBtn))
+	actionRow2 := cancelBtn
+	lines = append(lines, "", actionTitle, actionRow1, actionRow2, "")
+	lines = append(lines, m.renderStatusSection(contentWidth)...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderHelpSection(contentWidth)...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -1429,6 +1471,10 @@ func (m *mcpManagerModel) renderTransferMenu() string {
 		lines = append(lines, m.renderTransferItem(i, item))
 	}
 	lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Import skips same-name Spark servers. Export overwrites same-name target servers."))
+	lines = append(lines, "")
+	lines = append(lines, m.renderStatusSection(max(36, m.width-50))...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderHelpSection(max(36, m.width-50))...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 

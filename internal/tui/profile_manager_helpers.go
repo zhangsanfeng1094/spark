@@ -81,9 +81,9 @@ func (m *pmModel) loadSelectedProfileFields() {
 	m.fields = []pmField{
 		{label: "Profile Name", value: name},
 		{label: "Provider Type", value: detectProviderType(p), readOnly: true},
-		{label: "OpenAI Base URL", value: p.OpenAIBaseURL},
-		{label: "OpenAI API Key", value: p.OpenAIAPIKey, masked: true},
-		{label: "OpenAI API Type", value: displayOpenAIAPIType(p.OpenAIAPIType), readOnly: true},
+		{label: "Base URL", value: p.OpenAIBaseURL},
+		{label: "API Key", value: p.OpenAIAPIKey, masked: true},
+		{label: "API Type", value: displayOpenAIAPIType(p.OpenAIAPIType), readOnly: true},
 		{label: "Models", value: formatModelsSummary(m.modelsDraft, m.defaultModel), readOnly: true},
 	}
 	for i := range m.fields {
@@ -96,15 +96,12 @@ func (m *pmModel) loadSelectedProfileFields() {
 
 func formatModelsSummary(models []string, defaultModel string) string {
 	if len(models) == 0 {
-		if defaultModel == "" {
-			return "0 models"
-		}
-		return "0 models (default: " + defaultModel + ")"
+		return "0 models"
 	}
 	if defaultModel == "" {
 		return fmt.Sprintf("%d models", len(models))
 	}
-	return fmt.Sprintf("%d models (default: %s)", len(models), defaultModel)
+	return fmt.Sprintf("%d models · %s", len(models), truncateSummaryValue(defaultModel, 18))
 }
 
 func (m *pmModel) syncModelFieldViews() {
@@ -161,6 +158,18 @@ func pmSlug(s string) string {
 
 func parseCSVModels(csv string) []string {
 	return config.ParseModelsCSV(csv)
+}
+
+func truncateSummaryValue(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len([]rune(value)) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
 }
 
 func (m *pmModel) uniqueProfileName(base string) string {

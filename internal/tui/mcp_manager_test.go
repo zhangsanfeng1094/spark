@@ -256,9 +256,9 @@ func TestMCPManagerRenderActionsAndStatusBarContext(t *testing.T) {
 	m.width = 120
 
 	right := m.renderDetails()
-	for _, unwanted := range []string{"Actions", "Transfer"} {
-		if strings.Contains(right, unwanted) {
-			t.Fatalf("expected details to omit %q, got %q", unwanted, right)
+	for _, want := range []string{"Status", "Help", "No recent activity"} {
+		if !strings.Contains(right, want) {
+			t.Fatalf("expected details to contain %q, got %q", want, right)
 		}
 	}
 
@@ -322,13 +322,10 @@ func TestMCPManagerEditorFlowPreservesBrowseUntilExplicitEdit(t *testing.T) {
 
 	m.startEditCurrent()
 	editor := m.renderDetails()
-	for _, want := range []string{"Edit Server: docs", "[ Ctrl+S Save ]", "[ Ctrl+P Save & Probe ]"} {
+	for _, want := range []string{"Edit Server: docs", "Actions", "[Ctrl+S] Save", "[Ctrl+P] Save & Probe", "Help"} {
 		if !strings.Contains(editor, want) {
 			t.Fatalf("expected editor to contain %q, got %q", want, editor)
 		}
-	}
-	if !strings.Contains(editor, "[ Ctrl+S Save ]") || !strings.Contains(editor, "[ Ctrl+P Save & Probe ]") {
-		t.Fatalf("expected editor footer actions, got %q", editor)
 	}
 }
 

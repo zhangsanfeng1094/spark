@@ -64,7 +64,7 @@ func SelectOne(title string, options []string) (string, error) {
 		options: options,
 	}
 	// 启用鼠标支持
-	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	out, err := p.Run()
 	if err != nil {
 		return "", err
@@ -83,7 +83,7 @@ func InputWithDefault(prompt, def string) (string, error) {
 		value: def,
 	}
 	// 启用鼠标支持 (虽然输入框主要靠键盘，但开启鼠标可以防止意外阻塞)
-	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	out, err := p.Run()
 	if err != nil {
 		return "", err
@@ -111,7 +111,7 @@ func Confirm(prompt string, def bool) (bool, error) {
 		options: choices,
 		cursor:  cursor,
 	}
-	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	out, err := p.Run()
 	if err != nil {
 		return false, err

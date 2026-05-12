@@ -35,6 +35,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newLaunchCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newMcpCmd())
+	root.AddCommand(newSkillCmd())
 	root.AddCommand(newProfileCmd())
 	root.AddCommand(newVersionCmd())
 	return root
@@ -126,6 +127,34 @@ func newProfileCmd() *cobra.Command {
 	return cmd
 }
 
+func interactiveMenuOptions() []string {
+	return []string{"Launch integration", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
+}
+
+func interactiveMenuDescriptions() map[string]string {
+	return map[string]string{
+		"Launch integration": "Start Spark with the selected coding agent integration using the active profile and model settings.",
+		"Manage profiles":    "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
+		"Manage MCP servers": "Manage MCP server entries, health probes, and transport settings.",
+		"Manage skills":      "Browse installed skills, add new ones, and toggle them on or off.",
+		"Show config file":   "Print the active Spark config path after leaving the dashboard.",
+		"Quit":               "Exit Spark without making additional changes.",
+	}
+}
+
+func interactiveDashboardActions() []tui.DashboardAction {
+	descriptions := interactiveMenuDescriptions()
+	options := interactiveMenuOptions()
+	actions := make([]tui.DashboardAction, 0, len(options))
+	for _, option := range options {
+		actions = append(actions, tui.DashboardAction{
+			Title:       option,
+			Description: descriptions[option],
+		})
+	}
+	return actions
+}
+
 func runInteractive() error {
 	// Check for version updates in background
 	if updateMsg := CheckVersionStartup(); updateMsg != "" {
@@ -133,8 +162,15 @@ func runInteractive() error {
 	}
 
 	for {
-		options := []string{"Launch integration", "Manage profiles", "Manage MCP servers", "Show config file", "Quit"}
-		choice, err := tui.SelectOne("spark", options)
+		summary := tui.DashboardSummary{}
+		if path, err := config.ConfigPath(); err == nil {
+			summary.ConfigPath = path
+		}
+		if cfg, err := config.Load(); err == nil {
+			summary.CurrentProfile = cfg.DefaultProfile
+		}
+
+		choice, err := tui.SelectDashboard("Spark", interactiveDashboardActions(), summary)
 		if err != nil {
 			return err
 		}
@@ -153,6 +189,10 @@ func runInteractive() error {
 			}
 		case "Manage MCP servers":
 			if err := manageMcpServers(); err != nil {
+				return err
+			}
+		case "Manage skills":
+			if err := manageSkills(); err != nil {
 				return err
 			}
 		case "Show config file":
@@ -267,6 +307,10 @@ func manageProfiles() error {
 		return err
 	}
 	return tui.ManageProfilesDashboard(cfg)
+}
+
+func manageSkills() error {
+	return tui.ManageSkillsDashboard()
 }
 
 func resolveModels(modelFlag string, profile *config.Profile) []string {

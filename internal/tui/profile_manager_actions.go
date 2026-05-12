@@ -19,6 +19,9 @@ func (m *pmModel) runAction(action int) tea.Cmd {
 	case pmActDel:
 		m.deleteSelectedProfile()
 		return nil
+	case pmActDefault:
+		m.setCurrentProfileDefault()
+		return nil
 	case pmActTest:
 		return m.testConnection()
 	case pmActSave:
@@ -26,6 +29,12 @@ func (m *pmModel) runAction(action int) tea.Cmd {
 		return nil
 	}
 	return nil
+}
+
+func (m *pmModel) setCurrentProfileDefault() {
+	m.cfg.DefaultProfile = m.currentProfileName()
+	m.dirty = true
+	m.status = "Set '" + m.cfg.DefaultProfile + "' as default. Save to persist."
 }
 
 func (m *pmModel) openAddModal() {
@@ -88,7 +97,7 @@ func (m *pmModel) createProfileFromModal() {
 	m.modalOpen = false
 	m.modalKind = pmModalKindNone
 	m.dirty = true
-	m.status = fmt.Sprintf("Created '%s'. Edit fields and Save.", name)
+	m.status = fmt.Sprintf("Created '%s'. Edit fields, then save.", name)
 }
 
 func (m *pmModel) toggleAPITypeOptionAtCursor() {
@@ -283,7 +292,7 @@ func (m *pmModel) confirmAPITypeSelection() {
 	m.modalOpen = false
 	m.modalKind = pmModalKindNone
 	m.dirty = true
-	m.status = "OpenAI API Type updated. Save to persist."
+	m.status = "API type updated. Save to persist."
 }
 
 func (m *pmModel) deleteSelectedProfile() {
@@ -393,10 +402,10 @@ func (m *pmModel) save() {
 	m.loadSelectedProfileFields()
 	m.dirty = false
 	if detectedAPIType != "" {
-		m.status = fmt.Sprintf("Configuration saved successfully. Detected OpenAI API Type: %s.", detectedAPIType)
+		m.status = fmt.Sprintf("Saved. Detected API type: %s.", detectedAPIType)
 		return
 	}
-	m.status = "Configuration saved successfully."
+	m.status = "Saved profile " + newName + "."
 }
 func (m *pmModel) applyFieldsToProfile(name string) error {
 	p := m.cfg.Profiles[name]
@@ -417,6 +426,7 @@ type testResultMsg struct {
 }
 
 func (m *pmModel) testConnection() tea.Cmd {
+	m.lastTestSummary = ""
 	logPath := appendModelConnectionTestLogf(
 		"ui trigger profile=%q base_url=%q api_type=%q default_model=%q models=%q",
 		m.currentProfileName(),
@@ -456,9 +466,13 @@ func (m *pmModel) handleTestResult(msg testResultMsg) {
 	r := msg.result
 	logPath := strings.TrimSpace(r.LogPath)
 	if r.Success {
-		m.status = fmt.Sprintf("✓ Test passed · %s · %dms", r.Message, r.Latency.Milliseconds())
+		m.status = fmt.Sprintf("✓ Connected · %s · %dms", r.Message, r.Latency.Milliseconds())
+		m.lastTestSummary = fmt.Sprintf("Connected · %dms", r.Latency.Milliseconds())
+		m.lastTestOK = true
 	} else {
 		m.status = fmt.Sprintf("✗ Test failed · %s", r.Message)
+		m.lastTestSummary = "Connection failed"
+		m.lastTestOK = false
 	}
 	if logPath != "" {
 		m.status += "\nlog: " + logPath
