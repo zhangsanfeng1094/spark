@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "command": "go run ./cmd/spark",
+  "cwd": "..",
+  "start": "dashboard",
+  "states": [
+    {
+      "name": "profile",
+      "include": ["Spark Profiles"]
+    },
+    {
+      "name": "mcp.add",
+      "include": ["MCP Manager", "Create Server"]
+    },
+    {
+      "name": "mcp.transfer",
+      "include": ["MCP Manager", "Transfer MCP Servers"]
+    },
+    {
+      "name": "mcp.overview",
+      "include": ["MCP Manager"],
+      "exclude": ["Create Server", "Transfer MCP Servers"]
+    },
+    {
+      "name": "skills.install",
+      "include": ["Skill Manager", "Install Local Skill"]
+    },
+    {
+      "name": "skills.catalog",
+      "include": ["Skill Manager", "Search skills.sh and install the selected result"]
+    },
+    {
+      "name": "skills.transfer",
+      "include": ["Skill Manager", "Transfer Skills"]
+    },
+    {
+      "name": "skills.overview",
+      "include": ["Skill Manager"],
+      "exclude": ["Install Local Skill", "Transfer Skills", "Search skills.sh and install the selected result"]
+    },
+    {
+      "name": "dashboard",
+      "include": ["Launch integration", "Current Context"]
+    }
+  ],
+  "transitions": [
+    {
+      "from": "dashboard",
+      "to": "profile",
+      "keys": ["Down", "Enter"],
+      "markers": ["Manage profiles"],
+      "selectedText": "Launch integration"
+    },
+    {
+      "from": "dashboard",
+      "to": "mcp.overview",
+      "keys": ["Down", "Down", "Enter"],
+      "markers": ["Manage MCP servers"],
+      "selectedText": "Launch integration"
+    },
+    {
+      "from": "dashboard",
+      "to": "skills.overview",
+      "keys": ["Down", "Down", "Down", "Enter"],
+      "markers": ["Manage skills"],
+      "selectedText": "Launch integration"
+    },
+    {
+      "from": "mcp.overview",
+      "to": "mcp.add",
+      "keys": ["Enter"],
+      "markers": ["Add", "New server"],
+      "selectedText": "Add"
+    },
+    {
+      "from": "mcp.overview",
+      "to": "mcp.transfer",
+      "keys": ["Down", "Enter"],
+      "markers": ["Transfer"],
+      "selectedText": "Add"
+    },
+    {
+      "from": "skills.overview",
+      "to": "skills.install",
+      "keys": ["Enter"],
+      "markers": ["Install Local"],
+      "selectedText": "Install Local"
+    },
+    {
+      "from": "skills.overview",
+      "to": "skills.catalog",
+      "keys": ["Down", "Enter"],
+      "markers": ["Browse Catalog"],
+      "selectedText": "Install Local"
+    },
+    {
+      "from": "skills.overview",
+      "to": "skills.transfer",
+      "keys": ["Down", "Down", "Enter"],
+      "markers": ["Transfer"],
+      "selectedText": "Install Local"
+    }
+  ],
+  "candidates": {
+    "default": [
+      ["Enter"],
+      ["Down", "Enter"],
+      ["Down", "Down", "Enter"],
+      ["Down", "Down", "Down", "Enter"],
+      ["Up", "Enter"],
+      ["Tab"],
+      ["Tab", "Enter"],
+      ["Esc"]
+    ]
+  }
+}

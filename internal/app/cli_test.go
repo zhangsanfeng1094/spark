@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	"spark/internal/config"
+	"spark/internal/skills"
 )
 
 func TestProfileNamesSorted(t *testing.T) {
@@ -77,5 +80,201 @@ func TestResolveModelsStripsNUL(t *testing.T) {
 	want = []string{"glm-5"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resolveModels flag mismatch, got %v want %v", got, want)
+	}
+}
+
+func TestRootCmdIncludesSkillCommand(t *testing.T) {
+	root := NewRootCmd()
+	if root.CommandPath() != "spark" {
+		t.Fatalf("unexpected root path: %q", root.CommandPath())
+	}
+	found := false
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "skill" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected skill command to be registered")
+	}
+}
+
+func TestDebugDashboardSnapshotRendersCurrentDashboard(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"debug", "snapshot", "dashboard", "--width", "90", "--height", "12"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{"Spark", "Launch integration", "Current profile: default", "Config file:"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected dashboard snapshot to contain %q, got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("expected plain snapshot without ANSI escapes, got %q", got)
+	}
+}
+
+func TestDebugNestedSnapshotsRenderSubscreens(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "profile",
+			args: []string{"debug", "snapshot", "profile", "--width", "120", "--height", "26"},
+			want: []string{"Spark Profiles", "Base URL", "Actions"},
+		},
+		{
+			name: "mcp add http",
+			args: []string{"debug", "snapshot", "mcp", "--state", "add-http", "--width", "120", "--height", "18"},
+			want: []string{"MCP Manager", "Create Server", "Transport", "http"},
+		},
+		{
+			name: "skills transfer",
+			args: []string{"debug", "snapshot", "skills", "--state", "transfer", "--width", "120", "--height", "18"},
+			want: []string{"Skill Manager", "Transfer Skills", "Import from Codex"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := NewRootCmd()
+			buf := &bytes.Buffer{}
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs(tc.args)
+
+			if err := root.Execute(); err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+			got := buf.String()
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("expected nested snapshot to contain %q, got %q", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestSkillListCommandPrintsInstalledSkills(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+
+	registry := skills.DefaultRegistry()
+	registry.Skills["brainstorming"] = &skills.SkillEntry{
+		Name:       "brainstorming",
+		SourceType: skills.SourceTypeLocal,
+		Source:     "/tmp/brainstorming",
+		Enabled:    true,
+		Managed:    true,
+		Targets:    []string{"codex", "claude"},
+	}
+	if err := skills.SaveRegistry(registry); err != nil {
+		t.Fatalf("SaveRegistry failed: %v", err)
+	}
+
+	root.SetArgs([]string{"skill", "list"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, "brainstorming") {
+		t.Fatalf("expected skill name in output, got %q", got)
+	}
+}
+
+func TestSkillSearchCommandUsesCatalogResultsInSelector(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	restore := stubSkillCatalogForApp([]skills.CatalogEntry{
+		{Name: "brainstorming", Repo: "obra/superpowers", DetailURL: "https://skills.sh/obra/superpowers/brainstorming"},
+	})
+	defer restore()
+	restoreSelect := stubSkillSelector(func(title string, options []string) (string, error) {
+		if len(options) != 1 || !strings.Contains(options[0], "obra/superpowers") {
+			t.Fatalf("unexpected options: %v", options)
+		}
+		return options[0], nil
+	})
+	defer restoreSelect()
+	restoreInstall := stubSkillInstallFromCatalog(func(name string) (*skills.SkillEntry, error) {
+		return &skills.SkillEntry{Name: name}, nil
+	})
+	defer restoreInstall()
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"skill", "search", "brain"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, "Installed skill brainstorming.") {
+		t.Fatalf("expected install confirmation, got %q", got)
+	}
+}
+
+func TestSkillSearchCommandSelectsCandidateAndInstalls(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	restoreSearch := stubSkillCatalogForApp([]skills.CatalogEntry{
+		{Name: "brainstorming", Repo: "obra/superpowers"},
+		{Name: "openai-docs", Repo: "openai/skills"},
+	})
+	defer restoreSearch()
+
+	selected := ""
+	restoreSelect := stubSkillSelector(func(title string, options []string) (string, error) {
+		if title != "Select skill to install:" {
+			t.Fatalf("unexpected selector title: %q", title)
+		}
+		selected = options[1]
+		return options[1], nil
+	})
+	defer restoreSelect()
+
+	installed := ""
+	restoreInstall := stubSkillInstallFromCatalog(func(name string) (*skills.SkillEntry, error) {
+		installed = name
+		return &skills.SkillEntry{Name: name}, nil
+	})
+	defer restoreInstall()
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"skill", "search", "docs"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if selected == "" {
+		t.Fatal("expected candidate selection")
+	}
+	if installed != "openai-docs" {
+		t.Fatalf("expected selected skill to be installed, got %q", installed)
+	}
+	if got := buf.String(); !strings.Contains(got, "Installed skill openai-docs.") {
+		t.Fatalf("expected install confirmation, got %q", got)
 	}
 }

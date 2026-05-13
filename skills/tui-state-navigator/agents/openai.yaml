@@ -1,0 +1,3 @@
+display_name: TUI State Navigator
+short_description: Learn and validate tmux-driven TUI navigation flows.
+default_prompt: Validate the terminal UI with the TUI state navigator, repair changed navigation paths when safe, and store learned steps in the project state map.

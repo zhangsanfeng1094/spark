@@ -418,9 +418,9 @@ func (m *mcpManagerModel) handleEditorKey(msg tea.KeyMsg) tea.Cmd {
 			m.moveEditFocus(-1)
 		}
 		return nil
-	case "ctrl+s":
+	case "f2":
 		return m.saveEditor(false)
-	case "ctrl+p":
+	case "f5":
 		return m.saveEditor(true)
 	case "up":
 		if m.editorMode == mcpEditorModeRaw {
@@ -464,10 +464,10 @@ func (m *mcpManagerModel) handleEditorKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		m.moveFocusedFieldCursorToLineBoundary(true)
 		return nil
-	case "f":
+	case "f3":
 		m.switchEditorMode(mcpEditorModeForm)
 		return nil
-	case "r":
+	case "f4":
 		m.switchEditorMode(mcpEditorModeRaw)
 		return nil
 	case "enter":
@@ -548,7 +548,7 @@ func (m *mcpManagerModel) startAddEditor(transport string) {
 	m.editCursor = make(map[int]int, len(m.editFields))
 	m.rawEditor = ""
 	m.rawCursor = 0
-	m.status = fmt.Sprintf("Add new %s server. Ctrl+S save, Ctrl+P save and probe.", transport)
+	m.status = fmt.Sprintf("Add new %s server. F2 saves, F5 saves and probes.", transport)
 }
 
 func (m *mcpManagerModel) startEditCurrent() {
@@ -569,7 +569,7 @@ func (m *mcpManagerModel) startEditCurrent() {
 	}
 	m.rawEditor = marshalMCPServerYAML(server)
 	m.rawCursor = len([]rune(m.rawEditor))
-	m.status = fmt.Sprintf("Editing %s. Ctrl+S save, Ctrl+P save and probe.", name)
+	m.status = fmt.Sprintf("Editing %s. F2 saves, F5 saves and probes.", name)
 }
 
 func newMCPEditFields(name string, server *config.McpServerConfig, transport string) []mcpEditField {
@@ -804,15 +804,14 @@ func (m *mcpManagerModel) View() string {
 		return "loading..."
 	}
 
-	header := pmTitleStyle.Render("MCP Manager")
-	subtitle := lipgloss.NewStyle().Foreground(colorDim).Render("Manage MCP servers, probe health, and sync config.")
+	header := dashboardHeaderStyle.Width(m.width - 6).Render("MCP Manager")
 	left := m.renderServerList()
 	right := m.renderDetails()
 
 	leftW := m.leftPaneWidth()
 	rightW := m.width - leftW - 4
-	if rightW < 50 {
-		rightW = 50
+	if rightW < 44 {
+		rightW = 44
 	}
 
 	body := lipgloss.JoinHorizontal(
@@ -821,17 +820,18 @@ func (m *mcpManagerModel) View() string {
 		m.rightPaneStyle(rightW).Render(right),
 	)
 
-	statusText := m.renderStatusBar()
-	if m.confirmDelete {
-		statusText = pmStatusErrStyle.Render(statusText)
-	}
-	statusBar := pmStatusBarStyle.Width(m.width - 4).Render(statusText)
+	statusBar := pmStatusBarStyle.Width(m.width - 4).Render(
+		lipgloss.NewStyle().Align(lipgloss.Right).Foreground(colorMuted).Render(m.contextHelpText()),
+	)
 
-	return fitToViewportHeight(pmAppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, subtitle, body, statusBar)), m.height)
+	return fitToViewportHeight(pmAppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, body, statusBar)), m.height)
 }
 
 func (m *mcpManagerModel) leftPaneWidth() int {
 	leftW := 42
+	if m.width > 0 && m.width < 100 {
+		leftW = 36
+	}
 	if m.width > 0 && leftW > m.width/2 {
 		leftW = m.width / 2
 	}
@@ -886,15 +886,41 @@ func (m *mcpManagerModel) renderStatusBar() string {
 	)
 }
 
+func (m *mcpManagerModel) statusSummaryText() string {
+	main, _ := splitStatusText(m.status)
+	main = strings.TrimSpace(main)
+	if main == "" || strings.EqualFold(main, "Ready.") || strings.EqualFold(main, "Ready") {
+		return "No recent activity"
+	}
+	return main
+}
+
+func (m *mcpManagerModel) renderStatusSection(width int) []string {
+	title := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Status")
+	statusText := m.statusSummaryText()
+	return []string{
+		title,
+		lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(statusText),
+	}
+}
+
+func (m *mcpManagerModel) renderHelpSection(width int) []string {
+	title := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Help")
+	return []string{
+		title,
+		lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(m.contextHelpText()),
+	}
+}
+
 func (m *mcpManagerModel) contextHelpText() string {
 	if m.confirmDelete {
 		return "Y confirm • N cancel"
 	}
 	if m.editing {
 		if m.editorMode == mcpEditorModeRaw {
-			return "Ctrl+S Save • Ctrl+P Save & Probe • Tab Exit Raw • Esc Cancel"
+			return "F2 Save • F5 Save & Probe • F3 Form • Esc Cancel"
 		}
-		return "Tab Move • Left/Right Change Select • Ctrl+S Save • Ctrl+P Save & Probe • Esc Cancel"
+		return "Tab Move • F4 Raw • F2 Save • F5 Save & Probe • Esc Cancel"
 	}
 	if m.transferring {
 		return "Up/Down Select • Enter Run Transfer • Esc Cancel"
@@ -980,6 +1006,10 @@ func (m *mcpManagerModel) renderDetails() string {
 	}
 	lines = append(lines, "", lipgloss.NewStyle().Bold(true).Render("Diagnostics"))
 	lines = append(lines, m.renderDiagnostics(status, m.probes[name])...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderStatusSection(max(36, m.width-50))...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderHelpSection(max(36, m.width-50))...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -997,6 +1027,10 @@ func (m *mcpManagerModel) renderEmptyState() string {
 		"",
 		lipgloss.NewStyle().Foreground(colorDim).Render("The Actions list on the left is the default focus."),
 	}
+	lines = append(lines, "")
+	lines = append(lines, m.renderStatusSection(max(36, m.width-50))...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderHelpSection(max(36, m.width-50))...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -1008,12 +1042,13 @@ func (m *mcpManagerModel) renderEditor() string {
 	if !m.adding && m.editOriginalName != "" {
 		title += ": " + m.editOriginalName
 	}
-	modeForm := renderMCPModeToggle("Form", m.editorMode == mcpEditorModeForm)
-	modeRaw := renderMCPModeToggle("Raw YAML/JSON", m.editorMode == mcpEditorModeRaw)
+	modeForm := renderMCPModeToggle("F3 Form", m.editorMode == mcpEditorModeForm)
+	modeRaw := renderMCPModeToggle("F4 Raw YAML/JSON", m.editorMode == mcpEditorModeRaw)
 	if m.editorMode == mcpEditorModeRaw {
-		modeForm = renderMCPModeToggle("Form", false)
-		modeRaw = renderMCPModeToggle("Raw YAML/JSON", true)
+		modeForm = renderMCPModeToggle("F3 Form", false)
+		modeRaw = renderMCPModeToggle("F4 Raw YAML/JSON", true)
 	}
+	contentWidth := max(36, m.width-50)
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render(title),
 		fmt.Sprintf("View: %s   %s", modeForm, modeRaw),
@@ -1025,11 +1060,12 @@ func (m *mcpManagerModel) renderEditor() string {
 			field := m.editFields[i]
 			value := m.renderEditorFieldValue(i, field, i == m.editFocus)
 			label := fmt.Sprintf("%-16s", field.label)
-			style := pmInputStyle.Copy().Width(max(24, m.width-64))
+			style := pmCompactInputStyle.Copy().Width(max(24, m.width-64))
 			if i == m.editFocus {
-				style = pmFocusedInputStyle.Copy().Width(max(24, m.width-64))
+				style = pmCompactFocusedInputStyle.Copy().Width(max(24, m.width-64))
 			}
-			lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, pmLabelStyle.Render(label), style.Render(value)))
+			divider := lipgloss.NewStyle().Foreground(colorBorder).Render("│")
+			lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Center, pmLabelStyle.Render(label), divider, style.Render(value)))
 		}
 		if hint := m.editorFieldHint(); hint != "" {
 			lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render(hint))
@@ -1037,10 +1073,19 @@ func (m *mcpManagerModel) renderEditor() string {
 		lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Tab/Shift+Tab move fields. Left/Right changes select fields."))
 	} else {
 		editorText := renderCursorText(m.rawEditor, m.rawCursor)
-		lines = append(lines, pmFocusedInputStyle.Copy().Width(max(36, m.width-50)).Height(max(12, m.height-14)).Render(editorText))
+		lines = append(lines, pmFocusedInputStyle.Copy().Width(contentWidth).Height(max(12, m.height-14)).Render(editorText))
 		lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Tab exits editor. Format must be valid YAML/JSON."))
 	}
-	lines = append(lines, "", lipgloss.NewStyle().Foreground(colorText).Render("[ Ctrl+S Save ]   [ Ctrl+P Save & Probe ]   [ Esc Cancel ]"))
+	actionTitle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Actions")
+	saveBtn := pmCompactPrimaryBtnStyle.Copy().MarginRight(0).Render("[F2] Save")
+	probeBtn := pmCompactBtnStyle.Copy().MarginRight(0).Render("[F5] Save & Probe")
+	cancelBtn := pmCompactBtnStyle.Copy().MarginRight(0).Render("[Esc] Cancel")
+	actionRow1 := lipgloss.JoinHorizontal(lipgloss.Top, probeBtn, lipgloss.PlaceHorizontal(max(2, contentWidth-lipgloss.Width(probeBtn)-lipgloss.Width(saveBtn)), lipgloss.Right, saveBtn))
+	actionRow2 := cancelBtn
+	lines = append(lines, "", actionTitle, actionRow1, actionRow2, "")
+	lines = append(lines, m.renderStatusSection(contentWidth)...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderHelpSection(contentWidth)...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -1336,10 +1381,10 @@ func (m *mcpManagerModel) renderQuickAddItem(i int, item mcpQuickAddItem) string
 	prefix := "  "
 	if i == m.quickAddIndex {
 		if m.browseFocus == mcpBrowseFocusQuickAdd {
-			style = pmSelectedItemStyle.Copy().Width(m.leftPaneItemWidth())
+			style = pmFocusedItemStyle.Copy().Width(m.leftPaneItemWidth())
 			prefix = "➤ "
 		} else {
-			style = pmFocusedItemStyle.Copy().Width(m.leftPaneItemWidth())
+			style = pmSelectedItemStyle.Copy().Width(m.leftPaneItemWidth())
 			prefix = "◆ "
 		}
 	}
@@ -1372,10 +1417,10 @@ func (m *mcpManagerModel) renderServerRow(i int, name string) string {
 	prefix := "  "
 	if i == m.selected {
 		if m.browseFocus == mcpBrowseFocusServers {
-			style = pmSelectedItemStyle.Copy().Width(m.leftPaneItemWidth())
+			style = pmFocusedItemStyle.Copy().Width(m.leftPaneItemWidth())
 			prefix = "➤ "
 		} else {
-			style = pmFocusedItemStyle.Copy().Width(m.leftPaneItemWidth())
+			style = pmSelectedItemStyle.Copy().Width(m.leftPaneItemWidth())
 			prefix = "◆ "
 		}
 	}
@@ -1429,6 +1474,10 @@ func (m *mcpManagerModel) renderTransferMenu() string {
 		lines = append(lines, m.renderTransferItem(i, item))
 	}
 	lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Import skips same-name Spark servers. Export overwrites same-name target servers."))
+	lines = append(lines, "")
+	lines = append(lines, m.renderStatusSection(max(36, m.width-50))...)
+	lines = append(lines, "")
+	lines = append(lines, m.renderHelpSection(max(36, m.width-50))...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 

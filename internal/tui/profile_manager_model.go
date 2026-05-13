@@ -7,106 +7,152 @@ import (
 )
 
 var (
-	colorFocus  = lipgloss.Color("#bd93f9")
-	colorAccent = lipgloss.Color("#ff79c6")
-	colorText   = lipgloss.Color("#f8f8f2")
-	colorDim    = lipgloss.Color("#6272a4")
-	colorBg     = lipgloss.Color("#282a36")
+	colorFocus        = lipgloss.Color("#b58cff")
+	colorAccent       = lipgloss.Color("#c8aefc")
+	colorText         = lipgloss.Color("#e8e8e8")
+	colorTextSoft     = lipgloss.Color("#d7dae2")
+	colorLabel        = lipgloss.Color("#a0a6b3")
+	colorMuted        = lipgloss.Color("#7a7a8a")
+	colorDim          = colorMuted
+	colorSuccess      = lipgloss.Color("#5fd38d")
+	colorError        = lipgloss.Color("#ff6b6b")
+	colorWarning      = lipgloss.Color("#f4c95d")
+	colorBg           = lipgloss.Color("#1e1f22")
+	colorPanelBg      = lipgloss.Color("#25262b")
+	colorBorder       = lipgloss.Color("#4b4f5c")
+	colorFieldBg      = lipgloss.Color("#202127")
+	colorFieldBgFocus = lipgloss.Color("#23242a")
 
 	pmAppStyle = lipgloss.NewStyle().Margin(0, 1)
 
 	pmTitleStyle = lipgloss.NewStyle().
-			Foreground(colorFocus).
+			Foreground(colorText).
 			Bold(true).
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorFocus).
+			BorderForeground(colorBorder).
+			Background(colorBg).
 			Padding(0, 1).
 			MarginBottom(1)
 
 	pmPanelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorDim).
+			BorderForeground(colorBorder).
+			Background(colorPanelBg).
 			Padding(0, 1)
 
 	pmFocusedPanelStyle = pmPanelStyle.Copy().
-				BorderForeground(colorFocus)
+				BorderForeground(lipgloss.Color("#6b6380"))
 
-	pmItemStyle         = lipgloss.NewStyle().PaddingLeft(1).Foreground(colorText)
+	pmItemStyle = lipgloss.NewStyle().
+			PaddingLeft(1).
+			Foreground(colorTextSoft)
 	pmSelectedItemStyle = lipgloss.NewStyle().
 				PaddingLeft(1).
-				Foreground(lipgloss.Color("#ffffff")).
-				Background(colorFocus).
+				Foreground(colorText).
 				Bold(true)
 	pmFocusedItemStyle = lipgloss.NewStyle().
 				PaddingLeft(1).
-				Foreground(lipgloss.Color("#ffffff")).
-				Background(lipgloss.Color("#3a3d52")).
+				Foreground(colorText).
+				Background(colorFocus).
 				Bold(true)
+	pmSelectedMutedItemStyle = lipgloss.NewStyle().
+					PaddingLeft(1).
+					Foreground(lipgloss.Color("#98d7cf")).
+					Bold(true)
+
+	pmBadgeStyle = lipgloss.NewStyle().
+			Foreground(colorFocus).
+			Bold(true).
+			Padding(0, 1)
 
 	pmLabelStyle = lipgloss.NewStyle().
-			Foreground(colorDim).
+			Foreground(colorLabel).
 			Width(pmLabelWidth).
 			Align(lipgloss.Right).
 			MarginRight(1)
 
+	pmFocusedLabelStyle = pmLabelStyle.Copy().
+				Foreground(colorText)
+
 	pmInputStyle = lipgloss.NewStyle().
-			Foreground(colorText).
-			Background(lipgloss.Color("#1e1f29")).
+			Foreground(colorTextSoft).
+			Background(colorFieldBg).
 			Padding(0, 1).
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorDim)
+			BorderForeground(lipgloss.Color("#363842"))
 
 	pmFocusedInputStyle = pmInputStyle.Copy().
-				Foreground(lipgloss.Color("#ffffff")).
-				Background(lipgloss.Color("#252738")).
+				Foreground(colorText).
+				Background(colorFieldBgFocus).
+				BorderForeground(colorFocus).
+				Bold(true)
+	pmCompactInputStyle = lipgloss.NewStyle().
+				Foreground(colorTextSoft).
+				Background(colorFieldBg).
+				Padding(0, 1)
+	pmCompactReadOnlyInputStyle = pmCompactInputStyle.Copy().
+					Foreground(colorMuted).
+					Background(colorPanelBg)
+	pmCompactFocusedInputStyle = pmCompactInputStyle.Copy().
+					Foreground(colorText).
+					Background(colorFieldBgFocus).
+					Bold(true)
+
+	pmBtnStyle = lipgloss.NewStyle().
+			Foreground(colorTextSoft).
+			Padding(0, 1).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#3c3f49")).
+			MarginRight(1)
+
+	pmPrimaryBtnStyle = pmBtnStyle.Copy().
+				Foreground(colorText).
 				BorderForeground(colorFocus).
 				Bold(true)
 
-	pmBtnStyle = lipgloss.NewStyle().
-			Foreground(colorText).
-			Background(colorDim).
-			Padding(0, 2).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorDim).
-			MarginRight(1)
-
-	pmActiveBtnStyle = pmBtnStyle.Copy().
-				Foreground(lipgloss.Color("#ffffff")).
-				Background(colorAccent).
-				BorderForeground(colorAccent).
+	pmActiveBtnStyle = pmPrimaryBtnStyle.Copy().
+				Foreground(colorText).
+				BorderForeground(colorFocus).
 				Bold(true)
 
-	// Left panel buttons - simpler style without border
 	pmLeftBtnStyle = lipgloss.NewStyle().
-			Foreground(colorText).
-			Background(colorDim).
-			Padding(0, 2).
+			Foreground(colorTextSoft).
+			Padding(0, 1).
 			MarginRight(1)
 
 	pmLeftActiveBtnStyle = pmLeftBtnStyle.Copy().
-				Foreground(lipgloss.Color("#ffffff")).
-				Background(colorAccent).
+				Foreground(colorFocus).
 				Bold(true)
+	pmCompactBtnStyle = lipgloss.NewStyle().
+				Foreground(colorTextSoft).
+				Background(colorFieldBg).
+				Padding(0, 1)
+	pmCompactPrimaryBtnStyle = pmCompactBtnStyle.Copy().
+					Foreground(colorText).
+					Background(colorFocus).
+					Bold(true)
+	pmCompactActiveBtnStyle = pmCompactPrimaryBtnStyle.Copy()
 
 	pmStatusBarStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#f8f8f2")).
-				Background(lipgloss.Color("#44475a")).
+				Foreground(colorText).
+				Background(colorBg).
 				Padding(0, 1).
 				MarginTop(1)
 	pmStatusOkStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#d7ffd9")).
+			Foreground(colorSuccess).
 			Bold(true)
 	pmStatusErrStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#ffd7d7")).
+				Foreground(colorError).
 				Bold(true)
 	pmStatusInfoStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#f8f8f2"))
+				Foreground(colorText)
 	pmStatusLogStyle = lipgloss.NewStyle().
-				Foreground(colorDim)
+				Foreground(colorMuted)
 
 	pmModalStyle = lipgloss.NewStyle().
 			Border(lipgloss.DoubleBorder()).
-			BorderForeground(colorAccent).
+			BorderForeground(colorFocus).
+			Background(colorPanelBg).
 			Padding(1, 2).
 			Align(lipgloss.Center)
 )
@@ -121,6 +167,7 @@ const (
 	pmActAdd = iota
 	pmActCopy
 	pmActDel
+	pmActDefault
 	pmActTest
 	pmActSave
 )
@@ -182,6 +229,9 @@ type pmModel struct {
 	status string
 	dirty  bool
 
+	lastTestSummary string
+	lastTestOK      bool
+
 	modalOpen   bool
 	modalCursor int
 	modalKind   int
@@ -207,17 +257,23 @@ type pmModel struct {
 
 	leftContentX     int
 	leftContentY     int
+	leftVisibleRows  []int
+	leftVisibleIdxs  []int
 	rightContentX    int
 	rightContentY    int
 	leftButtonsRelY  int
 	leftButtonsRelH  int
 	leftButtonsRowW  int
+	leftButtonsRow2Y int
+	leftButtonsRow2W int
 	leftAddBtnW      int
 	leftCopyBtnW     int
+	leftDefaultBtnW  int
 	rightButtonsRelY int
 	rightButtonsRelH int
 	rightButtonsRowW int
 	rightTestBtnW    int
+	rightButtonsGapW int
 	fieldStartRelY   []int
 	fieldEndRelY     []int
 	modalX           int
