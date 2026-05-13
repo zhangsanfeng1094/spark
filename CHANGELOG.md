@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/zhangsanfeng1094/spark/compare/v0.8.0...v0.9.0) (2026-05-13)
+
+
+### Features
+
+* **tui:** enhance profile manager UI with compact styles and new state navigator ([d5670a8](https://github.com/zhangsanfeng1094/spark/commit/d5670a8369318c3940bf318f7c499d5c3267cbc7))
+
 ## [0.8.0](https://github.com/zhangsanfeng1094/spark/compare/v0.7.0...v0.8.0) (2026-04-13)
 
 
