@@ -423,29 +423,41 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		default:
 			return tea.Quit, true
 		}
-	case "ctrl+s":
+	case "f2":
 		m.save()
 		return nil, true
-	case "ctrl+d":
-		m.setCurrentProfileDefault()
-		return nil, true
 	case "a":
+		if m.focusArea == pmFocusFields {
+			return nil, false
+		}
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActAdd
 		return m.runAction(pmActAdd), true
 	case "c":
+		if m.focusArea == pmFocusFields {
+			return nil, false
+		}
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActCopy
 		return m.runAction(pmActCopy), true
 	case "d":
+		if m.focusArea == pmFocusFields {
+			return nil, false
+		}
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActDel
 		return m.runAction(pmActDel), true
 	case "f":
+		if m.focusArea == pmFocusFields {
+			return nil, false
+		}
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActDefault
 		return m.runAction(pmActDefault), true
 	case "t":
+		if m.focusArea == pmFocusFields {
+			return nil, false
+		}
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActTest
 		return m.runAction(pmActTest), true
@@ -455,10 +467,22 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "shift+tab":
 		m.focusPrevByTab()
 		return nil, true
-	case "up", "k":
+	case "up":
 		m.moveUp()
 		return nil, true
-	case "down", "j":
+	case "k":
+		if m.focusArea == pmFocusFields {
+			return nil, false
+		}
+		m.moveUp()
+		return nil, true
+	case "down":
+		m.moveDown()
+		return nil, true
+	case "j":
+		if m.focusArea == pmFocusFields {
+			return nil, false
+		}
 		m.moveDown()
 		return nil, true
 	case "left", "h":
@@ -589,13 +613,25 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		case "tab", "shift+tab":
 			m.modelSearchFocused = !m.modelSearchFocused
 			return nil
-		case "ctrl+l":
-			m.modelSearchQuery = ""
-			m.syncModelsModalScroll()
+		case "f5":
+			return m.fetchModelsFromAPI()
+		case "f6":
+			m.startModelAdd()
+			return nil
+		case "f7":
+			m.startModelEdit()
+			return nil
+		case "f8":
+			m.deleteModelAtCursor()
+			return nil
+		case "f9":
+			m.setDefaultModelAtCursor()
 			return nil
 		}
-		if m.handleModelSearchKey(msg) {
-			return nil
+		if m.modelSearchFocused {
+			if m.handleModelSearchKey(msg) {
+				return nil
+			}
 		}
 	}
 	switch msg.String() {
@@ -695,31 +731,6 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 	case " ", "space":
 		if m.modalKind == pmModalKindOpenAIAPIType {
 			m.toggleAPITypeOptionAtCursor()
-		}
-		return nil
-	case "ctrl+g":
-		if m.modalKind == pmModalKindModels {
-			return m.fetchModelsFromAPI()
-		}
-		return nil
-	case "ctrl+n":
-		if m.modalKind == pmModalKindModels {
-			m.startModelAdd()
-		}
-		return nil
-	case "ctrl+r":
-		if m.modalKind == pmModalKindModels {
-			m.startModelEdit()
-		}
-		return nil
-	case "ctrl+k":
-		if m.modalKind == pmModalKindModels {
-			m.deleteModelAtCursor()
-		}
-		return nil
-	case "ctrl+t":
-		if m.modalKind == pmModalKindModels {
-			m.setDefaultModelAtCursor()
 		}
 		return nil
 	case "enter":

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"spark/internal/config"
 )
 
@@ -39,8 +40,52 @@ func TestProfileManagerHelpTextChangesByFocusArea(t *testing.T) {
 	}
 
 	m.focusArea = pmFocusFields
-	if got := m.helpText(); !strings.Contains(got, "Ctrl+S Save") {
+	if got := m.helpText(); !strings.Contains(got, "F2 Save") {
 		t.Fatalf("unexpected fields help text: %q", got)
+	}
+}
+
+func TestProfileManagerFieldInputKeepsTextLetters(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "gptload",
+		Profiles: map[string]*config.Profile{
+			"gptload": {OpenAIBaseURL: ""},
+		},
+	})
+	m.focusArea = pmFocusFields
+	m.focusField = pmFieldOpenAIBaseURL
+	m.fields[m.focusField].value = ""
+	m.fields[m.focusField].cursor = 0
+
+	for _, r := range []rune("jkaftd") {
+		_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	if got := m.fields[m.focusField].value; got != "jkaftd" {
+		t.Fatalf("expected field input to keep shortcut letters, got %q", got)
+	}
+}
+
+func TestModelsModalHelpAvoidsTextLetterShortcuts(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "gptload",
+		Profiles: map[string]*config.Profile{
+			"gptload": {},
+		},
+	})
+	m.modelsDraft = []string{"gpt-4o"}
+	m.openModelsModal()
+
+	view := m.overlayModal("")
+	for _, blocked := range []string{"N Add", "R Edit", "D Delete", "T Default", "C Clear", "G Fetch"} {
+		if strings.Contains(view, blocked) {
+			t.Fatalf("expected models modal help to avoid text shortcut %s, got %q", blocked, view)
+		}
+	}
+	for _, want := range []string{"Search", "type text", "F5 Fetch", "F6 Add", "F7 Edit", "F8 Delete", "F9 Default"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected models modal help to contain %q, got %q", want, view)
+		}
 	}
 }
 
@@ -142,7 +187,7 @@ func TestProfileManagerRightPaneShowsActionsAndHelpSections(t *testing.T) {
 	m.focusField = pmFieldOpenAIBaseURL
 
 	right := m.renderRightPane(0)
-	for _, want := range []string{"Actions", "Status", "Help", "[T] Test Connection", "[Ctrl+S] Save"} {
+	for _, want := range []string{"Actions", "Status", "Help", "[T] Test Connection", "[F2] Save"} {
 		if !strings.Contains(right, want) {
 			t.Fatalf("expected %q in right pane, got %q", want, right)
 		}

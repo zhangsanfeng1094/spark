@@ -27,3 +27,20 @@ func TestDashboardViewIncludesContextAndDescription(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderDashboardSnapshotClampsCursorAndStripsANSI(t *testing.T) {
+	view, err := RenderDashboardSnapshot("Spark", []DashboardAction{
+		{Title: "Launch integration", Description: "Start Spark."},
+		{Title: "Quit", Description: "Exit Spark."},
+	}, DashboardSummary{CurrentProfile: "ollama", ConfigPath: "/tmp/config.json"}, 40, 10, 99)
+	if err != nil {
+		t.Fatalf("RenderDashboardSnapshot failed: %v", err)
+	}
+
+	plain := StripANSI(view)
+	for _, want := range []string{"> Quit", "Exit Spark.", "Current profile: ollama"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("expected snapshot to contain %q, got %q", want, plain)
+		}
+	}
+}

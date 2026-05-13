@@ -402,7 +402,7 @@ func TestModelsModalTabTogglesSearchAndActionKeys(t *testing.T) {
 	}
 }
 
-func TestModelsModalCtrlShortcutWorksWhileSearchFocused(t *testing.T) {
+func TestModelsModalFunctionShortcutsDoNotConflictWithSearch(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "p1",
 		Profiles: map[string]*config.Profile{
@@ -416,9 +416,23 @@ func TestModelsModalCtrlShortcutWorksWhileSearchFocused(t *testing.T) {
 		t.Fatal("expected search focused by default")
 	}
 
-	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyCtrlN})
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if m.modelEditMode {
+		t.Fatal("expected typed n to stay in search while search is focused")
+	}
+	if m.modelSearchQuery != "n" {
+		t.Fatalf("expected search query to capture typed n, got %q", m.modelSearchQuery)
+	}
+
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyTab})
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if m.modelEditMode {
+		t.Fatal("expected typed n to stay text input, even when search is paused")
+	}
+
+	_ = m.handleModalKey(tea.KeyMsg{Type: tea.KeyF6})
 	if !m.modelEditMode {
-		t.Fatal("expected Ctrl+N to trigger add-model edit mode")
+		t.Fatal("expected F6 to trigger add-model edit mode")
 	}
 }
 

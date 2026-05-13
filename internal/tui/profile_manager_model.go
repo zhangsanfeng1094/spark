@@ -86,6 +86,17 @@ var (
 				Background(colorFieldBgFocus).
 				BorderForeground(colorFocus).
 				Bold(true)
+	pmCompactInputStyle = lipgloss.NewStyle().
+				Foreground(colorTextSoft).
+				Background(colorFieldBg).
+				Padding(0, 1)
+	pmCompactReadOnlyInputStyle = pmCompactInputStyle.Copy().
+					Foreground(colorMuted).
+					Background(colorPanelBg)
+	pmCompactFocusedInputStyle = pmCompactInputStyle.Copy().
+					Foreground(colorText).
+					Background(colorFieldBgFocus).
+					Bold(true)
 
 	pmBtnStyle = lipgloss.NewStyle().
 			Foreground(colorTextSoft).
@@ -112,6 +123,15 @@ var (
 	pmLeftActiveBtnStyle = pmLeftBtnStyle.Copy().
 				Foreground(colorFocus).
 				Bold(true)
+	pmCompactBtnStyle = lipgloss.NewStyle().
+				Foreground(colorTextSoft).
+				Background(colorFieldBg).
+				Padding(0, 1)
+	pmCompactPrimaryBtnStyle = pmCompactBtnStyle.Copy().
+					Foreground(colorText).
+					Background(colorFocus).
+					Bold(true)
+	pmCompactActiveBtnStyle = pmCompactPrimaryBtnStyle.Copy()
 
 	pmStatusBarStyle = lipgloss.NewStyle().
 				Foreground(colorText).

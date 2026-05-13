@@ -12,7 +12,7 @@ func (m *pmModel) View() string {
 		return "loading..."
 	}
 
-	header := pmTitleStyle.Render("Spark Profiles")
+	header := dashboardHeaderStyle.Width(m.width - 6).Render("Spark Profiles")
 	leftPanelW := 30
 	rightPanelW := m.width - 34
 	if rightPanelW < 54 {
@@ -212,23 +212,25 @@ func (m *pmModel) renderRightPane(height int) string {
 			}
 		}
 
-		currentInputStyle := pmInputStyle.Copy().Width(m.inputWidth)
+		currentInputStyle := pmCompactInputStyle.Copy().Width(m.inputWidth)
 		if m.focusArea == pmFocusFields && i == m.focusField {
-			currentInputStyle = pmFocusedInputStyle.Copy().Width(m.inputWidth)
+			currentInputStyle = pmCompactFocusedInputStyle.Copy().Width(m.inputWidth)
 		}
 		if f.readOnly {
-			currentInputStyle = pmInputStyle.Copy().Width(m.inputWidth).Foreground(colorTextSoft).BorderForeground(colorBorder)
+			currentInputStyle = pmCompactReadOnlyInputStyle.Copy().Width(m.inputWidth)
 			if m.focusArea == pmFocusFields && i == m.focusField {
-				currentInputStyle = pmFocusedInputStyle.Copy().Width(m.inputWidth)
+				currentInputStyle = pmCompactFocusedInputStyle.Copy().Width(m.inputWidth)
 			}
 		}
 		labelStyle := pmLabelStyle
 		if m.focusArea == pmFocusFields && i == m.focusField {
 			labelStyle = pmFocusedLabelStyle
 		}
+		divider := lipgloss.NewStyle().Foreground(colorBorder).Render("│")
 
 		row := lipgloss.JoinHorizontal(lipgloss.Center,
 			labelStyle.Render(f.label),
+			divider,
 			currentInputStyle.Render(displayVal),
 		)
 		rowH := lipgloss.Height(row)
@@ -238,13 +240,13 @@ func (m *pmModel) renderRightPane(height int) string {
 		relY += rowH
 	}
 
-	testBtn := pmBtnStyle.Render("[T] Test Connection")
-	saveBtn := pmPrimaryBtnStyle.Render("[Ctrl+S] Save")
+	testBtn := pmCompactBtnStyle.Render("[T] Test Connection")
+	saveBtn := pmCompactBtnStyle.Render("[F2] Save")
 	if m.focusArea == pmFocusActions {
 		if m.actionIndex == pmActTest {
-			testBtn = pmActiveBtnStyle.Render("[T] Test Connection")
+			testBtn = pmCompactActiveBtnStyle.Render("[T] Test Connection")
 		} else if m.actionIndex == pmActSave {
-			saveBtn = pmActiveBtnStyle.Render("[Ctrl+S] Save")
+			saveBtn = pmCompactActiveBtnStyle.Render("[F2] Save")
 		}
 	}
 
@@ -307,22 +309,29 @@ func (m *pmModel) overlayModal(bg string) string {
 		options = append(options, "")
 		options = append(options, "[Space] Toggle  [Enter] Confirm  [Esc] Cancel")
 	case pmModalKindModels:
-		options = append(options, "Edit Models:")
+		modalInnerWidth := 70
+		listWidth := 52
+		panelRow := func(content string) string {
+			return lipgloss.NewStyle().Background(colorPanelBg).Width(modalInnerWidth).Render(content)
+		}
+		options = append(options, panelRow(lipgloss.NewStyle().Bold(true).Render("Edit Models")))
+		options = append(options, panelRow(""))
 		searchLine := "Search: " + m.modelSearchQuery
 		if m.modelSearchFocused && !m.modelEditMode {
 			searchLine += "█"
 		}
-		options = append(options, pmInputStyle.Copy().Width(48).Render(searchLine))
-		options = append(options, "")
+		options = append(options, panelRow(pmInputStyle.Copy().Width(listWidth).Render(searchLine)))
+		options = append(options, panelRow(""))
 		filtered := m.filteredModelIndices()
+		listLines := make([]string, 0, pmModelsModalMaxVisible+2)
 		if len(m.modelItems) == 0 {
 			m.modelModalVisibleCount = 0
 			m.modelModalScroll = 0
-			options = append(options, pmItemStyle.Render("  (empty)"))
+			listLines = append(listLines, centeredModalText("(empty)", listWidth, pmItemStyle))
 		} else if len(filtered) == 0 {
 			m.modelModalVisibleCount = 0
 			m.modelModalScroll = 0
-			options = append(options, pmItemStyle.Render("  (no match)"))
+			listLines = append(listLines, centeredModalText("(no match)", listWidth, pmItemStyle))
 		} else {
 			visible := len(filtered)
 			if visible > pmModelsModalMaxVisible {
@@ -331,7 +340,7 @@ func (m *pmModel) overlayModal(bg string) string {
 			m.modelModalVisibleCount = visible
 			m.syncModelsModalScroll()
 			if m.modelModalScroll > 0 {
-				options = append(options, lipgloss.NewStyle().Foreground(colorDim).Render("  ↑ more"))
+				listLines = append(listLines, centeredModalText("↑ more", listWidth, lipgloss.NewStyle().Foreground(colorDim)))
 			}
 			start := m.modelModalScroll
 			end := start + visible
@@ -351,24 +360,33 @@ func (m *pmModel) overlayModal(bg string) string {
 				if model == m.defaultModel {
 					prefix = "★ "
 				}
-				options = append(options, style.Render(cursor+prefix+model))
+				listLines = append(listLines, centeredModalText(cursor+prefix+model, listWidth, style))
 			}
 			if end < len(filtered) {
-				options = append(options, lipgloss.NewStyle().Foreground(colorDim).Render("  ↓ more"))
+				listLines = append(listLines, centeredModalText("↓ more", listWidth, lipgloss.NewStyle().Foreground(colorDim)))
 			}
 		}
+		for len(listLines) < pmModelsModalMaxVisible+2 {
+			listLines = append(listLines, "")
+		}
+		for _, line := range listLines {
+			options = append(options, panelRow(line))
+		}
 		if m.modelEditMode {
-			options = append(options, "")
-			options = append(options, "Input: "+m.modelEditBuffer+"█")
-			options = append(options, "[Enter] Save Input  [Esc] Cancel Edit")
+			options = append(options, panelRow(""))
+			options = append(options, panelRow(pmInputStyle.Copy().Width(listWidth).Render("Input: "+m.modelEditBuffer+"█")))
+			for _, line := range renderModelModalHelpRows(true, false) {
+				options = append(options, panelRow(line))
+			}
 		} else {
-			options = append(options, "")
-			options = append(options, "[Tab] Toggle Search/Action  [Type] Search  [Wheel/↑/↓] Move  [Ctrl+G] Fetch  [Ctrl+N] Add  [Ctrl+R] Edit  [Ctrl+K] Delete  [Ctrl+T] Default  [Ctrl+L] Clear")
-			options = append(options, "[Enter] Confirm  [Esc] Cancel")
+			options = append(options, panelRow(""))
+			for _, line := range renderModelModalHelpRows(false, m.modelSearchFocused) {
+				options = append(options, panelRow(line))
+			}
 		}
 		if m.modelModalNote != "" {
-			options = append(options, "")
-			options = append(options, lipgloss.NewStyle().Foreground(colorDim).Render(m.modelModalNote))
+			options = append(options, panelRow(""))
+			options = append(options, panelRow(lipgloss.NewStyle().Foreground(colorDim).Render(m.modelModalNote)))
 		}
 	default:
 		options = append(options, "Select Provider Type:")
@@ -406,6 +424,38 @@ func (m *pmModel) overlayModal(bg string) string {
 	)
 }
 
+func centeredModalText(text string, width int, style lipgloss.Style) string {
+	pad := max(0, (width-lipgloss.Width(text))/2)
+	return strings.Repeat(" ", pad) + style.Render(text)
+}
+
+func renderModelModalHelpRows(editing bool, searchFocused bool) []string {
+	labelStyle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true)
+	textStyle := lipgloss.NewStyle().Foreground(colorMuted)
+	row := func(label, text string) string {
+		return lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render(fmt.Sprintf("%-8s", label)), textStyle.Render(text))
+	}
+	if editing {
+		return []string{
+			row("Input", "type model id"),
+			row("Save", "Enter"),
+			row("Cancel", "Esc"),
+		}
+	}
+	navigation := "↑/↓ or wheel"
+	if searchFocused {
+		navigation += " · Tab pauses typing"
+	} else {
+		navigation += " · Tab focuses search"
+	}
+	return []string{
+		row("Search", "type text · Backspace edit · Delete clear"),
+		row("Move", navigation),
+		row("Actions", "F5 Fetch · F6 Add · F7 Edit · F8 Delete · F9 Default"),
+		row("Finish", "Enter Confirm · Esc Cancel"),
+	}
+}
+
 func splitStatusText(status string) (string, string) {
 	parts := strings.SplitN(strings.TrimSpace(status), "\n", 2)
 	if len(parts) == 1 {
@@ -433,7 +483,7 @@ func (m *pmModel) helpText() string {
 	case pmFocusProfiles:
 		return "Tab Focus · Enter Edit · A Add · C Copy · F Default · D Del"
 	case pmFocusFields:
-		return "Tab Focus · Enter Edit · Ctrl+S Save · Esc Back"
+		return "Tab Focus · Enter Edit · F2 Save · Esc Back"
 	case pmFocusActions:
 		return "←/→ Pick Action · Enter Run · Esc Back"
 	default:

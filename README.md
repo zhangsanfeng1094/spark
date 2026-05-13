@@ -240,6 +240,12 @@ go build -o spark ./cmd/spark
 
 # Run directly
 go run ./cmd/spark
+
+# Learn and store changed TUI navigation steps
+node scripts/tui-state-navigator.js --target mcp.transfer --learn --trace
+node scripts/tui-state-navigator.js --target mcp.transfer --trace --ansi --show-focus
+node scripts/tui-state-navigator.js --all
+node scripts/tui-state-navigator.js --map path/to/other-tui-map.json --cmd "your-tui-command" --all
 ```
 
 ### Release Flow

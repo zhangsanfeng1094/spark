@@ -100,6 +100,76 @@ func TestRootCmdIncludesSkillCommand(t *testing.T) {
 	}
 }
 
+func TestDebugDashboardSnapshotRendersCurrentDashboard(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"debug", "snapshot", "dashboard", "--width", "90", "--height", "12"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{"Spark", "Launch integration", "Current profile: default", "Config file:"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected dashboard snapshot to contain %q, got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("expected plain snapshot without ANSI escapes, got %q", got)
+	}
+}
+
+func TestDebugNestedSnapshotsRenderSubscreens(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "profile",
+			args: []string{"debug", "snapshot", "profile", "--width", "120", "--height", "26"},
+			want: []string{"Spark Profiles", "Base URL", "Actions"},
+		},
+		{
+			name: "mcp add http",
+			args: []string{"debug", "snapshot", "mcp", "--state", "add-http", "--width", "120", "--height", "18"},
+			want: []string{"MCP Manager", "Create Server", "Transport", "http"},
+		},
+		{
+			name: "skills transfer",
+			args: []string{"debug", "snapshot", "skills", "--state", "transfer", "--width", "120", "--height", "18"},
+			want: []string{"Skill Manager", "Transfer Skills", "Import from Codex"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := NewRootCmd()
+			buf := &bytes.Buffer{}
+			root.SetOut(buf)
+			root.SetErr(buf)
+			root.SetArgs(tc.args)
+
+			if err := root.Execute(); err != nil {
+				t.Fatalf("Execute failed: %v", err)
+			}
+			got := buf.String()
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("expected nested snapshot to contain %q, got %q", want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestSkillListCommandPrintsInstalledSkills(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

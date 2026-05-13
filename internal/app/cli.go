@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"spark/internal/config"
 	"spark/internal/integrations"
+	"spark/internal/skills"
 	"spark/internal/tui"
 	"spark/internal/version"
 )
@@ -37,6 +38,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newMcpCmd())
 	root.AddCommand(newSkillCmd())
 	root.AddCommand(newProfileCmd())
+	root.AddCommand(newDebugCmd())
 	root.AddCommand(newVersionCmd())
 	return root
 }
@@ -153,6 +155,157 @@ func interactiveDashboardActions() []tui.DashboardAction {
 		})
 	}
 	return actions
+}
+
+func newDebugCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:    "debug",
+		Short:  "Inspect Spark UI and runtime state",
+		Hidden: true,
+	}
+	cmd.AddCommand(newDebugSnapshotCmd())
+	return cmd
+}
+
+func newDebugSnapshotCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "snapshot",
+		Short: "Render non-interactive UI snapshots",
+	}
+	cmd.AddCommand(newDebugDashboardSnapshotCmd())
+	cmd.AddCommand(newDebugProfileSnapshotCmd())
+	cmd.AddCommand(newDebugMCPSnapshotCmd())
+	cmd.AddCommand(newDebugSkillSnapshotCmd())
+	return cmd
+}
+
+func newDebugDashboardSnapshotCmd() *cobra.Command {
+	var width int
+	var height int
+	var cursor int
+	var color bool
+
+	cmd := &cobra.Command{
+		Use:   "dashboard",
+		Short: "Render the main dashboard without starting the TUI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			summary := tui.DashboardSummary{}
+			if path, err := config.ConfigPath(); err == nil {
+				summary.ConfigPath = path
+			}
+			if cfg, err := config.Load(); err == nil {
+				summary.CurrentProfile = cfg.DefaultProfile
+			}
+
+			view, err := tui.RenderDashboardSnapshot("Spark", interactiveDashboardActions(), summary, width, height, cursor)
+			if err != nil {
+				return err
+			}
+			writeSnapshot(cmd, view, color)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&width, "width", 90, "Snapshot terminal width")
+	cmd.Flags().IntVar(&height, "height", 24, "Snapshot terminal height")
+	cmd.Flags().IntVar(&cursor, "cursor", 0, "Selected dashboard row")
+	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
+	return cmd
+}
+
+func newDebugProfileSnapshotCmd() *cobra.Command {
+	var width int
+	var height int
+	var color bool
+
+	cmd := &cobra.Command{
+		Use:   "profile",
+		Short: "Render the profile manager without starting the TUI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			view, err := tui.RenderProfileManagerSnapshot(cfg, width, height)
+			if err != nil {
+				return err
+			}
+			writeSnapshot(cmd, view, color)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&width, "width", 120, "Snapshot terminal width")
+	cmd.Flags().IntVar(&height, "height", 32, "Snapshot terminal height")
+	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
+	return cmd
+}
+
+func newDebugMCPSnapshotCmd() *cobra.Command {
+	var width int
+	var height int
+	var state string
+	var color bool
+
+	cmd := &cobra.Command{
+		Use:   "mcp",
+		Short: "Render the MCP manager without starting the TUI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			view, err := tui.RenderMCPManagerSnapshot(cfg, width, height, state)
+			if err != nil {
+				return err
+			}
+			writeSnapshot(cmd, view, color)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&width, "width", 120, "Snapshot terminal width")
+	cmd.Flags().IntVar(&height, "height", 32, "Snapshot terminal height")
+	cmd.Flags().StringVar(&state, "state", "overview", "State: overview, add-stdio, add-http, add-sse, edit-current, transfer")
+	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
+	return cmd
+}
+
+func newDebugSkillSnapshotCmd() *cobra.Command {
+	var width int
+	var height int
+	var state string
+	var color bool
+
+	cmd := &cobra.Command{
+		Use:   "skills",
+		Short: "Render the skill manager without starting the TUI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			registry, err := skills.LoadRegistry()
+			if err != nil {
+				return err
+			}
+			view, err := tui.RenderSkillManagerSnapshot(registry, width, height, state)
+			if err != nil {
+				return err
+			}
+			writeSnapshot(cmd, view, color)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&width, "width", 120, "Snapshot terminal width")
+	cmd.Flags().IntVar(&height, "height", 32, "Snapshot terminal height")
+	cmd.Flags().StringVar(&state, "state", "overview", "State: overview, install, catalog, transfer")
+	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
+	return cmd
+}
+
+func writeSnapshot(cmd *cobra.Command, view string, color bool) {
+	if !color {
+		view = tui.StripANSI(view)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), view)
 }
 
 func runInteractive() error {

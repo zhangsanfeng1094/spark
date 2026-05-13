@@ -267,7 +267,7 @@ func TestMCPManagerRenderActionsAndStatusBarContext(t *testing.T) {
 	}
 
 	m.startEditCurrent()
-	if got := m.contextHelpText(); !strings.Contains(got, "Ctrl+S Save") {
+	if got := m.contextHelpText(); !strings.Contains(got, "F2 Save") {
 		t.Fatalf("expected edit help text, got %q", got)
 	}
 }
@@ -322,7 +322,7 @@ func TestMCPManagerEditorFlowPreservesBrowseUntilExplicitEdit(t *testing.T) {
 
 	m.startEditCurrent()
 	editor := m.renderDetails()
-	for _, want := range []string{"Edit Server: docs", "Actions", "[Ctrl+S] Save", "[Ctrl+P] Save & Probe", "Help"} {
+	for _, want := range []string{"Edit Server: docs", "Actions", "[F2] Save", "[F5] Save & Probe", "Help"} {
 		if !strings.Contains(editor, want) {
 			t.Fatalf("expected editor to contain %q, got %q", want, editor)
 		}
@@ -447,6 +447,24 @@ func TestMCPManagerTabMovesFieldsWhileArrowKeysMoveTextCursor(t *testing.T) {
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if m.editFocus != mcpEditFieldTransport {
 		t.Fatalf("expected tab to move focus, got %d", m.editFocus)
+	}
+}
+
+func TestMCPManagerTextFieldsKeepModeShortcutLetters(t *testing.T) {
+	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
+	m.startAddEditor("stdio")
+	m.editFocus = mcpEditFieldName
+	m.editFields[mcpEditFieldName].value = ""
+	m.editCursor[mcpEditFieldName] = 0
+
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+
+	if got := m.editFields[mcpEditFieldName].value; got != "fr" {
+		t.Fatalf("expected text field to keep mode shortcut letters, got %q", got)
+	}
+	if m.editorMode != mcpEditorModeForm {
+		t.Fatalf("expected editor to stay in form mode, got %d", m.editorMode)
 	}
 }
 
