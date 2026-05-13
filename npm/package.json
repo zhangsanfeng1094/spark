@@ -1,6 +1,6 @@
 {
   "name": "@ngominhbinh708/spark",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "A unified launcher for AI coding agents",
   "license": "MIT",
   "bin": {
