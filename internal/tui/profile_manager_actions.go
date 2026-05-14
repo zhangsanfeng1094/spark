@@ -43,6 +43,22 @@ func (m *pmModel) openAddModal() {
 	m.modalKind = pmModalKindAddProfile
 }
 
+func (m *pmModel) openProviderTypeModal() {
+	m.modalOpen = true
+	m.modalCursor = 0
+	m.modalKind = pmModalKindProviderType
+	current := ""
+	if pmFieldProviderType < len(m.fields) {
+		current = strings.TrimSpace(m.fields[pmFieldProviderType].value)
+	}
+	for i, opt := range m.providerOptions {
+		if opt.name == current {
+			m.modalCursor = i
+			break
+		}
+	}
+}
+
 func (m *pmModel) openAPITypeModal() {
 	m.modalOpen = true
 	m.modalKind = pmModalKindOpenAIAPIType
@@ -98,6 +114,37 @@ func (m *pmModel) createProfileFromModal() {
 	m.modalKind = pmModalKindNone
 	m.dirty = true
 	m.status = fmt.Sprintf("Created '%s'. Edit fields, then save.", name)
+}
+
+func (m *pmModel) confirmProviderTypeSelection() {
+	if m.modalCursor < 0 || m.modalCursor >= len(m.providerOptions) {
+		return
+	}
+	opt := m.providerOptions[m.modalCursor]
+	template := m.profileTemplate(opt.kind)
+	apiKey := ""
+	if pmFieldOpenAIAPIKey < len(m.fields) {
+		apiKey = m.fields[pmFieldOpenAIAPIKey].value
+	}
+	m.fields[pmFieldProviderType].value = opt.name
+	m.fields[pmFieldProviderType].cursor = len([]rune(opt.name))
+	m.fields[pmFieldOpenAIBaseURL].value = template.OpenAIBaseURL
+	m.fields[pmFieldOpenAIBaseURL].cursor = len([]rune(template.OpenAIBaseURL))
+	m.fields[pmFieldOpenAIAPIKey].value = apiKey
+	m.fields[pmFieldOpenAIAPIKey].cursor = len([]rune(apiKey))
+	apiType := displayOpenAIAPIType(template.OpenAIAPIType)
+	m.fields[pmFieldOpenAIAPIType].value = apiType
+	m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(apiType))
+	m.modelsDraft = config.NormalizeModels(template.Models)
+	m.defaultModel = strings.TrimSpace(template.DefaultModel)
+	if m.defaultModel == "" && len(m.modelsDraft) > 0 {
+		m.defaultModel = m.modelsDraft[0]
+	}
+	m.syncModelFieldViews()
+	m.modalOpen = false
+	m.modalKind = pmModalKindNone
+	m.dirty = true
+	m.status = "Provider type updated. Save to persist."
 }
 
 func (m *pmModel) toggleAPITypeOptionAtCursor() {

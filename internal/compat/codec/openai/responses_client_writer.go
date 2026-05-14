@@ -193,6 +193,9 @@ func MergeResponsesUsage(base map[string]any, incoming map[string]any) map[strin
 			out["cached_input_tokens"] = cached
 		}
 	}
+	if cached := intFromAny(mapValue(out["input_tokens_details"])["cached_tokens"]); cached != 0 {
+		out["cached_input_tokens"] = cached
+	}
 	if details := mapValue(incoming["output_tokens_details"]); len(details) > 0 {
 		merged := mapValue(out["output_tokens_details"])
 		if len(merged) == 0 {
@@ -207,6 +210,9 @@ func MergeResponsesUsage(base map[string]any, incoming map[string]any) map[strin
 		if reasoning := intFromAny(merged["reasoning_tokens"]); reasoning != 0 {
 			out["reasoning_output_tokens"] = reasoning
 		}
+	}
+	if reasoning := intFromAny(mapValue(out["output_tokens_details"])["reasoning_tokens"]); reasoning != 0 {
+		out["reasoning_output_tokens"] = reasoning
 	}
 	return out
 }

@@ -14,7 +14,7 @@ func ResponsesInbound(req map[string]any) compatir.Request {
 	}
 	out := compatir.Request{
 		Model:    model,
-		Messages: responsesInputToMessages(req["input"]),
+		Messages: responsesInputToIRMessages(req["input"]),
 		Tools:    responsesTools(req["tools"]),
 		Stream:   boolValue(req["stream"]),
 		Source:   compatir.ProtocolOpenAIResponses,
@@ -67,7 +67,7 @@ type pendingToolCall struct {
 	Reasoning string
 }
 
-func responsesInputToMessages(input any) []compatir.Message {
+func responsesInputToIRMessages(input any) []compatir.Message {
 	if input == nil {
 		return nil
 	}

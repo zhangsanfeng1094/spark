@@ -2,6 +2,36 @@ package integrations
 
 import "strings"
 
+type chatReasoningStats struct {
+	MessageCount               int
+	AssistantReasoningMessages int
+	AssistantReasoningChars    int
+	AssistantToolMessages      int
+	TopLevelThinking           bool
+}
+
+func chatReasoningSummary(chatReq map[string]any) chatReasoningStats {
+	stats := chatReasoningStats{}
+	if chatReq == nil {
+		return stats
+	}
+	_, stats.TopLevelThinking = chatReq["thinking"]
+	for _, msg := range chatMessages(chatReq["messages"]) {
+		stats.MessageCount++
+		if stringValue(msg["role"]) != "assistant" {
+			continue
+		}
+		if len(toolCallIDsFromChatMessage(msg)) > 0 {
+			stats.AssistantToolMessages++
+		}
+		if reasoning := stringValue(msg["reasoning_content"]); reasoning != "" {
+			stats.AssistantReasoningMessages++
+			stats.AssistantReasoningChars += len(reasoning)
+		}
+	}
+	return stats
+}
+
 func (p *anthropicCompatProxy) applyReasoningContent(chatReq map[string]any) {
 	if p == nil || chatReq == nil {
 		return
@@ -162,14 +192,4 @@ func toolCallIDFromMap(m map[string]any) string {
 		return id
 	}
 	return stringValue(m["call_id"])
-}
-
-func toolCallIDsFromStreamState(toolStates map[int]*toolStreamState, toolOrder []int) []string {
-	ids := make([]string, 0, len(toolOrder))
-	for _, idx := range toolOrder {
-		if st := toolStates[idx]; st != nil && st.id != "" {
-			ids = append(ids, st.id)
-		}
-	}
-	return ids
 }

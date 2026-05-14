@@ -348,6 +348,11 @@ func (m *pmModel) handleModalMouse(msg tea.MouseMsg) {
 			m.modalCursor = idx
 			m.createProfileFromModal()
 		}
+	case pmModalKindProviderType:
+		if idx >= 0 && idx < len(m.providerOptions) {
+			m.modalCursor = idx
+			m.confirmProviderTypeSelection()
+		}
 	case pmModalKindOpenAIAPIType:
 		if idx >= 0 && idx < len(m.apiTypeOptions) {
 			m.modalCursor = idx
@@ -381,6 +386,10 @@ func (m *pmModel) openFieldModalIfNeeded() bool {
 	if m.focusArea != pmFocusFields {
 		return false
 	}
+	if m.focusField == pmFieldProviderType {
+		m.openProviderTypeModal()
+		return true
+	}
 	if m.focusField == pmFieldOpenAIAPIType {
 		m.openAPITypeModal()
 		return true
@@ -396,12 +405,14 @@ func (m *pmModel) handleFieldShortcut(msg tea.KeyMsg) bool {
 	if m.focusArea != pmFocusFields {
 		return false
 	}
-	if m.focusField != pmFieldOpenAIAPIType && m.focusField != pmFieldModelsCSV {
+	if m.focusField != pmFieldProviderType && m.focusField != pmFieldOpenAIAPIType && m.focusField != pmFieldModelsCSV {
 		return false
 	}
 	switch msg.String() {
 	case " ", "space":
-		if m.focusField == pmFieldOpenAIAPIType {
+		if m.focusField == pmFieldProviderType {
+			m.openProviderTypeModal()
+		} else if m.focusField == pmFieldOpenAIAPIType {
 			m.openAPITypeModal()
 		} else {
 			m.openModelsModal()
@@ -737,6 +748,8 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		switch m.modalKind {
 		case pmModalKindAddProfile:
 			m.createProfileFromModal()
+		case pmModalKindProviderType:
+			m.confirmProviderTypeSelection()
 		case pmModalKindOpenAIAPIType:
 			m.confirmAPITypeSelection()
 		case pmModalKindModels:

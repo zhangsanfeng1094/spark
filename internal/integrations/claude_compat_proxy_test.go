@@ -2,11 +2,15 @@ package integrations
 
 import (
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
+
+	anthropicadapter "spark/internal/compat/codec/anthropic"
+	openaitarget "spark/internal/compat/target/openai"
 )
 
-func TestAnthropicToChatCompletions_BasicMapping(t *testing.T) {
+func TestAnthropicRequestTranslator_BasicMapping(t *testing.T) {
 	req := map[string]any{
 		"model":      "gpt-4.1",
 		"max_tokens": float64(256),
@@ -32,7 +36,10 @@ func TestAnthropicToChatCompletions_BasicMapping(t *testing.T) {
 			"name": "sum",
 		},
 	}
-	out := anthropicToChatCompletions(req)
+	out, err := newAnthropicRequestTranslator().ToChat(req)
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
 	if out["model"] != "gpt-4.1" {
 		t.Fatalf("model mismatch: %v", out["model"])
 	}
@@ -63,7 +70,7 @@ func TestAnthropicToChatCompletions_BasicMapping(t *testing.T) {
 	}
 }
 
-func TestAnthropicToChatCompletions_AssistantThinkingMapsToReasoningContent(t *testing.T) {
+func TestAnthropicRequestTranslator_AssistantThinkingMapsToReasoningContent(t *testing.T) {
 	req := map[string]any{
 		"model": "mimo-v2.5-pro",
 		"messages": []any{
@@ -81,13 +88,66 @@ func TestAnthropicToChatCompletions_AssistantThinkingMapsToReasoningContent(t *t
 			},
 		},
 	}
-	out := anthropicToChatCompletions(req)
+	out, err := newAnthropicRequestTranslator().ToChat(req)
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
 	msgs, ok := out["messages"].([]map[string]any)
 	if !ok || len(msgs) != 1 {
 		t.Fatalf("messages mismatch: %#v", out["messages"])
 	}
 	if msgs[0]["reasoning_content"] != "think first" {
 		t.Fatalf("expected reasoning_content from thinking block, got %#v", msgs[0])
+	}
+}
+
+func TestAnthropicRequestTranslator_PreservesThinkingRequestConfig(t *testing.T) {
+	thinking := map[string]any{
+		"type":          "enabled",
+		"budget_tokens": float64(1024),
+	}
+	req := map[string]any{
+		"model":      "mimo-v2.5-pro",
+		"max_tokens": float64(2048),
+		"thinking":   thinking,
+		"messages": []any{
+			map[string]any{
+				"role":    "user",
+				"content": "hello",
+			},
+		},
+	}
+	out, err := newAnthropicRequestTranslator().ToChat(req)
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	if !reflect.DeepEqual(out["thinking"], thinking) {
+		t.Fatalf("expected thinking passthrough, got %#v", out)
+	}
+}
+
+func TestAnthropicRequestTranslator_MapsOutputConfigEffortToReasoningEffort(t *testing.T) {
+	req := map[string]any{
+		"model": "mimo-v2.5-pro",
+		"output_config": map[string]any{
+			"effort": "high",
+		},
+		"messages": []any{
+			map[string]any{
+				"role":    "user",
+				"content": "hello",
+			},
+		},
+	}
+	out, err := newAnthropicRequestTranslator().ToChat(req)
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	if out["reasoning_effort"] != "high" {
+		t.Fatalf("expected reasoning_effort, got %#v", out)
+	}
+	if _, ok := out["output_config"]; ok {
+		t.Fatalf("did not expect output_config passthrough, got %#v", out)
 	}
 }
 
@@ -147,7 +207,7 @@ func TestAnthropicCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *tes
 	}
 }
 
-func TestChatToAnthropicMessage_WithToolCalls(t *testing.T) {
+func TestMessagesClientResponseFromChatResponse_WithToolCalls(t *testing.T) {
 	chatResp := map[string]any{
 		"id":    "chatcmpl_1",
 		"model": "gpt-4.1",
@@ -174,7 +234,7 @@ func TestChatToAnthropicMessage_WithToolCalls(t *testing.T) {
 			"completion_tokens": float64(6),
 		},
 	}
-	msg := chatToAnthropicMessage(chatResp, "")
+	msg := anthropicadapter.MessagesClientResponse(openaitarget.ChatResponse(chatResp), "")
 	if msg["type"] != "message" || msg["role"] != "assistant" {
 		t.Fatalf("message shape mismatch: %#v", msg)
 	}

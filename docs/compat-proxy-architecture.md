@@ -1,13 +1,12 @@
-# Compat Proxy Architecture (Cautious Migration Plan)
+# Compat Proxy Architecture
 
 ## Goal
-Refactor compat proxies to a layered architecture without changing behavior:
+Keep compat proxies layered without changing external behavior:
 - `handler`: HTTP entry + request validation + stream/non-stream dispatch
-- `translator`: protocol mapping (`responses/anthropic <-> chat/completions`)
+- `codec`: client protocol <-> Compat IR
+- `target`: Compat IR <-> upstream provider protocol
 - `executor`: upstream HTTP call + retry + SSE reading
 - `writer`: response/error shaping and SSE/json writeback
-
-This document defines a phased path so each step is testable and reversible.
 
 ## Current State (Function Mapping)
 
@@ -15,17 +14,20 @@ This document defines a phased path so each step is testable and reversible.
 - Handler: `handleResponses`
 - Executor: `postChatCompletions`
 - Retry strategy: `shouldRetryWithMinimalChatReq`, `minimalChatCompletionsRequest`, `ultraMinimalChatCompletionsRequest`
-- Translators: `responsesToChatCompletions`, `responsesInputToMessages`, `responsesToolsToChatTools`, `responsesToolChoiceToChatToolChoice`
-- Stream writer/adapter: `forwardStream`, `writeSSE`
-- Non-stream writer/adapter: `forwardNonStream`
+- Request codec: `internal/compat/codec/openai.ResponsesInbound`
+- Target adapter: `internal/compat/target/openai.ChatOutbound`
+- Stream writer/adapter: `forwardStream` -> `internal/compat/codec/openai.WriteResponsesStream`
+- Non-stream writer/adapter: `forwardNonStream` -> `ChatResponse` -> `ResponsesClientResponse`
 - Error/write helpers: `writeUpstreamErrorAsJSON`, `writeJSONError`, `decodeResponsesRequest`
 
 ### Claude compat (`internal/integrations/claude_compat_proxy.go`)
 - Handler: `handleMessages`
 - Executor: `postChatCompletions`
-- Translator (request): `anthropicToChatCompletions`, `anthropicMessagesToChatMessages`, `anthropicContentToChatParts`, `anthropicToolsToChatTools`, `anthropicToolChoiceToChatToolChoice`
-- Translator (response): `chatToAnthropicMessage`, `chatStopReason`
-- Stream writer/adapter: `forwardAnthropicStream`, `writeAnthropicStreamFromMessage`, `writeAnthropicSSE`
+- Request codec: `internal/compat/codec/anthropic.MessagesInbound`
+- Target adapter: `internal/compat/target/openai.ChatOutbound`
+- Response writer: `ChatResponse` -> `internal/compat/codec/anthropic.MessagesClientResponse`
+- Stream writer/adapter: `forwardAnthropicStream` -> `internal/compat/codec/anthropic/messages_stream_writer.go`
+- Fallback stream serialization: `writeAnthropicStreamFromMessage`, `writeAnthropicSSE`
 - Error/write helpers: `writeAnthropicError`
 
 ## Phased Plan
@@ -54,12 +56,10 @@ This document defines a phased path so each step is testable and reversible.
   - no HTTP payload schema changes
   - golden tests for decode and malformed payloads remain identical
 
-### Phase 2 (Introduce translator interfaces)
-- Add interfaces in `internal/integrations/compat_types.go`:
-  - `type RequestTranslator interface { ToChat(map[string]any) (map[string]any, error) }`
-  - `type NonStreamTranslator interface { FromChat(map[string]any, string) (map[string]any, error) }`
-  - `type StreamTranslator interface { ConsumeChunk([]byte) ([]map[string]any, error); Finalize() []map[string]any }`
-- Wrap existing functions with adapter structs; keep old functions internally.
+### Phase 2 (Introduce request translator interface)
+- Keep only `RequestTranslator` in `internal/integrations/compat_types.go`.
+- Implement translators by composing inbound codec + target adapter directly.
+- Response and stream paths use codec writer functions directly.
 - Acceptance:
   - stream and non-stream snapshot tests unchanged
 

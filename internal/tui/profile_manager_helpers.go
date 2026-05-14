@@ -124,6 +124,8 @@ func detectProviderType(p *config.Profile) string {
 	switch {
 	case strings.Contains(base, "localhost:11434") || strings.Contains(base, "127.0.0.1:11434"):
 		return "Ollama"
+	case strings.Contains(base, "generativelanguage.googleapis.com") || strings.Contains(base, "ai.google.dev"):
+		return "Gemini"
 	case base == "https://api.openai.com/v1" || base == "":
 		return "OpenAI"
 	default:
@@ -140,6 +142,13 @@ func (m *pmModel) profileTemplate(kind string) *config.Profile {
 		}
 	case "ollama":
 		return &config.Profile{OpenAIBaseURL: "http://localhost:11434/v1"}
+	case "gemini":
+		return &config.Profile{
+			OpenAIBaseURL: "https://generativelanguage.googleapis.com/v1beta",
+			OpenAIAPIType: config.OpenAIAPITypeGeminiGenerateContent,
+			Models:        []string{"gemini-2.5-flash"},
+			DefaultModel:  "gemini-2.5-flash",
+		}
 	default:
 		return &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1"}
 	}

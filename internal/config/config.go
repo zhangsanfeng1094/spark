@@ -12,9 +12,10 @@ import (
 const currentVersion = 1
 
 const (
-	OpenAIAPITypeResponses       = "responses"
-	OpenAIAPITypeChatCompletions = "chat_completions"
-	OpenAIAPITypeAuto            = "auto"
+	OpenAIAPITypeResponses             = "responses"
+	OpenAIAPITypeChatCompletions       = "chat_completions"
+	OpenAIAPITypeGeminiGenerateContent = "gemini_generate_content"
+	OpenAIAPITypeAuto                  = "auto"
 )
 
 type Profile struct {
@@ -37,6 +38,8 @@ func NormalizeOpenAIAPIType(v string) string {
 		return OpenAIAPITypeAuto
 	case OpenAIAPITypeChatCompletions, "chat-completions", "chat/completions", "openai-completions", "openai_chat_completions":
 		return OpenAIAPITypeChatCompletions
+	case OpenAIAPITypeGeminiGenerateContent, "gemini", "generatecontent", "generate_content", "gemini-generate-content":
+		return OpenAIAPITypeGeminiGenerateContent
 	default:
 		return ""
 	}
@@ -85,6 +88,9 @@ func ParseOpenAIAPITypes(v string) []string {
 	}
 	if _, ok := seen[OpenAIAPITypeChatCompletions]; ok {
 		canonical = append(canonical, OpenAIAPITypeChatCompletions)
+	}
+	if _, ok := seen[OpenAIAPITypeGeminiGenerateContent]; ok {
+		canonical = append(canonical, OpenAIAPITypeGeminiGenerateContent)
 	}
 	if len(canonical) > 0 {
 		return canonical

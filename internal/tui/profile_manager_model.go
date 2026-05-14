@@ -206,6 +206,7 @@ type pmProviderOption struct {
 const (
 	pmModalKindNone = iota
 	pmModalKindAddProfile
+	pmModalKindProviderType
 	pmModalKindOpenAIAPIType
 	pmModalKindModels
 )
@@ -295,11 +296,13 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 		cfg: cfg,
 		providerOptions: []pmProviderOption{
 			{name: "OpenAI", kind: "openai"},
+			{name: "Gemini", kind: "gemini"},
 		},
 		apiTypeOptions: []string{
 			config.OpenAIAPITypeAuto,
 			config.OpenAIAPITypeResponses,
 			config.OpenAIAPITypeChatCompletions,
+			config.OpenAIAPITypeGeminiGenerateContent,
 		},
 		apiTypeSelected: map[string]bool{},
 		focusArea:       pmFocusProfiles,

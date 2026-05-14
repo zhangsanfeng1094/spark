@@ -16,6 +16,54 @@ Client Protocol -> Inbound Adapter -> Compat IR -> Policy/Middleware -> Target A
 Provider -> Target Adapter -> Compat IR -> Client Adapter -> Client Protocol
 ```
 
+## 当前完成度（2026-05-14）
+
+- Phase 0: 大体完成
+  - 已有 Codex/Claude 兼容路径测试，覆盖 reasoning/tool call/stream 基本行为。
+  - 已补 `internal/compat/codec/openai/testdata/responses_stream_golden.txt` 和 `internal/compat/codec/anthropic/testdata/messages_stream_golden.txt`，冻结两条主要 SSE 事件顺序。
+  - MiMo reasoning/tool-call 混合流也已有 codec 级 fixture 覆盖。
+  - 还没完成的是日志字段冻结和更完整的非流式 golden 样本。
+- Phase 1: 基本完成
+  - `internal/compatir` 已存在，包含 `Request`、`Message`、`ContentBlock`、`ReasoningBlock`、`ToolCall`、`ToolResult`、`Response`、`StreamEvent`、`Usage`。
+  - 已有 `internal/compatir/model_test.go` 覆盖稳定 tool call ID、reasoning 文本聚合、usage merge。
+- Phase 2: 完成
+  - `internal/compat/target/openai/chat_outbound.go`
+  - `internal/compat/target/openai/chat_response.go`
+  - `internal/compat/target/openai/chat_stream.go`
+  - `internal/compat/policy/reasoning.go`
+  - 已覆盖 MiMo/DeepSeek reasoning echo、普通 OpenAI strip 非标准字段。
+- Phase 3: 大体完成
+  - `internal/compat/codec/openai/responses_inbound.go`
+  - `internal/compat/codec/openai/responses_client_writer.go`
+  - `internal/compat/codec/openai/responses_stream_writer.go`
+  - `internal/integrations` 中的 Codex request translator 已直接组合 `ResponsesInbound` + `ChatOutbound`，旧 direct translator 文件已删除。
+  - Codex Responses SSE 顺序已由 `internal/compat/codec/openai/testdata/responses_stream_golden.txt` 冻结。
+- Phase 4: 大体完成
+  - `internal/compat/codec/anthropic/messages_inbound.go`
+  - `internal/compat/codec/anthropic/messages_client_writer.go`
+  - `internal/compat/codec/anthropic/messages_stream_writer.go`
+  - `internal/integrations` 中的 Claude request/response 路径已直接组合 `MessagesInbound`、`ChatOutbound`、`ChatResponse`、`MessagesClientResponse`，旧 direct translator 文件已删除。
+  - `internal/integrations/claude_compat_proxy.go` 的流式写回已收口到 codec writer，proxy 只保留 HTTP 和 reasoning cache。
+  - 仍有少量兼容缓存逻辑保留在 integration 层。
+- Phase 5: 部分完成
+  - 已有 `internal/compat/codec/gemini/generate_content_inbound.go`，支持 `contents[].parts[].text`、`functionCall`、`functionResponse`、`systemInstruction`、`generationConfig`、`tools[].functionDeclarations`、`toolConfig.functionCallingConfig`。
+  - 已有 `internal/compat/codec/gemini/generate_content_client_writer.go`，支持 IR text/tool_call/usage -> Gemini `GenerateContentResponse`。
+  - 已支持 Gemini inbound 解析 `inlineData` image、`fileData` document/image、`thought`/`thoughtSignature`。
+  - 已补 `gemini_generate_content` API type、Gemini provider detection、Gemini `generateContent` 连接探测 payload。
+  - 还没完成 Gemini stream writer，以及 multimodal/thinking 从 IR 写回 Gemini response 的完整 round-trip。
+- Phase 6: 未开始
+  - 还没有 `internal/compat/target/anthropic/*`、`internal/compat/target/gemini/*`。
+- Phase 7: 未完成
+  - direct translator 名称已从 production code 移除。
+  - 少量兼容辅助逻辑仍保留在 `internal/integrations`，主要用于 retry、日志、reasoning cache 和本地代理 HTTP 边界。
+  - 文档和 README 还没整体更新。
+
+结论：
+
+- 核心 IR 骨架和 OpenAI target 已经落地。
+- Codex/Claude 到 OpenAI Chat 的主兼容路径已经 IR 化，旧 direct translator wrapper 已删除。
+- 真正没做完的是 Gemini stream/multimodal、多目标输出、integration 边界瘦身，以及少量非流式/日志 fixture 收尾。
+
 ## 参考
 
 DeepWiki 查询 `looplj/axonhub` 没返回代码上下文。后续参考改用公开资料和源码入口：
@@ -277,7 +325,7 @@ internal/compat/target/gemini/
 
 ### Phase 3: Codex Responses 迁到 IR
 
-目标：替换 `responsesToChatCompletions` 的内部实现，但保持外部行为。
+目标：Codex Responses 请求通过 inbound codec -> IR -> OpenAI Chat target 实现，同时保持外部行为。
 
 任务：
 
@@ -289,7 +337,7 @@ internal/compat/target/gemini/
 decode Responses -> Responses inbound -> IR -> policy -> OpenAI Chat target -> execute -> target response -> IR -> Responses writer
 ```
 
-保留旧函数名作为 wrapper，降低调用点改动。
+旧 direct translator wrapper 已删除，调用点直接使用 IR adapter 组合。
 
 验收：
 
@@ -299,7 +347,7 @@ decode Responses -> Responses inbound -> IR -> policy -> OpenAI Chat target -> e
 
 ### Phase 4: Claude Messages 迁到 IR
 
-目标：替换 `anthropicToChatCompletions` 和 `chatToAnthropicMessage` 的内部实现。
+目标：Claude Messages 请求和响应通过 Anthropic codec、Compat IR、OpenAI Chat target 实现。
 
 任务：
 
@@ -326,11 +374,11 @@ decode Anthropic -> Anthropic inbound -> IR -> policy -> OpenAI Chat target -> e
 - `gemini_generate_content_inbound`: Gemini contents/tools -> IR。
 - `gemini_client_writer`: IR -> Gemini response。
 - 映射：
-  - `contents[].parts[].text` -> text block
-  - `functionCall` -> tool call
-  - `functionResponse` -> tool result
-  - image/file data -> media block
-  - thinking/signature -> reasoning block
+  - `contents[].parts[].text` -> text block（已完成）
+  - `functionCall` -> tool call（已完成）
+  - `functionResponse` -> tool result（已完成）
+  - image/file data -> media block（inbound parse 已完成）
+  - thinking/signature -> reasoning block（inbound parse 已完成）
 
 验收：
 

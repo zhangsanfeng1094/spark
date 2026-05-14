@@ -159,6 +159,8 @@ func TestNormalizeOpenAIAPIType(t *testing.T) {
 		{in: "chat_completions", want: OpenAIAPITypeChatCompletions},
 		{in: "chat/completions", want: OpenAIAPITypeChatCompletions},
 		{in: "openai-completions", want: OpenAIAPITypeChatCompletions},
+		{in: "gemini_generate_content", want: OpenAIAPITypeGeminiGenerateContent},
+		{in: "generateContent", want: OpenAIAPITypeGeminiGenerateContent},
 		{in: "unknown", want: ""},
 	}
 	for _, tt := range tests {
@@ -176,8 +178,10 @@ func TestParseOpenAIAPITypes(t *testing.T) {
 		{in: "", want: nil},
 		{in: "responses", want: []string{OpenAIAPITypeResponses}},
 		{in: "chat_completions", want: []string{OpenAIAPITypeChatCompletions}},
+		{in: "gemini_generate_content", want: []string{OpenAIAPITypeGeminiGenerateContent}},
 		{in: "auto", want: []string{OpenAIAPITypeAuto}},
 		{in: "responses,chat_completions", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
+		{in: "responses,gemini_generate_content", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeGeminiGenerateContent}},
 		{in: "chat_completions,responses", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
 		{in: "responses|chat/completions", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
 		{in: "responses,unknown", want: []string{OpenAIAPITypeResponses}},
@@ -198,6 +202,7 @@ func TestCanonicalizeOpenAIAPITypes(t *testing.T) {
 		{in: "", want: ""},
 		{in: "responses", want: OpenAIAPITypeResponses},
 		{in: "chat_completions,responses", want: "responses,chat_completions"},
+		{in: "gemini_generate_content,responses", want: "responses,gemini_generate_content"},
 		{in: "responses|chat_completions", want: "responses,chat_completions"},
 		{in: "auto,responses", want: OpenAIAPITypeAuto},
 	}
@@ -217,6 +222,9 @@ func TestSupportsOpenAIAPIType(t *testing.T) {
 	}
 	if SupportsOpenAIAPIType("responses", OpenAIAPITypeChatCompletions) {
 		t.Fatalf("did not expect chat support")
+	}
+	if !SupportsOpenAIAPIType("responses,gemini_generate_content", OpenAIAPITypeGeminiGenerateContent) {
+		t.Fatalf("expected gemini support")
 	}
 }
 

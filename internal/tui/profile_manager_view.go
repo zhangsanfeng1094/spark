@@ -669,7 +669,7 @@ func (m *pmModel) contextHintText() string {
 	case pmFieldProfileName:
 		return "Rename this profile. Saving will also update integrations that reference the old name."
 	case pmFieldProviderType:
-		return "Provider type is derived from the current base URL."
+		return "Choose a provider template for this profile."
 	case pmFieldOpenAIBaseURL:
 		return "Set the OpenAI-compatible endpoint Spark should talk to for this profile."
 	case pmFieldOpenAIAPIKey:

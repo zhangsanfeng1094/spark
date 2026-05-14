@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+
+	anthropicadapter "spark/internal/compat/codec/anthropic"
+	openaitarget "spark/internal/compat/target/openai"
+	"spark/internal/compatir"
 )
 
 type codexResponseWriter struct {
@@ -47,14 +51,31 @@ func (w anthropicResponseWriter) WriteNonStream(wr http.ResponseWriter, upResp *
 		return
 	}
 	w.proxy.logf("upstream response=%s", mustJSONForLog(chatResp))
-	w.proxy.rememberReasoningForToolCalls(extractChatToolCalls(chatResp), extractChatReasoningText(chatResp))
-	respTranslator := newAnthropicResponseTranslator()
-	msg, err := respTranslator.FromChat(chatResp, requestedModel)
-	if err != nil {
-		w.proxy.logf("response translate failed: %v", err)
-		writeAnthropicError(wr, http.StatusBadGateway, "invalid upstream response")
-		return
-	}
+	irResp := openaitarget.ChatResponse(chatResp)
+	w.proxy.rememberReasoningForToolCallIDs(toolCallIDsFromBlocks(irResp.Output), reasoningTextFromBlocks(irResp.Output))
+	msg := anthropicadapter.MessagesClientResponse(irResp, requestedModel)
 	wr.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(wr).Encode(msg)
+}
+
+func toolCallIDsFromBlocks(blocks []compatir.ContentBlock) []string {
+	ids := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Type != compatir.BlockToolCall || block.ToolCall == nil {
+			continue
+		}
+		if block.ToolCall.ID != "" {
+			ids = append(ids, block.ToolCall.ID)
+		}
+	}
+	return ids
+}
+
+func reasoningTextFromBlocks(blocks []compatir.ContentBlock) string {
+	for _, block := range blocks {
+		if block.Type == compatir.BlockReasoning && block.Reasoning != nil {
+			return block.Reasoning.Text
+		}
+	}
+	return ""
 }

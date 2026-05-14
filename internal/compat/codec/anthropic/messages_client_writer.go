@@ -20,29 +20,7 @@ func MessagesClientResponse(resp compatir.Response, requestedModel string) map[s
 	}
 
 	toolCalls := responseToolCalls(resp.Output)
-	content := make([]map[string]any, 0, 1+len(toolCalls))
-	if text := responseText(resp.Output); text != "" {
-		content = append(content, map[string]any{
-			"type": "text",
-			"text": text,
-		})
-	}
-	for i, tc := range toolCalls {
-		input := map[string]any{}
-		if strings.TrimSpace(tc.Arguments) != "" {
-			_ = json.Unmarshal([]byte(tc.Arguments), &input)
-		}
-		toolID := tc.ID
-		if toolID == "" {
-			toolID = fmt.Sprintf("toolu_%d_%d", time.Now().UnixNano(), i)
-		}
-		content = append(content, map[string]any{
-			"type":  "tool_use",
-			"id":    toolID,
-			"name":  tc.Name,
-			"input": input,
-		})
-	}
+	content := responseContentBlocks(resp.Output)
 
 	return map[string]any{
 		"id":            id,
@@ -67,6 +45,59 @@ func responseText(blocks []compatir.ContentBlock) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func responseContentBlocks(blocks []compatir.ContentBlock) []map[string]any {
+	content := make([]map[string]any, 0, len(blocks))
+	toolIndex := 0
+	for _, block := range blocks {
+		switch block.Type {
+		case compatir.BlockReasoning:
+			if block.Reasoning == nil || block.Reasoning.Text == "" {
+				continue
+			}
+			thinking := map[string]any{
+				"type":     "thinking",
+				"thinking": block.Reasoning.Text,
+			}
+			if block.Reasoning.Signature != "" {
+				thinking["signature"] = block.Reasoning.Signature
+			}
+			content = append(content, thinking)
+		case compatir.BlockText:
+			if block.Text == "" {
+				continue
+			}
+			content = append(content, map[string]any{
+				"type": "text",
+				"text": block.Text,
+			})
+		case compatir.BlockToolCall:
+			if block.ToolCall == nil || block.ToolCall.Name == "" {
+				continue
+			}
+			content = append(content, anthropicToolUseBlock(*block.ToolCall, toolIndex))
+			toolIndex++
+		}
+	}
+	return content
+}
+
+func anthropicToolUseBlock(tc compatir.ToolCall, index int) map[string]any {
+	input := map[string]any{}
+	if strings.TrimSpace(tc.Arguments) != "" {
+		_ = json.Unmarshal([]byte(tc.Arguments), &input)
+	}
+	toolID := tc.ID
+	if toolID == "" {
+		toolID = fmt.Sprintf("toolu_%d_%d", time.Now().UnixNano(), index)
+	}
+	return map[string]any{
+		"type":  "tool_use",
+		"id":    toolID,
+		"name":  tc.Name,
+		"input": input,
+	}
 }
 
 func responseToolCalls(blocks []compatir.ContentBlock) []compatir.ToolCall {

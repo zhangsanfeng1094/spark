@@ -82,6 +82,9 @@ func TestModelConnection(profile *config.Profile, model string) TestResult {
 	if apiTypes[0] == config.OpenAIAPITypeAuto || config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeChatCompletions) {
 		endpointOrder = append(endpointOrder, config.OpenAIAPITypeChatCompletions)
 	}
+	if apiTypes[0] == config.OpenAIAPITypeAuto || config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeGeminiGenerateContent) {
+		endpointOrder = append(endpointOrder, config.OpenAIAPITypeGeminiGenerateContent)
+	}
 	if len(endpointOrder) == 0 {
 		endpointOrder = append(endpointOrder, config.OpenAIAPITypeResponses)
 	}

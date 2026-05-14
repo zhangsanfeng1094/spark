@@ -1,7 +1,6 @@
 package integrations
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	anthropicadapter "spark/internal/compat/codec/anthropic"
 )
 
 type anthropicCompatProxy struct {
@@ -112,6 +113,15 @@ func (p *anthropicCompatProxy) handleMessages(w http.ResponseWriter, r *http.Req
 	}
 	p.applyReasoningContent(chatReq)
 	p.logf("mapped chat request=%s", mustJSONForLog(chatReq))
+	summary := chatReasoningSummary(chatReq)
+	p.logf("mapped chat summary messages=%d assistant_reasoning_messages=%d assistant_reasoning_chars=%d assistant_tool_messages=%d top_level_thinking=%t stream=%t",
+		summary.MessageCount,
+		summary.AssistantReasoningMessages,
+		summary.AssistantReasoningChars,
+		summary.AssistantToolMessages,
+		summary.TopLevelThinking,
+		stream,
+	)
 	executor := newAnthropicChatExecutor(p)
 	resp, err := executor.Do(r.Context(), chatReq)
 	if err != nil {
@@ -311,12 +321,13 @@ func (p *anthropicCompatProxy) writeAnthropicStreamFromMessage(w http.ResponseWr
 	flusher.Flush()
 }
 
-type toolStreamState struct {
-	blockIndex int
-	id         string
-	name       string
-	args       strings.Builder
-	closed     bool
+func writeAnthropicSSE(w io.Writer, event string, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = io.WriteString(w, "event: "+event+"\n")
+	_, _ = io.WriteString(w, "data: "+string(data)+"\n\n")
 }
 
 func (p *anthropicCompatProxy) forwardAnthropicStream(w http.ResponseWriter, upBody io.Reader, requestedModel string) {
@@ -329,309 +340,14 @@ func (p *anthropicCompatProxy) forwardAnthropicStream(w http.ResponseWriter, upB
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	scanner := bufio.NewScanner(upBody)
-	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
-
-	respID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
-	model := requestedModel
-	if model == "" {
-		model = "unknown"
-	}
-	textBlockIndex := -1
-	textClosed := false
-	nextBlockIndex := 0
-	textContent := strings.Builder{}
-	reasoningContent := strings.Builder{}
-
-	toolStates := map[int]*toolStreamState{}
-	toolOrder := make([]int, 0, 2)
-	var finalChunk map[string]any
-	chunkCount := 0
-	sawDone := false
-	firstValidChunk := ""
-	lastValidChunk := ""
-	finishReason := ""
-	promptTokens := 0
-	completionTokens := 0
-	messageStarted := false
-
-	startMessage := func() {
-		if messageStarted {
-			return
-		}
-		messageStarted = true
-		writeAnthropicSSE(w, "message_start", map[string]any{
-			"type": "message_start",
-			"message": map[string]any{
-				"id":      respID,
-				"type":    "message",
-				"role":    "assistant",
-				"model":   model,
-				"content": []any{},
-				"usage": map[string]any{
-					"input_tokens":  promptTokens,
-					"output_tokens": 0,
-				},
-			},
-		})
-		flusher.Flush()
-	}
-
-	startTextBlock := func() {
-		if textBlockIndex >= 0 {
-			return
-		}
-		startMessage()
-		textBlockIndex = nextBlockIndex
-		nextBlockIndex++
-		writeAnthropicSSE(w, "content_block_start", map[string]any{
-			"type":  "content_block_start",
-			"index": textBlockIndex,
-			"content_block": map[string]any{
-				"type": "text",
-				"text": "",
-			},
-		})
-		flusher.Flush()
-	}
-
-	emitTextDelta := func(delta string) {
-		if delta == "" {
-			return
-		}
-		startTextBlock()
-		textContent.WriteString(delta)
-		writeAnthropicSSE(w, "content_block_delta", map[string]any{
-			"type":  "content_block_delta",
-			"index": textBlockIndex,
-			"delta": map[string]any{
-				"type": "text_delta",
-				"text": delta,
-			},
-		})
-		flusher.Flush()
-	}
-
-	closeTextBlock := func() {
-		if textBlockIndex < 0 || textClosed {
-			return
-		}
-		textClosed = true
-		writeAnthropicSSE(w, "content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": textBlockIndex,
-		})
-		flusher.Flush()
-	}
-
-	startToolBlock := func(idx int, callID, name string) *toolStreamState {
-		if st, ok := toolStates[idx]; ok {
-			if callID != "" {
-				st.id = callID
-			}
-			if name != "" {
-				st.name = name
-			}
-			return st
-		}
-		startMessage()
-		if callID == "" {
-			callID = fmt.Sprintf("toolu_%d_%d", time.Now().UnixNano(), idx)
-		}
-		if name == "" {
-			name = "unknown_tool"
-		}
-		st := &toolStreamState{
-			blockIndex: nextBlockIndex,
-			id:         callID,
-			name:       name,
-		}
-		nextBlockIndex++
-		toolStates[idx] = st
-		toolOrder = append(toolOrder, idx)
-		writeAnthropicSSE(w, "content_block_start", map[string]any{
-			"type":  "content_block_start",
-			"index": st.blockIndex,
-			"content_block": map[string]any{
-				"type":  "tool_use",
-				"id":    st.id,
-				"name":  st.name,
-				"input": map[string]any{},
-			},
-		})
-		flusher.Flush()
-		return st
-	}
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		data := ""
-		if strings.HasPrefix(line, "data:") {
-			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		} else if strings.HasPrefix(line, "{") {
-			data = line
-		}
-		if data == "" {
-			continue
-		}
-		if data == "[DONE]" {
-			sawDone = true
-			break
-		}
-		chunkCount++
-		if firstValidChunk == "" {
-			firstValidChunk = truncateForLog(data, 512)
-		}
-		lastValidChunk = truncateForLog(data, 512)
-		var chunk map[string]any
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			p.logf("stream unmarshal error: %v data=%s", err, truncateForLog(data, 512))
-			continue
-		}
-		finalChunk = chunk
-		if id := stringValue(chunk["id"]); id != "" {
-			respID = id
-		}
-		if m := stringValue(chunk["model"]); m != "" {
-			model = m
-		}
-		if usage := mapValue(chunk["usage"]); len(usage) > 0 {
-			if v := intFromAny(usage["prompt_tokens"]); v > 0 {
-				promptTokens = v
-			}
-			if v := intFromAny(usage["completion_tokens"]); v > 0 {
-				completionTokens = v
-			}
-		}
-		choices, _ := chunk["choices"].([]any)
-		if len(choices) > 0 {
-			if c0, ok := choices[0].(map[string]any); ok {
-				if fr := stringValue(c0["finish_reason"]); fr != "" {
-					finishReason = fr
-				}
-			}
-		}
-
-		delta := extractChatDelta(chunk)
-		if delta == "" {
-			delta = extractChatText(chunk)
-		}
-		if delta != "" {
-			emitTextDelta(delta)
-		}
-		if reasoningDelta, ok := extractChatReasoningDeltaValue(chunk); ok {
-			reasoningContent.WriteString(reasoningDelta)
-		}
-
-		for _, td := range extractChatToolCallDeltas(chunk) {
-			if td.Index < 0 {
-				continue
-			}
-			st := startToolBlock(td.Index, td.CallID, td.Name)
-			if td.ArgumentsDelta != "" {
-				st.args.WriteString(td.ArgumentsDelta)
-				writeAnthropicSSE(w, "content_block_delta", map[string]any{
-					"type":  "content_block_delta",
-					"index": st.blockIndex,
-					"delta": map[string]any{
-						"type":         "input_json_delta",
-						"partial_json": td.ArgumentsDelta,
-					},
-				})
-				flusher.Flush()
-			}
-		}
-
-		// Some gateways may stream a full message object instead of delta tool_calls.
-		// Backfill tool_use blocks in that case.
-		if len(extractChatToolCallDeltas(chunk)) == 0 {
-			for i, tc := range extractChatToolCalls(chunk) {
-				st := startToolBlock(i, tc.CallID, tc.Name)
-				if tc.Arguments != "" && st.args.Len() == 0 {
-					st.args.WriteString(tc.Arguments)
-					writeAnthropicSSE(w, "content_block_delta", map[string]any{
-						"type":  "content_block_delta",
-						"index": st.blockIndex,
-						"delta": map[string]any{
-							"type":         "input_json_delta",
-							"partial_json": tc.Arguments,
-						},
-					})
-					flusher.Flush()
-				}
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		p.logf("stream scan error: %v", err)
-	}
-	p.logf("stream parse flags chunks=%d saw_done=%t message_started=%t first_chunk=%q last_chunk=%q",
-		chunkCount, sawDone, messageStarted, firstValidChunk, lastValidChunk)
-
-	if !messageStarted {
-		if finalChunk != nil {
-			p.rememberReasoningForToolCalls(extractChatToolCalls(finalChunk), extractChatReasoningText(finalChunk))
-			msg := chatToAnthropicMessage(finalChunk, requestedModel)
-			p.writeAnthropicStreamFromMessage(w, msg)
-		} else {
-			writeAnthropicError(w, http.StatusBadGateway, "empty upstream stream")
-		}
+	result := anthropicadapter.WriteMessagesStream(w, upBody, requestedModel, flusher.Flush)
+	p.logf("stream parse flags chunks=%d saw_done=%t message_started=%t reasoning_len=%d tool_call_ids=%d first_chunk=%q last_chunk=%q",
+		result.ChunkCount, result.SawDone, result.MessageStarted, len(result.ReasoningText), len(result.ToolCallIDs), result.FirstValidChunk, result.LastValidChunk)
+	if result.EmptyStream {
+		writeAnthropicError(w, http.StatusBadGateway, "empty upstream stream")
 		return
 	}
-
-	closeTextBlock()
-	for _, idx := range toolOrder {
-		st := toolStates[idx]
-		if st == nil || st.closed {
-			continue
-		}
-		st.closed = true
-		writeAnthropicSSE(w, "content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": st.blockIndex,
-		})
-		flusher.Flush()
+	if result.ReasoningText != "" && len(result.ToolCallIDs) > 0 {
+		p.rememberReasoningForToolCallIDs(result.ToolCallIDs, result.ReasoningText)
 	}
-	if reasoningContent.Len() > 0 {
-		p.rememberReasoningForToolCallIDs(toolCallIDsFromStreamState(toolStates, toolOrder), reasoningContent.String())
-	}
-
-	stopReason := "end_turn"
-	switch finishReason {
-	case "length":
-		stopReason = "max_tokens"
-	case "tool_calls":
-		stopReason = "tool_use"
-	}
-	if len(toolOrder) > 0 {
-		stopReason = "tool_use"
-	}
-	writeAnthropicSSE(w, "message_delta", map[string]any{
-		"type": "message_delta",
-		"delta": map[string]any{
-			"stop_reason":   stopReason,
-			"stop_sequence": nil,
-		},
-		"usage": map[string]any{
-			"input_tokens":  promptTokens,
-			"output_tokens": completionTokens,
-		},
-	})
-	writeAnthropicSSE(w, "message_stop", map[string]any{
-		"type": "message_stop",
-	})
-	flusher.Flush()
-}
-
-func writeAnthropicSSE(w io.Writer, event string, payload any) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	_, _ = io.WriteString(w, "event: "+event+"\n")
-	_, _ = io.WriteString(w, "data: "+string(data)+"\n\n")
 }

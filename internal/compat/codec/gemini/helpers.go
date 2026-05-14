@@ -1,4 +1,4 @@
-package anthropic
+package gemini
 
 import (
 	"encoding/json"
@@ -62,64 +62,9 @@ func float64Value(v any) (*float64, bool) {
 	}
 }
 
-func normalizeMessageContent(raw any) string {
-	if raw == nil {
-		return ""
-	}
-	switch c := raw.(type) {
-	case string:
-		return c
-	case json.RawMessage:
-		return strings.TrimSpace(string(c))
-	case map[string]any:
-		switch stringValue(c["type"]) {
-		case "", "input_text", "output_text", "text":
-			if t := stringValue(c["text"]); t != "" {
-				return t
-			}
-		}
-		if data, err := json.Marshal(c); err == nil {
-			return string(data)
-		}
-		return fmt.Sprint(c)
-	case []map[string]any:
-		parts := make([]string, 0, len(c))
-		for _, item := range c {
-			if text := normalizeMessageContent(item); text != "" {
-				parts = append(parts, text)
-			}
-		}
-		return strings.Join(parts, "\n")
-	case []any:
-		parts := make([]string, 0, len(c))
-		for _, item := range c {
-			if text := normalizeMessageContent(item); text != "" {
-				parts = append(parts, text)
-			}
-		}
-		return strings.Join(parts, "\n")
-	case []byte:
-		return strings.TrimSpace(string(c))
-	default:
-		if data, err := json.Marshal(c); err == nil {
-			return string(data)
-		}
-		return fmt.Sprint(c)
-	}
-}
-
-func ensureRaw(raw map[string]any) map[string]any {
-	if raw != nil {
-		return raw
-	}
-	return map[string]any{}
-}
-
-func intFromAny(v any) int {
-	if i, ok := intValue(v); ok {
-		return i
-	}
-	return 0
+func boolValue(v any) bool {
+	b, _ := v.(bool)
+	return b
 }
 
 func mapValue(v any) map[string]any {
@@ -130,4 +75,69 @@ func mapValue(v any) map[string]any {
 func listValue(v any) []any {
 	items, _ := v.([]any)
 	return items
+}
+
+func ensureRaw(raw map[string]any) map[string]any {
+	if raw != nil {
+		return raw
+	}
+	return map[string]any{}
+}
+
+func normalizeContent(raw any) string {
+	if raw == nil {
+		return ""
+	}
+	switch v := raw.(type) {
+	case string:
+		return v
+	case []byte:
+		return strings.TrimSpace(string(v))
+	case json.RawMessage:
+		return strings.TrimSpace(string(v))
+	case map[string]any:
+		if text := stringValue(v["text"]); text != "" {
+			return text
+		}
+		if data, err := json.Marshal(v); err == nil {
+			return string(data)
+		}
+		return fmt.Sprint(v)
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if text := normalizeContent(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		if data, err := json.Marshal(v); err == nil {
+			return string(data)
+		}
+		return fmt.Sprint(v)
+	}
+}
+
+func jsonObjectString(v any) string {
+	if v == nil {
+		return "{}"
+	}
+	if s := strings.TrimSpace(stringValue(v)); s != "" {
+		return s
+	}
+	data, err := json.Marshal(v)
+	if err != nil || len(data) == 0 {
+		return "{}"
+	}
+	return string(data)
+}
+
+func objectFromJSONString(s string) map[string]any {
+	out := map[string]any{}
+	if strings.TrimSpace(s) == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(s), &out)
+	return out
 }

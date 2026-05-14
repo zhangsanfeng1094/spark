@@ -40,6 +40,14 @@ func MessagesInbound(req map[string]any) compatir.Request {
 		out.Generation.Raw = ensureRaw(out.Generation.Raw)
 		out.Generation.Raw["stop"] = stop
 	}
+	if thinking, ok := req["thinking"]; ok {
+		out.Generation.Raw = ensureRaw(out.Generation.Raw)
+		out.Generation.Raw["thinking"] = thinking
+	}
+	if effort := outputConfigEffort(req["output_config"]); effort != "" {
+		out.Generation.Raw = ensureRaw(out.Generation.Raw)
+		out.Generation.Raw["reasoning_effort"] = effort
+	}
 	if choice, ok := anthropicToolChoice(req["tool_choice"]); ok {
 		out.ToolChoice = choice
 	}
@@ -47,6 +55,19 @@ func MessagesInbound(req map[string]any) compatir.Request {
 		out.Messages = []compatir.Message{{Role: compatir.RoleUser, Content: []compatir.ContentBlock{compatir.Text("")}}}
 	}
 	return out
+}
+
+func outputConfigEffort(raw any) string {
+	config, ok := raw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	switch stringValue(config["effort"]) {
+	case "none", "minimal", "low", "medium", "high", "xhigh":
+		return stringValue(config["effort"])
+	default:
+		return ""
+	}
 }
 
 func anthropicMessages(req map[string]any) []compatir.Message {

@@ -11,16 +11,21 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+
+	openaiadapter "spark/internal/compat/codec/openai"
 )
 
-func TestResponsesToChatCompletions_StringInput(t *testing.T) {
+func TestResponsesRequestTranslator_StringInput(t *testing.T) {
 	req := map[string]any{
 		"model":             "glm-5:cloud",
 		"input":             "hello",
 		"stream":            true,
 		"max_output_tokens": float64(32),
 	}
-	out := responsesToChatCompletions(req)
+	out, err := newResponsesRequestTranslator().ToChat(req)
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
 
 	if out["model"] != "glm-5:cloud" {
 		t.Fatalf("model mismatch: %v", out["model"])
@@ -44,7 +49,7 @@ func TestResponsesToChatCompletions_StringInput(t *testing.T) {
 	}
 }
 
-func TestResponsesToChatCompletions_ToolsMappedAndFiltered(t *testing.T) {
+func TestResponsesRequestTranslator_ToolsMappedAndFiltered(t *testing.T) {
 	req := map[string]any{
 		"model": "GLM-4.7",
 		"input": "hello",
@@ -66,7 +71,10 @@ func TestResponsesToChatCompletions_ToolsMappedAndFiltered(t *testing.T) {
 			"name": "sum",
 		},
 	}
-	out := responsesToChatCompletions(req)
+	out, err := newResponsesRequestTranslator().ToChat(req)
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
 
 	tools, ok := out["tools"].([]map[string]any)
 	if !ok || len(tools) != 1 {
@@ -90,7 +98,7 @@ func TestResponsesToChatCompletions_ToolsMappedAndFiltered(t *testing.T) {
 	}
 }
 
-func TestResponsesInputToMessages_ArrayInput(t *testing.T) {
+func TestResponsesRequestTranslator_ArrayInput(t *testing.T) {
 	input := []any{
 		map[string]any{
 			"role": "user",
@@ -101,7 +109,11 @@ func TestResponsesInputToMessages_ArrayInput(t *testing.T) {
 		},
 	}
 
-	msgs := responsesInputToMessages(input)
+	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
@@ -113,14 +125,18 @@ func TestResponsesInputToMessages_ArrayInput(t *testing.T) {
 	}
 }
 
-func TestResponsesInputToMessages_DeveloperRoleMappedToSystem(t *testing.T) {
+func TestResponsesRequestTranslator_DeveloperRoleMappedToSystem(t *testing.T) {
 	input := []any{
 		map[string]any{
 			"role":    "developer",
 			"content": "be concise",
 		},
 	}
-	msgs := responsesInputToMessages(input)
+	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
@@ -129,7 +145,7 @@ func TestResponsesInputToMessages_DeveloperRoleMappedToSystem(t *testing.T) {
 	}
 }
 
-func TestResponsesInputToMessages_FunctionCallOutputMapped(t *testing.T) {
+func TestResponsesRequestTranslator_FunctionCallOutputMapped(t *testing.T) {
 	input := []any{
 		map[string]any{
 			"type":      "function_call",
@@ -143,7 +159,11 @@ func TestResponsesInputToMessages_FunctionCallOutputMapped(t *testing.T) {
 			"output":  `{"result":3}`,
 		},
 	}
-	msgs := responsesInputToMessages(input)
+	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d (%#v)", len(msgs), msgs)
 	}
@@ -155,7 +175,7 @@ func TestResponsesInputToMessages_FunctionCallOutputMapped(t *testing.T) {
 	}
 }
 
-func TestResponsesInputToMessages_ReasoningOutputMappedToSyntheticToolCall(t *testing.T) {
+func TestResponsesRequestTranslator_ReasoningOutputMappedToSyntheticToolCall(t *testing.T) {
 	input := []any{
 		map[string]any{
 			"type": "reasoning",
@@ -175,7 +195,11 @@ func TestResponsesInputToMessages_ReasoningOutputMappedToSyntheticToolCall(t *te
 			"output":  `{"result":3}`,
 		},
 	}
-	msgs := responsesInputToMessages(input)
+	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d (%#v)", len(msgs), msgs)
 	}
@@ -245,7 +269,7 @@ func TestResponsesCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *tes
 	}
 }
 
-func TestResponsesInputToMessages_ToolRolePreservesToolCallID(t *testing.T) {
+func TestResponsesRequestTranslator_ToolRolePreservesToolCallID(t *testing.T) {
 	input := []any{
 		map[string]any{
 			"role":         "tool",
@@ -253,7 +277,11 @@ func TestResponsesInputToMessages_ToolRolePreservesToolCallID(t *testing.T) {
 			"content":      "ok",
 		},
 	}
-	msgs := responsesInputToMessages(input)
+	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d (%#v)", len(msgs), msgs)
 	}
@@ -675,7 +703,7 @@ func TestForwardStream_ResponseCompletedIncludesUsageDetails(t *testing.T) {
 	}
 }
 
-func TestChatUsageToResponsesUsage_MapsDetails(t *testing.T) {
+func TestResponsesUsageFromChatPayload_MapsDetails(t *testing.T) {
 	payload := map[string]any{
 		"usage": map[string]any{
 			"prompt_tokens":     float64(10),
@@ -689,7 +717,7 @@ func TestChatUsageToResponsesUsage_MapsDetails(t *testing.T) {
 			},
 		},
 	}
-	got, ok := chatUsageToResponsesUsage(payload)
+	got, ok := openaiadapter.ResponsesUsageFromChatPayload(payload)
 	if !ok {
 		t.Fatal("expected usage mapping")
 	}
@@ -725,7 +753,7 @@ func TestMergeResponsesUsage_PrefersIncomingNonZero(t *testing.T) {
 			"reasoning_tokens": float64(1),
 		},
 	}
-	got := mergeResponsesUsage(base, incoming)
+	got := openaiadapter.MergeResponsesUsage(base, incoming)
 	if intFromAny(got["input_tokens"]) != 10 {
 		t.Fatalf("expected input_tokens=10, got %#v", got)
 	}

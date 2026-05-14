@@ -73,13 +73,21 @@ func DetectOpenAIAPIType(ctx context.Context, baseURL, apiKey, org, model string
 		return config.OpenAIAPITypeChatCompletions, nil
 	}
 
+	geminiStatus, _, geminiErr := ProbeOpenAIEndpoint(ctx, client, base, apiKey, org, model, config.OpenAIAPITypeGeminiGenerateContent, perEndpointTimeout)
+	if geminiErr == nil && geminiStatus >= 200 && geminiStatus < 300 {
+		return config.OpenAIAPITypeGeminiGenerateContent, nil
+	}
+
 	if resErr != nil {
 		return "", resErr
 	}
 	if chatErr != nil {
 		return "", chatErr
 	}
-	return "", fmt.Errorf("probe failed (responses=%d chat_completions=%d)", resStatus, chatStatus)
+	if geminiErr != nil {
+		return "", geminiErr
+	}
+	return "", fmt.Errorf("probe failed (responses=%d chat_completions=%d gemini_generate_content=%d)", resStatus, chatStatus, geminiStatus)
 }
 
 func ProbeOpenAIEndpoint(ctx context.Context, client *http.Client, baseURL, apiKey, org, model, endpointType string, timeout time.Duration) (int, []byte, error) {
@@ -99,7 +107,7 @@ func ProbeOpenAIEndpoint(ctx context.Context, client *http.Client, baseURL, apiK
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return postJSON(ctx, client, base+path, apiKey, org, payload)
+	return postProbeJSON(ctx, client, base+path, apiKey, org, endpointType, payload)
 }
 
 func openAIProbePayload(model, endpointType string) (string, map[string]any, error) {
@@ -123,12 +131,26 @@ func openAIProbePayload(model, endpointType string) (string, map[string]any, err
 			"max_tokens": 1024,
 			"stream":     false,
 		}, nil
+	case config.OpenAIAPITypeGeminiGenerateContent:
+		return "/models/" + model + ":generateContent", map[string]any{
+			"contents": []map[string]any{
+				{
+					"role": "user",
+					"parts": []map[string]any{
+						{"text": "ping"},
+					},
+				},
+			},
+			"generationConfig": map[string]any{
+				"maxOutputTokens": 1024,
+			},
+		}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported endpoint type: %s", endpointType)
 	}
 }
 
-func postJSON(ctx context.Context, client *http.Client, url, apiKey, org string, payload map[string]any) (int, []byte, error) {
+func postProbeJSON(ctx context.Context, client *http.Client, url, apiKey, org, endpointType string, payload map[string]any) (int, []byte, error) {
 	if client == nil {
 		client = &http.Client{Timeout: defaultProbeHTTPTimeout}
 	}
@@ -145,9 +167,13 @@ func postJSON(ctx context.Context, client *http.Client, url, apiKey, org string,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if strings.TrimSpace(apiKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+		if endpointType == config.OpenAIAPITypeGeminiGenerateContent {
+			req.Header.Set("x-goog-api-key", strings.TrimSpace(apiKey))
+		} else {
+			req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+		}
 	}
-	if strings.TrimSpace(org) != "" {
+	if endpointType != config.OpenAIAPITypeGeminiGenerateContent && strings.TrimSpace(org) != "" {
 		req.Header.Set("OpenAI-Organization", strings.TrimSpace(org))
 	}
 	resp, err := client.Do(req)
