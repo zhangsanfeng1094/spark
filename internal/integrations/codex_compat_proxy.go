@@ -14,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	openaiadapter "spark/internal/compat/codec/openai"
+	openaitarget "spark/internal/compat/target/openai"
 )
 
 type responsesCompatProxy struct {
@@ -366,58 +369,19 @@ func (p *responsesCompatProxy) forwardNonStream(w http.ResponseWriter, upResp *h
 		return
 	}
 
-	text := extractChatText(chatResp)
-	reasoningText := extractChatReasoningText(chatResp)
+	irResp := openaitarget.ChatResponse(chatResp)
+	out := openaiadapter.ResponsesClientResponse(irResp)
+	text := stringValue(out["output_text"])
 	p.logf("non-stream extracted text length=%d", len(text))
-	model := stringValue(chatResp["model"])
+	model := stringValue(out["model"])
 	if model == "" {
 		model = "unknown"
 	}
-	id := stringValue(chatResp["id"])
+	id := stringValue(out["id"])
 	if id == "" {
 		id = fmt.Sprintf("resp_%d", time.Now().UnixNano())
 	}
-
-	outputItems := make([]map[string]any, 0, 3)
-	if reasoningText != "" {
-		outputItems = append(outputItems, map[string]any{
-			"id":      "rs_" + id,
-			"type":    "reasoning",
-			"summary": []map[string]any{{"type": "summary_text", "text": reasoningText}},
-		})
-	}
-	if text != "" {
-		outputItems = append(outputItems, map[string]any{
-			"type": "message",
-			"role": "assistant",
-			"content": []map[string]any{
-				{
-					"type": "output_text",
-					"text": text,
-				},
-			},
-		})
-	}
-	for _, tc := range extractChatToolCalls(chatResp) {
-		outputItems = append(outputItems, map[string]any{
-			"id":        tc.ID,
-			"type":      "function_call",
-			"call_id":   tc.CallID,
-			"name":      tc.Name,
-			"arguments": tc.Arguments,
-			"status":    "completed",
-		})
-	}
-	out := map[string]any{
-		"id":          id,
-		"object":      "response",
-		"status":      "completed",
-		"model":       model,
-		"output_text": text,
-		"output":      outputItems,
-	}
-	if usage, ok := chatUsageToResponsesUsage(chatResp); ok {
-		out["usage"] = usage
+	if usage := mapValue(out["usage"]); len(usage) > 0 {
 		p.logf("non-stream usage present response_id=%s model=%s %s", id, model, formatUsageForLog(usage))
 	} else {
 		p.logf("non-stream usage missing response_id=%s model=%s", id, model)

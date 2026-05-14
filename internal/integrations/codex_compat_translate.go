@@ -5,52 +5,17 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	openaiadapter "spark/internal/compat/codec/openai"
+	"spark/internal/compat/policy"
+	openaitarget "spark/internal/compat/target/openai"
 )
 
 func responsesToChatCompletions(req map[string]any) map[string]any {
-	model := stringValue(req["model"])
-	if model == "" {
-		model = "unknown"
-	}
-	messages := responsesInputToMessages(req["input"])
-	if len(messages) == 0 {
-		messages = []map[string]any{{"role": "user", "content": ""}}
-	}
-	out := map[string]any{
-		"model":    model,
-		"messages": messages,
-		"stream":   boolValue(req["stream"]),
-	}
-	if boolValue(req["stream"]) {
-		// Request upstream usage in stream mode so response.completed can carry
-		// stable token accounting for Codex.
-		out["stream_options"] = map[string]any{
-			"include_usage": true,
-		}
-	}
-	if max, ok := intValue(req["max_output_tokens"]); ok {
-		out["max_tokens"] = max
-	}
-	if v, ok := req["temperature"]; ok {
-		out["temperature"] = v
-	}
-	if v, ok := req["top_p"]; ok {
-		out["top_p"] = v
-	}
-	if v, ok := req["stop"]; ok {
-		out["stop"] = v
-	}
-	if v, ok := req["tools"]; ok {
-		if tools := responsesToolsToChatTools(v); len(tools) > 0 {
-			out["tools"] = tools
-		}
-	}
-	if v, ok := req["tool_choice"]; ok {
-		if tc, ok := responsesToolChoiceToChatToolChoice(v); ok {
-			out["tool_choice"] = tc
-		}
-	}
-	return out
+	irReq := openaiadapter.ResponsesInbound(req)
+	return openaitarget.ChatOutbound{
+		Reasoning: policy.PreserveReasoningContent(),
+	}.BuildRequest(irReq)
 }
 
 func responsesToolsToChatTools(raw any) []map[string]any {

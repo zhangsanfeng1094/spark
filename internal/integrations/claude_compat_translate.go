@@ -5,36 +5,17 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	anthropicadapter "spark/internal/compat/codec/anthropic"
+	"spark/internal/compat/policy"
+	openaitarget "spark/internal/compat/target/openai"
 )
 
 func anthropicToChatCompletions(req map[string]any) map[string]any {
-	out := map[string]any{
-		"model":    stringValue(req["model"]),
-		"messages": anthropicMessagesToChatMessages(req),
-		"stream":   false,
-	}
-	if out["model"] == "" {
-		out["model"] = "unknown"
-	}
-	if max, ok := intValue(req["max_tokens"]); ok && max > 0 {
-		out["max_tokens"] = max
-	}
-	if v, ok := req["temperature"]; ok {
-		out["temperature"] = v
-	}
-	if v, ok := req["top_p"]; ok {
-		out["top_p"] = v
-	}
-	if v, ok := req["stop_sequences"]; ok {
-		out["stop"] = v
-	}
-	if tools := anthropicToolsToChatTools(req["tools"]); len(tools) > 0 {
-		out["tools"] = tools
-	}
-	if tc, ok := anthropicToolChoiceToChatToolChoice(req["tool_choice"]); ok {
-		out["tool_choice"] = tc
-	}
-	return out
+	irReq := anthropicadapter.MessagesInbound(req)
+	return openaitarget.ChatOutbound{
+		Reasoning: policy.PreserveReasoningContent(),
+	}.BuildRequest(irReq)
 }
 
 func anthropicMessagesToChatMessages(req map[string]any) []map[string]any {
@@ -249,57 +230,8 @@ func anthropicToolChoiceToChatToolChoice(raw any) (any, bool) {
 }
 
 func chatToAnthropicMessage(chatResp map[string]any, requestedModel string) map[string]any {
-	id := stringValue(chatResp["id"])
-	if id == "" {
-		id = fmt.Sprintf("msg_%d", time.Now().UnixNano())
-	}
-	model := stringValue(chatResp["model"])
-	if model == "" {
-		model = requestedModel
-	}
-	text := extractChatText(chatResp)
-	toolCalls := extractChatToolCalls(chatResp)
-	content := make([]map[string]any, 0, 1+len(toolCalls))
-	if text != "" {
-		content = append(content, map[string]any{
-			"type": "text",
-			"text": text,
-		})
-	}
-	for i, tc := range toolCalls {
-		input := map[string]any{}
-		if strings.TrimSpace(tc.Arguments) != "" {
-			_ = json.Unmarshal([]byte(tc.Arguments), &input)
-		}
-		id := tc.CallID
-		if id == "" {
-			id = tc.ID
-		}
-		if id == "" {
-			id = fmt.Sprintf("toolu_%d_%d", time.Now().UnixNano(), i)
-		}
-		content = append(content, map[string]any{
-			"type":  "tool_use",
-			"id":    id,
-			"name":  tc.Name,
-			"input": input,
-		})
-	}
-	stopReason := chatStopReason(chatResp, len(toolCalls) > 0)
-	usage := mapValue(chatResp["usage"])
-	return map[string]any{
-		"id":            id,
-		"type":          "message",
-		"role":          "assistant",
-		"model":         model,
-		"content":       content,
-		"stop_reason":   stopReason,
-		"stop_sequence": nil,
-		"usage": map[string]any{
-			"input_tokens":  intFromAny(usage["prompt_tokens"]),
-			"output_tokens": intFromAny(usage["completion_tokens"]),
-		},
-	}
+	irResp := openaitarget.ChatResponse(chatResp)
+	return anthropicadapter.MessagesClientResponse(irResp, requestedModel)
 }
 
 func chatStopReason(chatResp map[string]any, hasToolCalls bool) string {
