@@ -17,6 +17,7 @@ func newCodexChatExecutor(proxy *responsesCompatProxy) ChatExecutor {
 }
 
 func (e codexChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
+	e.proxy.applyReasoningContent(chatReq)
 	upResp, err := e.proxy.postChatCompletions(ctx, chatReq)
 	if err != nil {
 		return nil, err

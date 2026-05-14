@@ -155,6 +155,96 @@ func TestResponsesInputToMessages_FunctionCallOutputMapped(t *testing.T) {
 	}
 }
 
+func TestResponsesInputToMessages_ReasoningOutputMappedToSyntheticToolCall(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"type": "reasoning",
+			"summary": []any{
+				map[string]any{"type": "summary_text", "text": "think first"},
+			},
+		},
+		map[string]any{
+			"type":      "function_call",
+			"call_id":   "call_123",
+			"name":      "sum",
+			"arguments": `{"a":1,"b":2}`,
+		},
+		map[string]any{
+			"type":    "function_call_output",
+			"call_id": "call_123",
+			"output":  `{"result":3}`,
+		},
+	}
+	msgs := responsesInputToMessages(input)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d (%#v)", len(msgs), msgs)
+	}
+	if msgs[0]["role"] != "assistant" {
+		t.Fatalf("expected synthetic assistant tool_call message, got %#v", msgs[0])
+	}
+	if msgs[0]["reasoning_content"] != "think first" {
+		t.Fatalf("expected reasoning_content on synthetic assistant, got %#v", msgs[0])
+	}
+}
+
+func TestResponsesCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testing.T) {
+	p := &responsesCompatProxy{upstreamBase: "https://gateway.example/v1"}
+	chatReq := map[string]any{
+		"model": "mimo-v2.5-pro",
+		"messages": []map[string]any{
+			{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []map[string]any{
+					{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "sum",
+							"arguments": `{"a":1}`,
+						},
+					},
+				},
+			},
+		},
+	}
+	p.applyReasoningContent(chatReq)
+	msgs := chatReq["messages"].([]map[string]any)
+	got, ok := msgs[0]["reasoning_content"]
+	if !ok || got != "" {
+		t.Fatalf("expected empty reasoning_content for MiMo cache miss, got %#v", msgs[0])
+	}
+}
+
+func TestResponsesCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *testing.T) {
+	p := &responsesCompatProxy{upstreamBase: "https://api.openai.com/v1"}
+	chatReq := map[string]any{
+		"model": "gpt-4.1",
+		"messages": []map[string]any{
+			{
+				"role":              "assistant",
+				"content":           "",
+				"reasoning_content": "think first",
+				"tool_calls": []map[string]any{
+					{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "sum",
+							"arguments": `{"a":1}`,
+						},
+					},
+				},
+			},
+		},
+	}
+	p.applyReasoningContent(chatReq)
+	msgs := chatReq["messages"].([]map[string]any)
+	if _, ok := msgs[0]["reasoning_content"]; ok {
+		t.Fatalf("did not expect reasoning_content for generic gateway, got %#v", msgs[0])
+	}
+}
+
 func TestResponsesInputToMessages_ToolRolePreservesToolCallID(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -295,6 +385,42 @@ func TestForwardNonStream_MapsUsageDetails(t *testing.T) {
 	}
 }
 
+func TestForwardNonStream_MapsReasoningContentSeparately(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_1","model":"deepseek-reasoner","choices":[{"message":{"reasoning_content":"think first","content":"final answer"}}]}`,
+		)),
+	}
+	rec := &responseRecorder{header: make(http.Header)}
+	p := &responsesCompatProxy{}
+	p.forwardNonStream(rec, upResp)
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(rec.body.String()), &got); err != nil {
+		t.Fatalf("decode response: %v body=%q", err, rec.body.String())
+	}
+	if got["output_text"] != "final answer" {
+		t.Fatalf("expected output_text to contain only final answer, got %#v", got["output_text"])
+	}
+	output, ok := got["output"].([]any)
+	if !ok || len(output) != 2 {
+		t.Fatalf("expected reasoning and message output items, got %#v", got["output"])
+	}
+	reasoning := mapValue(output[0])
+	if reasoning["type"] != "reasoning" {
+		t.Fatalf("expected first output item to be reasoning, got %#v", reasoning)
+	}
+	summary, ok := reasoning["summary"].([]any)
+	if !ok || len(summary) != 1 || mapValue(summary[0])["text"] != "think first" {
+		t.Fatalf("expected reasoning summary text, got %#v", reasoning["summary"])
+	}
+	message := mapValue(output[1])
+	if message["type"] != "message" {
+		t.Fatalf("expected second output item to be message, got %#v", message)
+	}
+}
+
 func TestDecodeResponsesRequest_GzipJSON(t *testing.T) {
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
@@ -409,6 +535,22 @@ func TestExtractChatDelta_DeltaTextString(t *testing.T) {
 	}
 }
 
+func TestExtractChatReasoningDelta_ReasoningContent(t *testing.T) {
+	chunk := map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta": map[string]any{
+					"reasoning_content": "先想一下",
+				},
+			},
+		},
+	}
+	got := extractChatReasoningDelta(chunk)
+	if got != "先想一下" {
+		t.Fatalf("expected reasoning_content delta, got %q", got)
+	}
+}
+
 func TestForwardStream_FallbackForSingleJSONLine(t *testing.T) {
 	upResp := &http.Response{
 		StatusCode: 200,
@@ -452,6 +594,54 @@ func TestForwardStream_EmitsFunctionCallEventsFromToolCallDeltas(t *testing.T) {
 	}
 	if !strings.Contains(body, `"call_id":"call_1"`) {
 		t.Fatalf("expected call_id in stream output, got %q", body)
+	}
+}
+
+func TestForwardStream_ReasoningContentDoesNotPolluteOutputText(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"id":"chatcmpl_1","model":"deepseek-reasoner","choices":[{"delta":{"reasoning_content":"think first"}}]}`,
+			`data: {"id":"chatcmpl_1","model":"deepseek-reasoner","choices":[{"delta":{"content":"final answer"}}]}`,
+			`data: [DONE]`,
+			``,
+		}, "\n"))),
+	}
+	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
+	p := &responsesCompatProxy{}
+	p.forwardStream(rec, upResp)
+
+	events := decodeSSEJSONEvents(t, rec.body.String())
+	var outputTextDeltas []string
+	var completed map[string]any
+	for _, event := range events {
+		switch stringValue(event["type"]) {
+		case "response.output_text.delta":
+			outputTextDeltas = append(outputTextDeltas, stringValue(event["delta"]))
+		case "response.completed":
+			completed = mapValue(event["response"])
+		}
+	}
+	if got := strings.Join(outputTextDeltas, ""); got != "final answer" {
+		t.Fatalf("expected output text deltas to exclude reasoning, got %q body=%q", got, rec.body.String())
+	}
+	if completed == nil {
+		t.Fatalf("expected response.completed event, got %q", rec.body.String())
+	}
+	if completed["output_text"] != "final answer" {
+		t.Fatalf("expected completed output_text to contain only final answer, got %#v", completed["output_text"])
+	}
+	output, ok := completed["output"].([]any)
+	if !ok || len(output) != 2 {
+		t.Fatalf("expected reasoning and message output items, got %#v", completed["output"])
+	}
+	reasoning := mapValue(output[0])
+	if reasoning["type"] != "reasoning" {
+		t.Fatalf("expected first output item to be reasoning, got %#v", reasoning)
+	}
+	summary, ok := reasoning["summary"].([]any)
+	if !ok || len(summary) != 1 || mapValue(summary[0])["text"] != "think first" {
+		t.Fatalf("expected reasoning summary text, got %#v", reasoning["summary"])
 	}
 }
 
@@ -582,3 +772,24 @@ func (r *responseRecorder) WriteHeader(statusCode int) {
 }
 
 func (r *flushResponseRecorder) Flush() {}
+
+func decodeSSEJSONEvents(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	events := make([]map[string]any, 0)
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatalf("decode SSE event %q: %v", data, err)
+		}
+		events = append(events, event)
+	}
+	return events
+}

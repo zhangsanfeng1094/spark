@@ -132,11 +132,13 @@ func responsesInputToMessages(input any) []map[string]any {
 	case []any:
 		out := make([]map[string]any, 0, len(v))
 		type pendingToolCall struct {
-			Name      string
-			Arguments string
+			Name             string
+			Arguments        string
+			ReasoningContent string
 		}
 		pendingCalls := map[string]pendingToolCall{}
-		appendSyntheticAssistantToolCall := func(callID, name, arguments string) {
+		lastReasoningContent := ""
+		appendSyntheticAssistantToolCall := func(callID, name, arguments, reasoningContent string) {
 			if callID == "" {
 				return
 			}
@@ -146,7 +148,7 @@ func responsesInputToMessages(input any) []map[string]any {
 			if arguments == "" {
 				arguments = "{}"
 			}
-			out = append(out, map[string]any{
+			assistant := map[string]any{
 				"role":    "assistant",
 				"content": "",
 				"tool_calls": []map[string]any{
@@ -159,7 +161,11 @@ func responsesInputToMessages(input any) []map[string]any {
 						},
 					},
 				},
-			})
+			}
+			if reasoningContent != "" {
+				assistant["reasoning_content"] = reasoningContent
+			}
+			out = append(out, assistant)
 		}
 		for _, item := range v {
 			msg, ok := item.(map[string]any)
@@ -168,6 +174,11 @@ func responsesInputToMessages(input any) []map[string]any {
 			}
 			itemType := stringValue(msg["type"])
 			switch itemType {
+			case "reasoning":
+				if reasoningContent := responseReasoningContent(msg); reasoningContent != "" {
+					lastReasoningContent = reasoningContent
+				}
+				continue
 			case "function_call_output":
 				toolCallID := stringValue(msg["call_id"])
 				if toolCallID == "" {
@@ -184,7 +195,11 @@ func responsesInputToMessages(input any) []map[string]any {
 					output = "{}"
 				}
 				call := pendingCalls[toolCallID]
-				appendSyntheticAssistantToolCall(toolCallID, call.Name, call.Arguments)
+				reasoningContent := call.ReasoningContent
+				if reasoningContent == "" {
+					reasoningContent = lastReasoningContent
+				}
+				appendSyntheticAssistantToolCall(toolCallID, call.Name, call.Arguments, reasoningContent)
 				out = append(out, map[string]any{
 					"role":         "tool",
 					"tool_call_id": toolCallID,
@@ -202,9 +217,14 @@ func responsesInputToMessages(input any) []map[string]any {
 				}
 				name := stringValue(msg["name"])
 				arguments := stringValue(msg["arguments"])
+				reasoningContent := responseReasoningContent(msg)
+				if reasoningContent == "" {
+					reasoningContent = lastReasoningContent
+				}
 				pendingCalls[toolCallID] = pendingToolCall{
-					Name:      name,
-					Arguments: arguments,
+					Name:             name,
+					Arguments:        arguments,
+					ReasoningContent: reasoningContent,
 				}
 				continue
 			}
@@ -219,6 +239,10 @@ func responsesInputToMessages(input any) []map[string]any {
 				role = "user"
 			}
 			if role == "assistant" {
+				reasoningContent := responseReasoningContent(msg)
+				if reasoningContent == "" {
+					reasoningContent = lastReasoningContent
+				}
 				toolCallsRaw, ok := msg["tool_calls"].([]any)
 				if ok && len(toolCallsRaw) > 0 {
 					toolCalls := make([]map[string]any, 0, len(toolCallsRaw))
@@ -244,8 +268,9 @@ func responsesInputToMessages(input any) []map[string]any {
 							args = "{}"
 						}
 						pendingCalls[tcID] = pendingToolCall{
-							Name:      name,
-							Arguments: args,
+							Name:             name,
+							Arguments:        args,
+							ReasoningContent: reasoningContent,
 						}
 						toolCalls = append(toolCalls, map[string]any{
 							"id":   tcID,
@@ -281,7 +306,11 @@ func responsesInputToMessages(input any) []map[string]any {
 					content = "{}"
 				}
 				call := pendingCalls[toolCallID]
-				appendSyntheticAssistantToolCall(toolCallID, call.Name, call.Arguments)
+				reasoningContent := call.ReasoningContent
+				if reasoningContent == "" {
+					reasoningContent = lastReasoningContent
+				}
+				appendSyntheticAssistantToolCall(toolCallID, call.Name, call.Arguments, reasoningContent)
 				out = append(out, map[string]any{
 					"role":         "tool",
 					"tool_call_id": toolCallID,
@@ -297,6 +326,9 @@ func responsesInputToMessages(input any) []map[string]any {
 				"role":    role,
 				"content": content,
 			})
+			if role == "user" || role == "system" {
+				lastReasoningContent = ""
+			}
 		}
 		return out
 	default:
@@ -351,6 +383,61 @@ func normalizeMessageContent(raw any) string {
 			return string(data)
 		}
 		return fmt.Sprint(c)
+	}
+}
+
+func responseReasoningContent(msg map[string]any) string {
+	for _, key := range []string{"reasoning_content", "reasoning"} {
+		if text := normalizeMessageContent(msg[key]); text != "" {
+			return text
+		}
+	}
+	if text := responseReasoningTextList(msg["summary"]); text != "" {
+		return text
+	}
+	if stringValue(msg["type"]) == "reasoning" {
+		if text := responseReasoningTextList(msg["content"]); text != "" {
+			return text
+		}
+	}
+	return stringValue(msg["text"])
+}
+
+func responseReasoningTextList(raw any) string {
+	switch v := raw.(type) {
+	case string:
+		return v
+	case []map[string]any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if text := responseReasoningTextItem(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if m, ok := item.(map[string]any); ok {
+				if text := responseReasoningTextItem(m); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		return responseReasoningTextItem(v)
+	default:
+		return ""
+	}
+}
+
+func responseReasoningTextItem(item map[string]any) string {
+	switch stringValue(item["type"]) {
+	case "summary_text", "reasoning_text", "text", "output_text", "":
+		return stringValue(item["text"])
+	default:
+		return ""
 	}
 }
 
@@ -504,22 +591,56 @@ func extractChatDelta(chunk map[string]any) string {
 }
 
 func extractChatReasoningDelta(chunk map[string]any) string {
+	text, _ := extractChatReasoningDeltaValue(chunk)
+	return text
+}
+
+func extractChatReasoningDeltaValue(chunk map[string]any) (string, bool) {
 	choices, ok := chunk["choices"].([]any)
 	if !ok || len(choices) == 0 {
-		return ""
+		return "", false
 	}
 	c0, ok := choices[0].(map[string]any)
 	if !ok {
-		return ""
+		return "", false
 	}
-	delta, ok := c0["delta"].(map[string]any)
+	if delta, ok := c0["delta"].(map[string]any); ok {
+		if text, ok := extractReasoningTextFromMap(delta); ok {
+			return text, true
+		}
+	}
+	return extractChatReasoningTextValue(chunk)
+}
+
+func extractChatReasoningText(resp map[string]any) string {
+	text, _ := extractChatReasoningTextValue(resp)
+	return text
+}
+
+func extractChatReasoningTextValue(resp map[string]any) (string, bool) {
+	choices, ok := resp["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return "", false
+	}
+	c0, ok := choices[0].(map[string]any)
 	if !ok {
-		return ""
+		return "", false
 	}
-	if text := normalizeMessageContent(delta["reasoning"]); text != "" {
-		return text
+	if msg, ok := c0["message"].(map[string]any); ok {
+		if text, ok := extractReasoningTextFromMap(msg); ok {
+			return text, true
+		}
 	}
-	return ""
+	return extractReasoningTextFromMap(c0)
+}
+
+func extractReasoningTextFromMap(m map[string]any) (string, bool) {
+	for _, key := range []string{"reasoning_content", "reasoning"} {
+		if raw, ok := m[key]; ok {
+			return normalizeMessageContent(raw), true
+		}
+	}
+	return "", false
 }
 
 func stringValue(v any) string {

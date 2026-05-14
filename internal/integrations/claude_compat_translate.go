@@ -55,11 +55,14 @@ func anthropicMessagesToChatMessages(req map[string]any) []map[string]any {
 		if role == "" {
 			role = "user"
 		}
-		text, toolCalls, toolResults := anthropicContentToChatParts(role, msg["content"])
+		text, reasoningContent, toolCalls, toolResults := anthropicContentToChatParts(role, msg["content"])
 		if role == "assistant" {
 			assistant := map[string]any{
 				"role":    "assistant",
 				"content": text,
+			}
+			if reasoningContent != "" {
+				assistant["reasoning_content"] = reasoningContent
 			}
 			if len(toolCalls) > 0 {
 				assistant["tool_calls"] = toolCalls
@@ -107,13 +110,14 @@ func anthropicSystemToString(raw any) string {
 	}
 }
 
-func anthropicContentToChatParts(role string, raw any) (string, []map[string]any, []map[string]any) {
+func anthropicContentToChatParts(role string, raw any) (string, string, []map[string]any, []map[string]any) {
 	textParts := make([]string, 0, 4)
+	reasoningParts := make([]string, 0, 2)
 	toolCalls := make([]map[string]any, 0, 2)
 	toolResults := make([]map[string]any, 0, 2)
 	switch v := raw.(type) {
 	case string:
-		return v, nil, nil
+		return v, "", nil, nil
 	case []any:
 		for idx, item := range v {
 			m, ok := item.(map[string]any)
@@ -124,6 +128,14 @@ func anthropicContentToChatParts(role string, raw any) (string, []map[string]any
 			case "text", "input_text", "output_text":
 				if t := stringValue(m["text"]); t != "" {
 					textParts = append(textParts, t)
+				}
+			case "thinking":
+				if t := stringValue(m["thinking"]); t != "" {
+					reasoningParts = append(reasoningParts, t)
+				}
+			case "reasoning":
+				if t := stringValue(m["text"]); t != "" {
+					reasoningParts = append(reasoningParts, t)
 				}
 			case "tool_use":
 				name := stringValue(m["name"])
@@ -163,7 +175,7 @@ func anthropicContentToChatParts(role string, raw any) (string, []map[string]any
 			}
 		}
 	}
-	return strings.Join(textParts, "\n"), toolCalls, toolResults
+	return strings.Join(textParts, "\n"), strings.Join(reasoningParts, "\n"), toolCalls, toolResults
 }
 
 func anthropicToolsToChatTools(raw any) []map[string]any {

@@ -63,6 +63,90 @@ func TestAnthropicToChatCompletions_BasicMapping(t *testing.T) {
 	}
 }
 
+func TestAnthropicToChatCompletions_AssistantThinkingMapsToReasoningContent(t *testing.T) {
+	req := map[string]any{
+		"model": "mimo-v2.5-pro",
+		"messages": []any{
+			map[string]any{
+				"role": "assistant",
+				"content": []any{
+					map[string]any{"type": "thinking", "thinking": "think first"},
+					map[string]any{
+						"type":  "tool_use",
+						"id":    "call_1",
+						"name":  "sum",
+						"input": map[string]any{"a": float64(1)},
+					},
+				},
+			},
+		},
+	}
+	out := anthropicToChatCompletions(req)
+	msgs, ok := out["messages"].([]map[string]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("messages mismatch: %#v", out["messages"])
+	}
+	if msgs[0]["reasoning_content"] != "think first" {
+		t.Fatalf("expected reasoning_content from thinking block, got %#v", msgs[0])
+	}
+}
+
+func TestAnthropicCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testing.T) {
+	p := &anthropicCompatProxy{upstreamBase: "https://gateway.example/v1"}
+	chatReq := map[string]any{
+		"model": "mimo-v2.5-pro",
+		"messages": []map[string]any{
+			{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []map[string]any{
+					{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "sum",
+							"arguments": `{"a":1}`,
+						},
+					},
+				},
+			},
+		},
+	}
+	p.applyReasoningContent(chatReq)
+	msgs := chatReq["messages"].([]map[string]any)
+	got, ok := msgs[0]["reasoning_content"]
+	if !ok || got != "" {
+		t.Fatalf("expected empty reasoning_content for MiMo cache miss, got %#v", msgs[0])
+	}
+}
+
+func TestAnthropicCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *testing.T) {
+	p := &anthropicCompatProxy{upstreamBase: "https://api.openai.com/v1"}
+	chatReq := map[string]any{
+		"messages": []map[string]any{
+			{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []map[string]any{
+					{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "sum",
+							"arguments": `{"a":1}`,
+						},
+					},
+				},
+			},
+		},
+	}
+	p.applyReasoningContent(chatReq)
+	msgs := chatReq["messages"].([]map[string]any)
+	if _, ok := msgs[0]["reasoning_content"]; ok {
+		t.Fatalf("did not expect reasoning_content for generic gateway, got %#v", msgs[0])
+	}
+}
+
 func TestChatToAnthropicMessage_WithToolCalls(t *testing.T) {
 	chatResp := map[string]any{
 		"id":    "chatcmpl_1",
@@ -133,5 +217,45 @@ func TestForwardAnthropicStream_RealTimeTextDelta(t *testing.T) {
 	}
 	if !strings.Contains(out, "event: message_stop") {
 		t.Fatalf("missing message_stop event: %q", out)
+	}
+}
+
+func TestForwardAnthropicStream_CachesReasoningContentForToolCalls(t *testing.T) {
+	p := &anthropicCompatProxy{}
+	upstream := strings.Join([]string{
+		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"think "}}]}`,
+		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"first"}}]}`,
+		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"sum","arguments":"{\"a\":1}"}}]},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
+	p.forwardAnthropicStream(rec, strings.NewReader(upstream), "mimo-v2.5-pro")
+	if !strings.Contains(rec.body.String(), "event: message_stop") {
+		t.Fatalf("missing message_stop event: %q", rec.body.String())
+	}
+
+	chatReq := map[string]any{
+		"messages": []map[string]any{
+			{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []map[string]any{
+					{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "sum",
+							"arguments": `{"a":1}`,
+						},
+					},
+				},
+			},
+		},
+	}
+	p.applyReasoningContent(chatReq)
+	msgs := chatReq["messages"].([]map[string]any)
+	if msgs[0]["reasoning_content"] != "think first" {
+		t.Fatalf("expected cached reasoning_content, got %#v", msgs[0])
 	}
 }

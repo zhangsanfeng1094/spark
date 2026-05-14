@@ -15,16 +15,18 @@ import (
 )
 
 type anthropicCompatProxy struct {
-	server       *http.Server
-	listener     net.Listener
-	baseURL      string
-	upstreamBase string
-	upstreamKey  string
-	preferredModel string
-	client       *http.Client
-	logFile      io.WriteCloser
-	logMu        sync.Mutex
-	logPath      string
+	server              *http.Server
+	listener            net.Listener
+	baseURL             string
+	upstreamBase        string
+	upstreamKey         string
+	preferredModel      string
+	client              *http.Client
+	logFile             io.WriteCloser
+	logMu               sync.Mutex
+	logPath             string
+	reasoningMu         sync.Mutex
+	reasoningByToolCall map[string]string
 }
 
 func startAnthropicCompatProxy(upstreamBase, upstreamKey, preferredModel string) (*anthropicCompatProxy, error) {
@@ -37,14 +39,14 @@ func startAnthropicCompatProxy(upstreamBase, upstreamKey, preferredModel string)
 		return nil, err
 	}
 	p := &anthropicCompatProxy{
-		listener:     ln,
-		baseURL:      "http://" + ln.Addr().String(),
-		upstreamBase: strings.TrimRight(upstreamBase, "/"),
-		upstreamKey:  upstreamKey,
+		listener:       ln,
+		baseURL:        "http://" + ln.Addr().String(),
+		upstreamBase:   strings.TrimRight(upstreamBase, "/"),
+		upstreamKey:    upstreamKey,
 		preferredModel: strings.TrimSpace(preferredModel),
-		client:       newStreamingHTTPClient(),
-		logFile:      logFile,
-		logPath:      logPath,
+		client:         newStreamingHTTPClient(),
+		logFile:        logFile,
+		logPath:        logPath,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/messages", p.handleMessages)
@@ -108,6 +110,7 @@ func (p *anthropicCompatProxy) handleMessages(w http.ResponseWriter, r *http.Req
 		}
 		chatReq["model"] = p.preferredModel
 	}
+	p.applyReasoningContent(chatReq)
 	p.logf("mapped chat request=%s", mustJSONForLog(chatReq))
 	executor := newAnthropicChatExecutor(p)
 	resp, err := executor.Do(r.Context(), chatReq)
@@ -338,6 +341,7 @@ func (p *anthropicCompatProxy) forwardAnthropicStream(w http.ResponseWriter, upB
 	textClosed := false
 	nextBlockIndex := 0
 	textContent := strings.Builder{}
+	reasoningContent := strings.Builder{}
 
 	toolStates := map[int]*toolStreamState{}
 	toolOrder := make([]int, 0, 2)
@@ -518,6 +522,9 @@ func (p *anthropicCompatProxy) forwardAnthropicStream(w http.ResponseWriter, upB
 		if delta != "" {
 			emitTextDelta(delta)
 		}
+		if reasoningDelta, ok := extractChatReasoningDeltaValue(chunk); ok {
+			reasoningContent.WriteString(reasoningDelta)
+		}
 
 		for _, td := range extractChatToolCallDeltas(chunk) {
 			if td.Index < 0 {
@@ -567,6 +574,7 @@ func (p *anthropicCompatProxy) forwardAnthropicStream(w http.ResponseWriter, upB
 
 	if !messageStarted {
 		if finalChunk != nil {
+			p.rememberReasoningForToolCalls(extractChatToolCalls(finalChunk), extractChatReasoningText(finalChunk))
 			msg := chatToAnthropicMessage(finalChunk, requestedModel)
 			p.writeAnthropicStreamFromMessage(w, msg)
 		} else {
@@ -587,6 +595,9 @@ func (p *anthropicCompatProxy) forwardAnthropicStream(w http.ResponseWriter, upB
 			"index": st.blockIndex,
 		})
 		flusher.Flush()
+	}
+	if reasoningContent.Len() > 0 {
+		p.rememberReasoningForToolCallIDs(toolCallIDsFromStreamState(toolStates, toolOrder), reasoningContent.String())
 	}
 
 	stopReason := "end_turn"

@@ -142,6 +142,7 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + effectiveModel,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + effectiveModel,
 		"CLAUDE_CODE_SUBAGENT_MODEL=" + effectiveModel,
+		"CLAUDE_CODE_ATTRIBUTION_HEADER=0",
 	}
 	if strings.TrimSpace(apiKey) != "" {
 		env = append(env, "ANTHROPIC_API_KEY="+apiKey)

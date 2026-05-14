@@ -47,6 +47,7 @@ func (w anthropicResponseWriter) WriteNonStream(wr http.ResponseWriter, upResp *
 		return
 	}
 	w.proxy.logf("upstream response=%s", mustJSONForLog(chatResp))
+	w.proxy.rememberReasoningForToolCalls(extractChatToolCalls(chatResp), extractChatReasoningText(chatResp))
 	respTranslator := newAnthropicResponseTranslator()
 	msg, err := respTranslator.FromChat(chatResp, requestedModel)
 	if err != nil {

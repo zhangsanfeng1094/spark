@@ -367,6 +367,7 @@ func (p *responsesCompatProxy) forwardNonStream(w http.ResponseWriter, upResp *h
 	}
 
 	text := extractChatText(chatResp)
+	reasoningText := extractChatReasoningText(chatResp)
 	p.logf("non-stream extracted text length=%d", len(text))
 	model := stringValue(chatResp["model"])
 	if model == "" {
@@ -377,7 +378,14 @@ func (p *responsesCompatProxy) forwardNonStream(w http.ResponseWriter, upResp *h
 		id = fmt.Sprintf("resp_%d", time.Now().UnixNano())
 	}
 
-	outputItems := make([]map[string]any, 0, 2)
+	outputItems := make([]map[string]any, 0, 3)
+	if reasoningText != "" {
+		outputItems = append(outputItems, map[string]any{
+			"id":      "rs_" + id,
+			"type":    "reasoning",
+			"summary": []map[string]any{{"type": "summary_text", "text": reasoningText}},
+		})
+	}
 	if text != "" {
 		outputItems = append(outputItems, map[string]any{
 			"type": "message",
@@ -498,6 +506,23 @@ func (p *responsesCompatProxy) forwardStream(w http.ResponseWriter, upResp *http
 			},
 		})
 	}
+	startReasoning := func() {
+		if reasoningStarted {
+			return
+		}
+		reasoningStarted = true
+		reasoningOutputIndex = nextOutputIndex
+		nextOutputIndex++
+		writeSSE(w, map[string]any{
+			"type":         "response.output_item.added",
+			"output_index": reasoningOutputIndex,
+			"item": map[string]any{
+				"id":      reasoningItemID,
+				"type":    "reasoning",
+				"summary": []any{},
+			},
+		})
+	}
 
 	writeSSE(w, map[string]any{
 		"type": "response.created",
@@ -567,22 +592,9 @@ func (p *responsesCompatProxy) forwardStream(w http.ResponseWriter, upResp *http
 		if i := stringValue(chunk["id"]); i != "" {
 			respID = i
 		}
-		reasoningDelta := extractChatReasoningDelta(chunk)
-		if reasoningDelta != "" {
-			if !reasoningStarted {
-				reasoningStarted = true
-				reasoningOutputIndex = nextOutputIndex
-				nextOutputIndex++
-				writeSSE(w, map[string]any{
-					"type":         "response.output_item.added",
-					"output_index": reasoningOutputIndex,
-					"item": map[string]any{
-						"id":      reasoningItemID,
-						"type":    "reasoning",
-						"summary": []any{},
-					},
-				})
-			}
+		reasoningDelta, hasReasoningDelta := extractChatReasoningDeltaValue(chunk)
+		if hasReasoningDelta {
+			startReasoning()
 			fullReasoning.WriteString(reasoningDelta)
 			writeSSE(w, map[string]any{
 				"type":          "response.reasoning_summary_text.delta",
@@ -591,20 +603,6 @@ func (p *responsesCompatProxy) forwardStream(w http.ResponseWriter, upResp *http
 				"summary_index": 0,
 				"delta":         reasoningDelta,
 			})
-			// Some OpenAI-compatible gateways emit only reasoning deltas without content deltas.
-			// Mirror reasoning to output_text when no content delta has been observed.
-			if !sawContentDelta {
-				startMessage()
-				fullText.WriteString(reasoningDelta)
-				writeSSE(w, map[string]any{
-					"type":          "response.output_text.delta",
-					"item_id":       msgItemID,
-					"delta":         reasoningDelta,
-					"output_index":  messageOutputIndex,
-					"content_index": 0,
-					"logprobs":      []any{},
-				})
-			}
 			flusher.Flush()
 		}
 		for _, td := range extractChatToolCallDeltas(chunk) {
