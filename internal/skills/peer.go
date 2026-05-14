@@ -1,121 +1,177 @@
 package skills
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"time"
 )
 
 func DefaultPeerRoot(peer string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	switch NormalizePeer(peer) {
-	case "codex":
-		return filepath.Join(home, ".codex", "skills"), nil
-	case "claude":
-		return filepath.Join(home, ".claude", "skills"), nil
-	default:
-		return "", fmt.Errorf("unsupported skill peer: %s", peer)
-	}
+	return DefaultSkillRoot(ScopeGlobal, peer, "")
 }
 
-func SyncToPeer(peer, root string) error {
-	peer = NormalizePeer(peer)
-	if peer == "" {
-		return fmt.Errorf("unsupported skill peer: %s", peer)
-	}
-	if root == "" {
-		var err error
-		root, err = DefaultPeerRoot(peer)
-		if err != nil {
-			return err
-		}
-	}
+func Sync(opts SyncOptions) (SyncResult, error) {
 	registry, err := LoadRegistry()
 	if err != nil {
-		return err
+		return SyncResult{}, err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return err
+	roots, err := DiscoverSkillRoots(opts.Scope, opts.ProjectRoot, opts.Targets, opts.OverrideRoot)
+	if err != nil {
+		return SyncResult{}, err
 	}
-
-	entries := make([]*SkillEntry, 0, len(registry.Skills))
+	desired := make(map[string]*SkillEntry)
+	rootIndex := make(map[string]SkillRoot, len(roots))
+	for _, root := range roots {
+		rootIndex[root.Path] = root
+		if err := os.MkdirAll(root.Path, 0o755); err != nil {
+			return SyncResult{}, err
+		}
+	}
 	for _, entry := range registry.Skills {
-		if entry == nil || !entry.Enabled || !targetsPeer(entry.Targets, peer) || entry.InstalledPath == "" {
+		if entry == nil || !entry.Enabled || !entry.Managed || entry.InstalledPath == "" {
 			continue
 		}
-		entries = append(entries, entry)
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
-	for _, entry := range entries {
-		if err := copyDir(entry.InstalledPath, filepath.Join(root, entry.Name)); err != nil {
-			return err
+		for _, root := range roots {
+			if entry.Scope != root.Scope || !targetMatches(root.Target, entry.AgentTargets) {
+				continue
+			}
+			desired[filepath.Join(root.Path, entry.Name)] = entry
 		}
 	}
-	return nil
-}
 
-func ImportFromPeer(peer, root string) (ImportResult, error) {
-	peer = NormalizePeer(peer)
-	if peer == "" {
-		return ImportResult{}, fmt.Errorf("unsupported skill peer")
-	}
-	if root == "" {
-		var err error
-		root, err = DefaultPeerRoot(peer)
+	result := SyncResult{}
+	for _, root := range roots {
+		dirEntries, err := os.ReadDir(root.Path)
 		if err != nil {
-			return ImportResult{}, err
+			return result, err
 		}
-	}
-	registry, err := LoadRegistry()
-	if err != nil {
-		return ImportResult{}, err
-	}
-	storeRoot, err := StorageRoot()
-	if err != nil {
-		return ImportResult{}, err
+		for _, dirEntry := range dirEntries {
+			path := filepath.Join(root.Path, dirEntry.Name())
+			if _, ok := desired[path]; ok {
+				continue
+			}
+			managed, _ := managedProjectionState(path)
+			if !managed {
+				continue
+			}
+			if err := os.RemoveAll(path); err != nil {
+				return result, err
+			}
+			result.Cleaned++
+		}
 	}
 
-	result := ImportResult{}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return result, nil
-		}
-		return result, err
+	paths := make([]string, 0, len(desired))
+	for path := range desired {
+		paths = append(paths, path)
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	sort.Strings(paths)
+	for _, path := range paths {
+		entry := desired[path]
+		root := rootIndex[filepath.Dir(path)]
+		state, marker := managedProjectionState(path)
+		if !state {
+			if _, err := os.Lstat(path); err == nil {
+				result.Skipped++
+				continue
+			} else if !os.IsNotExist(err) {
+				return result, err
+			}
 		}
-		name := NormalizeName(entry.Name())
-		if _, exists := registry.Skills[name]; exists {
+		if state && projectionMatchesEntry(marker, entry, root.Scope, root.Target) {
 			result.Skipped++
 			continue
 		}
-		peerPath := filepath.Join(root, entry.Name())
-		manifest, err := LoadManifest(peerPath)
-		if err != nil {
-			continue
+		exists := state
+		if !exists {
+			if _, err := os.Lstat(path); err == nil {
+				exists = true
+			}
 		}
-		targetDir := filepath.Join(storeRoot, name)
-		if err := copyDir(peerPath, targetDir); err != nil {
+		if state {
+			if err := os.RemoveAll(path); err != nil {
+				return result, err
+			}
+		}
+		if err := materializeProjection(path, entry, root.Scope, root.Target); err != nil {
 			return result, err
 		}
-		registry.Skills[name] = &SkillEntry{
-			Name:          name,
-			SourceType:    SourceTypeLocal,
-			Source:        peerPath,
-			Enabled:       true,
-			Targets:       NormalizeTargets([]string{peer}),
-			Managed:       false,
-			InstalledPath: targetDir,
-			Manifest:      manifest,
+		if exists {
+			result.Updated++
+		} else {
+			result.Added++
 		}
-		result.Added++
+	}
+	return result, nil
+}
+
+func SyncToPeer(peer, root string) error {
+	_, err := Sync(SyncOptions{
+		Scope:        ScopeGlobal,
+		Targets:      []string{peer},
+		OverrideRoot: root,
+	})
+	return err
+}
+
+func Import(opts ImportOptions) (ImportResult, error) {
+	registry, err := LoadRegistry()
+	if err != nil {
+		return ImportResult{}, err
+	}
+	roots, err := DiscoverSkillRoots(opts.Scope, opts.ProjectRoot, opts.Targets, opts.OverrideRoot)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	result := ImportResult{}
+	for _, root := range roots {
+		entries, err := os.ReadDir(root.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return result, err
+		}
+		for _, entry := range entries {
+			isDir := entry.IsDir()
+			if !isDir {
+				if info, err := os.Stat(filepath.Join(root.Path, entry.Name())); err == nil && info.IsDir() {
+					isDir = true
+				}
+			}
+			if !isDir {
+				continue
+			}
+			name := NormalizeName(entry.Name())
+			if _, exists := registry.Skills[name]; exists {
+				result.Skipped++
+				continue
+			}
+			sourcePath := filepath.Join(root.Path, entry.Name())
+			manifest, err := LoadManifest(sourcePath)
+			if err != nil {
+				result.Invalid++
+				continue
+			}
+			registry.Skills[name] = &SkillEntry{
+				Name:                name,
+				Scope:               root.Scope,
+				AgentTargets:        []string{root.Target},
+				SourceKind:          SourceKindImported,
+				MaterializationMode: detectProjectionMode(sourcePath),
+				SourceType:          SourceTypeLocal,
+				Source:              sourcePath,
+				Enabled:             true,
+				Targets:             []string{root.Target},
+				Managed:             false,
+				InstalledPath:       sourcePath,
+				Manifest:            manifest,
+				InstalledAt:         time.Now().UTC(),
+			}
+			result.Added++
+		}
 	}
 	if err := SaveRegistry(registry); err != nil {
 		return result, err
@@ -123,11 +179,55 @@ func ImportFromPeer(peer, root string) (ImportResult, error) {
 	return result, nil
 }
 
-func targetsPeer(targets []string, peer string) bool {
-	for _, target := range NormalizeTargets(targets) {
-		if target == peer {
-			return true
-		}
+func ImportFromPeer(peer, root string) (ImportResult, error) {
+	return Import(ImportOptions{
+		Scope:        ScopeGlobal,
+		Targets:      []string{peer},
+		OverrideRoot: root,
+	})
+}
+
+func projectionMatchesEntry(marker *projectionMarker, entry *SkillEntry, scope, target string) bool {
+	if marker == nil || entry == nil {
+		return false
 	}
-	return false
+	if marker.Mode == MaterializationSymlink {
+		return filepath.Clean(marker.Source) == filepath.Clean(entry.InstalledPath)
+	}
+	return marker.Name == entry.Name &&
+		marker.Scope == scope &&
+		marker.Target == target &&
+		filepath.Clean(marker.Source) == filepath.Clean(entry.InstalledPath) &&
+		marker.Mode == entry.MaterializationMode
+}
+
+func materializeProjection(path string, entry *SkillEntry, scope, target string) error {
+	switch entry.MaterializationMode {
+	case MaterializationSymlink:
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.Symlink(entry.InstalledPath, path)
+	default:
+		if err := copyDir(entry.InstalledPath, path); err != nil {
+			return err
+		}
+		return writeProjectionMarker(path, entry, scope, target)
+	}
+}
+
+func detectProjectionMode(path string) string {
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return MaterializationSymlink
+	}
+	return MaterializationCopy
+}
+
+func targetsPeer(targets []string, peer string) bool {
+	return targetMatches(peer, targets)
+}
+
+func scopeLabel(scope string) string {
+	return strings.Title(NormalizeScope(scope))
 }

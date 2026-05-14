@@ -62,7 +62,13 @@ func TestInstallFromCatalogInstallsSkillIntoRegistry(t *testing.T) {
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# OpenAI Docs\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: openai-docs
+description: Use OpenAI docs effectively.
+---
+
+# OpenAI Docs
+`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, repoDir, "init")

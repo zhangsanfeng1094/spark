@@ -2,11 +2,28 @@ package skills
 
 import "time"
 
-const CurrentRegistryVersion = 1
+const CurrentRegistryVersion = 2
 
 const (
 	SourceTypeGit   = "git"
 	SourceTypeLocal = "local"
+)
+
+const (
+	SourceKindLocal    = "local"
+	SourceKindGit      = "git"
+	SourceKindCatalog  = "catalog"
+	SourceKindImported = "imported"
+)
+
+const (
+	ScopeProject = "project"
+	ScopeGlobal  = "global"
+)
+
+const (
+	MaterializationCopy    = "copy"
+	MaterializationSymlink = "symlink"
 )
 
 type Registry struct {
@@ -16,17 +33,21 @@ type Registry struct {
 }
 
 type SkillEntry struct {
-	Name          string        `json:"name"`
-	SourceType    string        `json:"source_type"`
-	Source        string        `json:"source"`
-	Ref           string        `json:"ref,omitempty"`
-	Subdir        string        `json:"subdir,omitempty"`
-	Enabled       bool          `json:"enabled"`
-	Targets       []string      `json:"targets,omitempty"`
-	Managed       bool          `json:"managed"`
-	InstalledPath string        `json:"installed_path,omitempty"`
-	Manifest      SkillManifest `json:"manifest,omitempty"`
-	InstalledAt   time.Time     `json:"installed_at,omitempty"`
+	Name                string        `json:"name"`
+	Scope               string        `json:"scope,omitempty"`
+	AgentTargets        []string      `json:"agent_targets,omitempty"`
+	SourceKind          string        `json:"source_kind,omitempty"`
+	MaterializationMode string        `json:"materialization_mode,omitempty"`
+	SourceType          string        `json:"source_type,omitempty"`
+	Source              string        `json:"source"`
+	Ref                 string        `json:"ref,omitempty"`
+	Subdir              string        `json:"subdir,omitempty"`
+	Enabled             bool          `json:"enabled"`
+	Targets             []string      `json:"targets,omitempty"`
+	Managed             bool          `json:"managed"`
+	InstalledPath       string        `json:"installed_path,omitempty"`
+	Manifest            SkillManifest `json:"manifest,omitempty"`
+	InstalledAt         time.Time     `json:"installed_at,omitempty"`
 }
 
 type SkillManifest struct {
@@ -42,15 +63,53 @@ type CatalogRef struct {
 }
 
 type InstallOptions struct {
-	Name       string
-	SourceType string
-	Source     string
-	Ref        string
-	Subdir     string
-	Targets    []string
+	Name                string
+	Scope               string
+	SourceType          string
+	SourceKind          string
+	Source              string
+	Ref                 string
+	Subdir              string
+	Targets             []string
+	MaterializationMode string
+}
+
+type SyncOptions struct {
+	Scope        string
+	Targets      []string
+	ProjectRoot  string
+	OverrideRoot string
 }
 
 type ImportResult struct {
 	Added   int
 	Skipped int
+	Invalid int
+}
+
+type ImportOptions struct {
+	Scope        string
+	Targets      []string
+	ProjectRoot  string
+	OverrideRoot string
+}
+
+type SyncResult struct {
+	Added   int
+	Updated int
+	Skipped int
+	Cleaned int
+}
+
+type SkillRoot struct {
+	Scope  string
+	Target string
+	Path   string
+}
+
+type ProjectionStatus struct {
+	Scope  string
+	Target string
+	Path   string
+	State  string
 }

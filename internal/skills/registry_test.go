@@ -47,12 +47,13 @@ func TestSaveLoadRegistryRoundTrip(t *testing.T) {
 
 	registry := DefaultRegistry()
 	registry.Skills["brainstorming"] = &SkillEntry{
-		Name:       "brainstorming",
-		SourceType: SourceTypeLocal,
-		Source:     "/tmp/brainstorming",
-		Enabled:    true,
-		Targets:    []string{"codex", "claude"},
-		Managed:    true,
+		Name:                "brainstorming",
+		SourceType:          SourceTypeLocal,
+		Source:              "/tmp/brainstorming",
+		Enabled:             true,
+		AgentTargets:        []string{"codex", "claude"},
+		MaterializationMode: MaterializationCopy,
+		Managed:             true,
 		Manifest: SkillManifest{
 			Name:        "brainstorming",
 			Description: "Explores design intent before implementation.",
@@ -101,7 +102,7 @@ func TestNormalizeRegistryDefaultsTargetsAndName(t *testing.T) {
 	if entry.Name != "brainstorming" {
 		t.Fatalf("Name=%q", entry.Name)
 	}
-	if len(entry.Targets) != 2 || entry.Targets[0] != "codex" || entry.Targets[1] != "claude" {
-		t.Fatalf("Targets=%v", entry.Targets)
+	if len(entry.AgentTargets) != 3 || entry.AgentTargets[0] != "agents" || entry.AgentTargets[1] != "claude" || entry.AgentTargets[2] != "codex" {
+		t.Fatalf("Targets=%v", entry.AgentTargets)
 	}
 }

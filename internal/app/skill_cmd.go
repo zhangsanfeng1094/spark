@@ -76,6 +76,9 @@ func newSkillShowCmd() *cobra.Command {
 				fmt.Sprintf("name: %s", entry.Name),
 				fmt.Sprintf("enabled: %t", entry.Enabled),
 				fmt.Sprintf("managed: %t", entry.Managed),
+				fmt.Sprintf("scope: %s", entry.Scope),
+				fmt.Sprintf("source_kind: %s", entry.SourceKind),
+				fmt.Sprintf("materialization_mode: %s", entry.MaterializationMode),
 				fmt.Sprintf("source_type: %s", entry.SourceType),
 				fmt.Sprintf("source: %s", entry.Source),
 			}
@@ -88,11 +91,17 @@ func newSkillShowCmd() *cobra.Command {
 			if entry.InstalledPath != "" {
 				lines = append(lines, fmt.Sprintf("installed_path: %s", entry.InstalledPath))
 			}
-			if len(entry.Targets) > 0 {
-				lines = append(lines, fmt.Sprintf("targets: %s", strings.Join(entry.Targets, ",")))
+			if len(entry.AgentTargets) > 0 {
+				lines = append(lines, fmt.Sprintf("targets: %s", strings.Join(entry.AgentTargets, ",")))
 			}
 			if entry.Manifest.Description != "" {
 				lines = append(lines, fmt.Sprintf("description: %s", entry.Manifest.Description))
+			}
+			if statuses, statusErr := skills.ProjectionStatuses(entry, ""); statusErr == nil && len(statuses) > 0 {
+				lines = append(lines, "projections:")
+				for _, status := range statuses {
+					lines = append(lines, fmt.Sprintf("- %s/%s [%s] %s", status.Scope, status.Target, status.State, status.Path))
+				}
 			}
 			_, err = io.WriteString(cmd.OutOrStdout(), strings.Join(lines, "\n")+"\n")
 			return err
@@ -105,7 +114,9 @@ func newSkillInstallCmd() *cobra.Command {
 	var sourceType string
 	var ref string
 	var subdir string
-	var targetsCSV string
+	var targetCSV string
+	var scope string
+	var mode string
 	cmd := &cobra.Command{
 		Use:   "install <name>",
 		Short: "Install a skill from a local directory, git source, or catalog",
@@ -116,15 +127,21 @@ func newSkillInstallCmd() *cobra.Command {
 				err   error
 			)
 			if strings.TrimSpace(source) == "" {
-				entry, err = installFromCatalog(args[0])
+				entry, err = installFromCatalog(args[0], skills.InstallOptions{
+					Scope:               scope,
+					Targets:             parseCSV(targetCSV),
+					MaterializationMode: mode,
+				})
 			} else {
 				entry, err = skills.Install(skills.InstallOptions{
-					Name:       args[0],
-					SourceType: sourceType,
-					Source:     source,
-					Ref:        ref,
-					Subdir:     subdir,
-					Targets:    parseCSV(targetsCSV),
+					Name:                args[0],
+					Scope:               scope,
+					SourceType:          sourceType,
+					Source:              source,
+					Ref:                 ref,
+					Subdir:              subdir,
+					Targets:             parseCSV(targetCSV),
+					MaterializationMode: mode,
 				})
 			}
 			if err != nil {
@@ -138,7 +155,10 @@ func newSkillInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&sourceType, "source-type", skills.SourceTypeLocal, "Skill source type: local or git")
 	cmd.Flags().StringVar(&ref, "ref", "", "Pinned git ref for git sources")
 	cmd.Flags().StringVar(&subdir, "subdir", "", "Subdirectory inside the source")
-	cmd.Flags().StringVar(&targetsCSV, "targets", "codex,claude", "Comma-separated peer targets")
+	cmd.Flags().StringVar(&scope, "scope", skills.ScopeGlobal, "Install scope: global or project")
+	cmd.Flags().StringVar(&targetCSV, "target", "agents,codex,claude", "Comma-separated target skill roots")
+	cmd.Flags().StringVar(&targetCSV, "targets", "agents,codex,claude", "Comma-separated target skill roots")
+	cmd.Flags().StringVar(&mode, "mode", skills.MaterializationCopy, "Projection mode: copy or symlink")
 	return cmd
 }
 
@@ -224,34 +244,53 @@ func newSkillToggleCmd(use string, enabled bool) *cobra.Command {
 }
 
 func newSkillSyncCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "sync <target>",
-		Short: "Sync enabled skills to Codex or Claude",
-		Args:  cobra.ExactArgs(1),
+	var targetCSV string
+	var scope string
+	cmd := &cobra.Command{
+		Use:   "sync [target]",
+		Short: "Sync enabled Spark-managed skills into target skill roots",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := skills.SyncToPeer(args[0], ""); err != nil {
-				return err
+			targets := parseCSV(targetCSV)
+			if len(args) == 1 {
+				targets = []string{args[0]}
 			}
-			_, err := io.WriteString(cmd.OutOrStdout(), fmt.Sprintf("Synced skills to %s.\n", strings.ToLower(args[0])))
-			return err
-		},
-	}
-}
-
-func newSkillImportCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "import <source>",
-		Short: "Import skills from Codex or Claude",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			result, err := skills.ImportFromPeer(args[0], "")
+			result, err := skills.Sync(skills.SyncOptions{Scope: scope, Targets: targets})
 			if err != nil {
 				return err
 			}
-			_, err = io.WriteString(cmd.OutOrStdout(), fmt.Sprintf("Imported %d skill(s), skipped %d.\n", result.Added, result.Skipped))
+			_, err = io.WriteString(cmd.OutOrStdout(), fmt.Sprintf("Synced skills: added %d, updated %d, skipped %d, cleaned %d.\n", result.Added, result.Updated, result.Skipped, result.Cleaned))
 			return err
 		},
 	}
+	cmd.Flags().StringVar(&scope, "scope", "", "Limit sync to project or global scope")
+	cmd.Flags().StringVar(&targetCSV, "target", "agents,codex,claude", "Comma-separated target skill roots")
+	return cmd
+}
+
+func newSkillImportCmd() *cobra.Command {
+	var targetCSV string
+	var scope string
+	cmd := &cobra.Command{
+		Use:   "import [target]",
+		Short: "Scan external skill roots and register unmanaged skills",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			targets := parseCSV(targetCSV)
+			if len(args) == 1 {
+				targets = []string{args[0]}
+			}
+			result, err := skills.Import(skills.ImportOptions{Scope: scope, Targets: targets})
+			if err != nil {
+				return err
+			}
+			_, err = io.WriteString(cmd.OutOrStdout(), fmt.Sprintf("Imported %d skill(s), skipped %d, invalid %d.\n", result.Added, result.Skipped, result.Invalid))
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&scope, "scope", "", "Limit import to project or global scope")
+	cmd.Flags().StringVar(&targetCSV, "target", "agents,codex,claude", "Comma-separated target skill roots")
+	return cmd
 }
 
 func newSkillUpgradeCmd() *cobra.Command {
@@ -273,12 +312,15 @@ func newSkillUpgradeCmd() *cobra.Command {
 				return fmt.Errorf("skill is unmanaged: %s", args[0])
 			}
 			if _, err := skills.Install(skills.InstallOptions{
-				Name:       entry.Name,
-				SourceType: entry.SourceType,
-				Source:     entry.Source,
-				Ref:        ref,
-				Subdir:     entry.Subdir,
-				Targets:    entry.Targets,
+				Name:                entry.Name,
+				Scope:               entry.Scope,
+				SourceType:          entry.SourceType,
+				SourceKind:          entry.SourceKind,
+				Source:              entry.Source,
+				Ref:                 ref,
+				Subdir:              entry.Subdir,
+				Targets:             entry.AgentTargets,
+				MaterializationMode: entry.MaterializationMode,
 			}); err != nil {
 				return err
 			}
@@ -304,7 +346,7 @@ func describeSkills(registry *skills.Registry) string {
 		if entry.Enabled {
 			state = "enabled"
 		}
-		lines = append(lines, fmt.Sprintf("- %s [%s] %s", entry.Name, state, entry.SourceType))
+		lines = append(lines, fmt.Sprintf("- %s [%s] scope=%s targets=%s source=%s mode=%s", entry.Name, state, entry.Scope, strings.Join(entry.AgentTargets, ","), entry.SourceKind, entry.MaterializationMode))
 	}
 	return strings.Join(lines, "\n")
 }

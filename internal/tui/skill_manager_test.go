@@ -89,7 +89,13 @@ func TestSkillManagerToggleShortcutUpdatesEnabledState(t *testing.T) {
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("# Brainstorming\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte(`---
+name: brainstorming
+description: Explore intent first.
+---
+
+# Brainstorming
+`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := skills.Install(skills.InstallOptions{Name: "brainstorming", SourceType: skills.SourceTypeLocal, Source: sourceDir}); err != nil {
@@ -127,21 +133,24 @@ func TestSkillManagerRenderDetailsIncludesSkillMetadata(t *testing.T) {
 
 	registry := skills.DefaultRegistry()
 	registry.Skills["brainstorming"] = &skills.SkillEntry{
-		Name:          "brainstorming",
-		SourceType:    skills.SourceTypeLocal,
-		Source:        "/tmp/brainstorming",
-		Enabled:       true,
-		Managed:       true,
-		InstalledPath: "/tmp/brainstorming",
-		Targets:       []string{"codex", "claude"},
-		Manifest:      skills.SkillManifest{Name: "brainstorming", Description: "Explore intent first."},
+		Name:                "brainstorming",
+		Scope:               skills.ScopeGlobal,
+		SourceKind:          skills.SourceKindLocal,
+		SourceType:          skills.SourceTypeLocal,
+		Source:              "/tmp/brainstorming",
+		Enabled:             true,
+		Managed:             true,
+		InstalledPath:       "/tmp/brainstorming",
+		AgentTargets:        []string{"codex", "claude"},
+		MaterializationMode: skills.MaterializationCopy,
+		Manifest:            skills.SkillManifest{Name: "brainstorming", Description: "Explore intent first."},
 	}
 	m := newSkillManagerModel(registry)
 	m.selected = 0
 	m.browseFocus = skillBrowseFocusSkills
 
 	right := m.renderDetails()
-	for _, want := range []string{"Overview", "brainstorming", "Source: local", "Targets: claude, codex", "Explore intent first."} {
+	for _, want := range []string{"Overview", "brainstorming", "Scope: global", "Source: local", "Targets: claude, codex", "Explore intent first."} {
 		if !strings.Contains(right, want) {
 			t.Fatalf("expected details to contain %q, got %q", want, right)
 		}

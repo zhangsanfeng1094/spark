@@ -13,7 +13,7 @@ func TestSyncToCodexExportsEnabledSkillsOnly(t *testing.T) {
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# Brainstorming\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(testSkillFrontmatter), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Install(InstallOptions{Name: "brainstorming", SourceType: SourceTypeLocal, Source: skillDir}); err != nil {
@@ -24,7 +24,13 @@ func TestSyncToCodexExportsEnabledSkillsOnly(t *testing.T) {
 	if err := os.MkdirAll(disabledDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(disabledDir, "SKILL.md"), []byte("# Disabled\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(disabledDir, "SKILL.md"), []byte(`---
+name: disabled
+description: Disabled skill.
+---
+
+# Disabled
+`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Install(InstallOptions{Name: "disabled", SourceType: SourceTypeLocal, Source: disabledDir}); err != nil {
@@ -54,7 +60,7 @@ func TestImportFromClaudeCreatesUnmanagedLocalEntry(t *testing.T) {
 	if err := os.MkdirAll(peerRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(peerRoot, "SKILL.md"), []byte("# Brainstorming\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(peerRoot, "SKILL.md"), []byte(testSkillFrontmatter), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,10 +83,10 @@ func TestImportFromClaudeCreatesUnmanagedLocalEntry(t *testing.T) {
 	if entry.Managed {
 		t.Fatalf("imported peer entry should be unmanaged")
 	}
-	if entry.SourceType != SourceTypeLocal {
-		t.Fatalf("SourceType=%q", entry.SourceType)
+	if entry.SourceKind != SourceKindImported {
+		t.Fatalf("SourceKind=%q", entry.SourceKind)
 	}
-	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".spark", "skills", "brainstorming", "SKILL.md")); err != nil {
-		t.Fatalf("expected imported content copied into spark store: %v", err)
+	if entry.InstalledPath != peerRoot {
+		t.Fatalf("InstalledPath=%q", entry.InstalledPath)
 	}
 }

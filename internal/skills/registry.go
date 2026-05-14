@@ -100,9 +100,14 @@ func NormalizeRegistry(registry *Registry) {
 		}
 		key := NormalizeName(firstNonEmpty(entry.Name, name))
 		entry.Name = key
+		entry.Scope = NormalizeScope(entry.Scope)
 		entry.SourceType = NormalizeSourceType(entry.SourceType)
-		entry.Targets = NormalizeTargets(entry.Targets)
+		entry.SourceKind = NormalizeSourceKind(entry.SourceKind, entry.SourceType, entry.Managed)
+		entry.AgentTargets = NormalizeTargets(firstNonEmptySlice(entry.AgentTargets, entry.Targets))
+		entry.Targets = slices.Clone(entry.AgentTargets)
+		entry.MaterializationMode = NormalizeMaterializationMode(entry.MaterializationMode)
 		entry.Manifest.Name = normalizeManifestName(entry.Manifest.Name, key)
+		entry.Manifest.Description = strings.TrimSpace(entry.Manifest.Description)
 		normalized[key] = entry
 	}
 	registry.Skills = normalized
@@ -115,7 +120,7 @@ func NormalizeName(name string) string {
 
 func NormalizeTargets(targets []string) []string {
 	if len(targets) == 0 {
-		return []string{"codex", "claude"}
+		return []string{"agents", "claude", "codex"}
 	}
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(targets))
@@ -131,7 +136,7 @@ func NormalizeTargets(targets []string) []string {
 		out = append(out, normalized)
 	}
 	if len(out) == 0 {
-		return []string{"codex", "claude"}
+		return []string{"agents", "claude", "codex"}
 	}
 	slices.Sort(out)
 	return out
@@ -139,12 +144,25 @@ func NormalizeTargets(targets []string) []string {
 
 func NormalizePeer(peer string) string {
 	switch strings.ToLower(strings.TrimSpace(peer)) {
+	case "agents", "agent":
+		return "agents"
 	case "codex":
 		return "codex"
 	case "claude":
 		return "claude"
 	default:
 		return ""
+	}
+}
+
+func NormalizeScope(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case ScopeProject:
+		return ScopeProject
+	case "", ScopeGlobal:
+		return ScopeGlobal
+	default:
+		return strings.ToLower(strings.TrimSpace(scope))
 	}
 }
 
@@ -156,6 +174,38 @@ func NormalizeSourceType(sourceType string) string {
 		return SourceTypeLocal
 	default:
 		return strings.ToLower(strings.TrimSpace(sourceType))
+	}
+}
+
+func NormalizeSourceKind(sourceKind, sourceType string, managed bool) string {
+	switch strings.ToLower(strings.TrimSpace(sourceKind)) {
+	case SourceKindLocal, SourceKindGit, SourceKindCatalog, SourceKindImported:
+		return strings.ToLower(strings.TrimSpace(sourceKind))
+	}
+	switch NormalizeSourceType(sourceType) {
+	case SourceTypeGit:
+		return SourceKindGit
+	case SourceTypeLocal:
+		if !managed {
+			return SourceKindImported
+		}
+		return SourceKindLocal
+	default:
+		if !managed {
+			return SourceKindImported
+		}
+		return SourceKindLocal
+	}
+}
+
+func NormalizeMaterializationMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case MaterializationSymlink:
+		return MaterializationSymlink
+	case "", MaterializationCopy:
+		return MaterializationCopy
+	default:
+		return strings.ToLower(strings.TrimSpace(mode))
 	}
 }
 
@@ -173,4 +223,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonEmptySlice(values ...[]string) []string {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return nil
 }
