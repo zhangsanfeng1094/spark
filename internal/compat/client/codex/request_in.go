@@ -12,13 +12,24 @@ func ResponsesInbound(req map[string]any) ir.Request {
 	if model == "" {
 		model = "unknown"
 	}
+	messages := responsesInputToIRMessages(req["input"])
+	if instructions := stringValue(req["instructions"]); instructions != "" {
+		messages = append([]ir.Message{{
+			Role:    ir.RoleSystem,
+			Content: []ir.ContentBlock{ir.Text(instructions)},
+		}}, messages...)
+	}
 	out := ir.Request{
 		Model:    model,
-		Messages: responsesInputToIRMessages(req["input"]),
+		Messages: messages,
 		Tools:    responsesTools(req["tools"]),
 		Stream:   boolValue(req["stream"]),
 		Source:   ir.ProtocolOpenAIResponses,
 		Raw:      req,
+	}
+	if promptCacheKey := stringValue(req["prompt_cache_key"]); promptCacheKey != "" {
+		// TODO: Forward prompt_cache_key only for targets that explicitly support it.
+		out.Metadata = map[string]any{"prompt_cache_key": promptCacheKey}
 	}
 	if max, ok := intValue(req["max_output_tokens"]); ok {
 		out.Generation.MaxTokens = &max

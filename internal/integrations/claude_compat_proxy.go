@@ -16,18 +16,17 @@ import (
 )
 
 type anthropicCompatProxy struct {
-	server              *http.Server
-	listener            net.Listener
-	baseURL             string
-	upstreamBase        string
-	upstreamKey         string
-	preferredModel      string
-	client              *http.Client
-	logFile             io.WriteCloser
-	logMu               sync.Mutex
-	logPath             string
-	reasoningMu         sync.Mutex
-	reasoningByToolCall map[string]string
+	server         *http.Server
+	listener       net.Listener
+	baseURL        string
+	upstreamBase   string
+	upstreamKey    string
+	preferredModel string
+	client         *http.Client
+	logFile        io.WriteCloser
+	logMu          sync.Mutex
+	logPath        string
+	reasoningCache gateway.ReasoningCache
 }
 
 func startAnthropicCompatProxy(upstreamBase, upstreamKey, preferredModel string) (*anthropicCompatProxy, error) {
@@ -161,8 +160,4 @@ func retryUnknownModelVariant(model string) string {
 		return m[:idx+1] + strings.ToUpper(m[idx+1:])
 	}
 	return strings.ToUpper(m)
-}
-
-func (p *anthropicCompatProxy) forwardAnthropicStream(w http.ResponseWriter, upBody io.Reader, requestedModel string) {
-	gateway.ForwardAnthropicMessagesStream(w, upBody, requestedModel, p.rememberReasoningForToolCallIDs, p.logf)
 }

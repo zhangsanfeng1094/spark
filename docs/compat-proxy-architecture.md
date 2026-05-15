@@ -22,7 +22,7 @@ Keep compatibility conversion layered without changing external behavior:
 
 ### Anthropic Messages caller -> OpenAI Chat target
 - Gateway handler: `internal/compat/gateway.AnthropicMessagesHandler`
-- Integration executor: `internal/integrations.anthropicChatExecutor`
+- Integration executor: `internal/integrations.anthropicCompatProxy.postChatCompletions`
 - Client request adapter: `internal/compat/client/anthropic_messages.MessagesInbound`
 - Target adapter: `internal/compat/target/openai_chat.ChatOutbound`
 - Response writer: `target/openai_chat.ChatResponse` -> `client/anthropic_messages.MessagesClientResponse`
@@ -55,9 +55,9 @@ Keep compatibility conversion layered without changing external behavior:
   - golden tests for decode and malformed payloads remain identical
 
 ### Phase 2 (Introduce request translator interface)
-- Keep only `RequestTranslator` in `internal/integrations/compat_types.go`.
-- Implement translators by composing inbound codec + target adapter directly.
-- Response and stream paths use codec writer functions directly.
+- Move `RequestTranslator` and route selection into `internal/compat/gateway`.
+- Implement translators by composing client adapter + target adapter directly.
+- Response and stream paths use client writer functions through gateway orchestration.
 - Acceptance:
   - stream and non-stream snapshot tests unchanged
 
@@ -96,9 +96,9 @@ These are safe, low-scope improvements before large refactor:
 3. Guard against very long lines:
    - keep scanner max-size setting and log if limit likely hit
 
-Suggested target locations:
-- `internal/integrations/codex_compat_proxy.go` in `forwardStream`
-- `internal/integrations/claude_compat_proxy.go` in `forwardAnthropicStream`
+Current target locations:
+- `internal/compat/gateway/stream.go` for Codex Responses stream conversion
+- `internal/compat/gateway/anthropic_handler.go` for Anthropic Messages stream conversion
 
 ## Test Strategy Per Phase
 - Unit tests:

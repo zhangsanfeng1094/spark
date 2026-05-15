@@ -104,15 +104,3 @@ func (e codexChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*htt
 	}
 	return upResp, nil
 }
-
-type anthropicChatExecutor struct {
-	proxy *anthropicCompatProxy
-}
-
-func newAnthropicChatExecutor(proxy *anthropicCompatProxy) gateway.ChatExecutor {
-	return anthropicChatExecutor{proxy: proxy}
-}
-
-func (e anthropicChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
-	return e.proxy.postChatCompletions(ctx, chatReq)
-}

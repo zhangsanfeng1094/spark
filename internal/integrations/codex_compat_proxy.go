@@ -193,7 +193,7 @@ func ultraMinimalChatCompletionsRequest(chatReq map[string]any) map[string]any {
 		if role != "user" && role != "system" {
 			continue
 		}
-		c := normalizeMessageContent(msgs[i]["content"])
+		c := gateway.NormalizeMessageContent(msgs[i]["content"])
 		if c != "" {
 			content = c
 			break

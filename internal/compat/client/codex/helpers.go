@@ -78,7 +78,9 @@ func normalizeMessageContent(raw any) string {
 		return strings.TrimSpace(string(c))
 	case map[string]any:
 		switch stringValue(c["type"]) {
-		case "", "input_text", "output_text", "text":
+		case "input_text", "output_text", "text":
+			return stringValue(c["text"])
+		case "":
 			if t := stringValue(c["text"]); t != "" {
 				return t
 			}

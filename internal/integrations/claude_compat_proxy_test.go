@@ -259,7 +259,6 @@ func TestMessagesClientResponseFromChatResponse_WithToolCalls(t *testing.T) {
 }
 
 func TestForwardAnthropicStream_RealTimeTextDelta(t *testing.T) {
-	p := &anthropicCompatProxy{}
 	upstream := strings.Join([]string{
 		`data: {"id":"chatcmpl_1","model":"gpt-4.1","choices":[{"delta":{"content":"Hel"}}]}`,
 		"",
@@ -269,7 +268,7 @@ func TestForwardAnthropicStream_RealTimeTextDelta(t *testing.T) {
 		"",
 	}, "\n")
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p.forwardAnthropicStream(rec, strings.NewReader(upstream), "gpt-4.1")
+	gateway.ForwardAnthropicMessagesStream(rec, strings.NewReader(upstream), "gpt-4.1", nil, nil)
 	out := rec.body.String()
 	if !strings.Contains(out, "event: message_start") {
 		t.Fatalf("missing message_start event: %q", out)
@@ -295,7 +294,7 @@ func TestForwardAnthropicStream_CachesReasoningContentForToolCalls(t *testing.T)
 		``,
 	}, "\n")
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p.forwardAnthropicStream(rec, strings.NewReader(upstream), "mimo-v2.5-pro")
+	gateway.ForwardAnthropicMessagesStream(rec, strings.NewReader(upstream), "mimo-v2.5-pro", p.rememberReasoningForToolCallIDs, nil)
 	if !strings.Contains(rec.body.String(), "event: message_stop") {
 		t.Fatalf("missing message_stop event: %q", rec.body.String())
 	}

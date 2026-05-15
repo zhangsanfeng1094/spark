@@ -159,14 +159,13 @@ sequenceDiagram
 
 ### 兼容代理中的旧/新边界
 
-`internal/integrations` 仍保留一部分老的兼容抽象：
+`internal/integrations` 只保留兼容代理运行时外壳：
 
-- `compat_translators.go`: `responsesRequestTranslator` / `anthropicRequestTranslator` 调用新 codec，再用 `target/openai_chat.ChatOutbound` 生成 Chat 请求。
-- `compat_executors.go`: `codexChatExecutor` / `anthropicChatExecutor` 负责请求上游和 provider-specific retry。
-- `compat_pipeline.go`: `executeTranslatedChat` 串起 translator 和 executor。
-- `compat_writers.go`: 把上游 Chat response 先转 `ir.Response`，再调用 Anthropic writer。
+- `codex_compat_proxy.go` / `claude_compat_proxy.go`: 负责本地 HTTP server、上游 URL/key、日志、重试和 agent 启动集成。
+- `compat_executors.go`: `codexChatExecutor` 负责 Codex fallback 路径的上游请求和 provider-specific retry；Anthropic Messages 兼容路径由 `gateway.AnthropicMessagesHandler` 直接调用 `postChatCompletions`。
+- `compat_helpers.go` / `compatio.go`: 保留 integration runtime 需要的通用值读取、日志截断和请求 body 解码。
 
-新协议转换代码已经主要落在 `internal/compat/ir` 和 `internal/compat/*`；`integrations` 更像 HTTP 代理和 agent 启动层。
+协议字段转换、route selection、stream/non-stream 写回已经落在 `internal/compat/ir`、`internal/compat/client/*`、`internal/compat/target/*` 和 `internal/compat/gateway`。
 
 ## 关键运行链路
 

@@ -29,6 +29,63 @@ func TestResponsesInboundStringInput(t *testing.T) {
 	}
 }
 
+func TestResponsesInboundPrependsInstructionsAsSystemMessage(t *testing.T) {
+	req := ResponsesInbound(map[string]any{
+		"model":        "deepseek-v4-flash",
+		"instructions": "stable codex instructions",
+		"input":        "hello",
+	})
+
+	if len(req.Messages) != 2 {
+		t.Fatalf("messages mismatch: %#v", req.Messages)
+	}
+	if req.Messages[0].Role != ir.RoleSystem || req.Messages[0].Text() != "stable codex instructions" {
+		t.Fatalf("system message mismatch: %#v", req.Messages[0])
+	}
+	if req.Messages[1].Role != ir.RoleUser || req.Messages[1].Text() != "hello" {
+		t.Fatalf("user message mismatch: %#v", req.Messages[1])
+	}
+}
+
+func TestResponsesInboundPreservesPromptCacheKeyInMetadata(t *testing.T) {
+	req := ResponsesInbound(map[string]any{
+		"model":            "deepseek-v4-flash",
+		"input":            "hello",
+		"prompt_cache_key": "cache-key-123",
+	})
+
+	if req.Metadata["prompt_cache_key"] != "cache-key-123" {
+		t.Fatalf("prompt cache key metadata mismatch: %#v", req.Metadata)
+	}
+}
+
+func TestResponsesInboundDropsEmptyInputTextBlocks(t *testing.T) {
+	req := ResponsesInbound(map[string]any{
+		"model": "deepseek-v4-flash",
+		"input": []any{
+			map[string]any{
+				"role": "system",
+				"content": []any{
+					map[string]any{"type": "input_text", "text": ""},
+				},
+			},
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "input_text", "text": "hello"},
+				},
+			},
+		},
+	})
+
+	if len(req.Messages) != 1 {
+		t.Fatalf("messages mismatch: %#v", req.Messages)
+	}
+	if req.Messages[0].Role != ir.RoleUser || req.Messages[0].Text() != "hello" {
+		t.Fatalf("user message mismatch: %#v", req.Messages[0])
+	}
+}
+
 func TestResponsesInboundMapsReasoningRequestConfig(t *testing.T) {
 	req := ResponsesInbound(map[string]any{
 		"model": "gpt-5.1",

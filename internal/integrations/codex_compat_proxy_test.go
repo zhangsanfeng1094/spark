@@ -528,7 +528,7 @@ func TestNormalizeMessageContent_MapText(t *testing.T) {
 		"type": "text",
 		"text": "你好",
 	}
-	got := normalizeMessageContent(raw)
+	got := gateway.NormalizeMessageContent(raw)
 	if got != "你好" {
 		t.Fatalf("expected map text content, got %q", got)
 	}
@@ -542,7 +542,7 @@ func TestExtractChatText_FallbackChoiceText(t *testing.T) {
 			},
 		},
 	}
-	got := extractChatText(resp)
+	got := gateway.ExtractChatText(resp)
 	if got != "hello" {
 		t.Fatalf("expected fallback choice text, got %q", got)
 	}
@@ -558,7 +558,7 @@ func TestExtractChatDelta_DeltaTextString(t *testing.T) {
 			},
 		},
 	}
-	got := extractChatDelta(chunk)
+	got := gateway.ExtractChatDelta(chunk)
 	if got != "你好" {
 		t.Fatalf("expected delta text, got %q", got)
 	}
@@ -574,7 +574,7 @@ func TestExtractChatReasoningDelta_ReasoningContent(t *testing.T) {
 			},
 		},
 	}
-	got := extractChatReasoningDelta(chunk)
+	got := gateway.ExtractChatReasoningDelta(chunk)
 	if got != "先想一下" {
 		t.Fatalf("expected reasoning_content delta, got %q", got)
 	}
