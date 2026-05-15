@@ -1,34 +1,32 @@
 # Compat Proxy Architecture
 
 ## Goal
-Keep compat proxies layered without changing external behavior:
-- `handler`: HTTP entry + request validation + stream/non-stream dispatch
-- `codec`: client protocol <-> Compat IR
+Keep compatibility conversion layered without changing external behavior:
+- `client`: caller protocol <-> Compat IR
+- `ir`: provider-neutral request, response, stream event, tool, usage, and reasoning model
 - `target`: Compat IR <-> upstream provider protocol
-- `executor`: upstream HTTP call + retry + SSE reading
-- `writer`: response/error shaping and SSE/json writeback
+- `gateway`: route selection, HTTP entry, stream/non-stream dispatch, gateway errors
+- `integration`: upstream URL/key loading, HTTP client, retry policy, logs, local state
 
 ## Current State (Function Mapping)
 
-### Codex compat (`internal/integrations/codex_compat_proxy.go`)
-- Handler: `handleResponses`
-- Executor: `postChatCompletions`
+### Codex Responses caller -> OpenAI Chat target
+- Gateway handler: `internal/compat/gateway.CodexResponsesHandler`
+- Integration executor: `internal/integrations.codexChatExecutor`
 - Retry strategy: `shouldRetryWithMinimalChatReq`, `minimalChatCompletionsRequest`, `ultraMinimalChatCompletionsRequest`
-- Request codec: `internal/compat/codec/openai.ResponsesInbound`
-- Target adapter: `internal/compat/target/openai.ChatOutbound`
-- Stream writer/adapter: `forwardStream` -> `internal/compat/codec/openai.WriteResponsesStream`
-- Non-stream writer/adapter: `forwardNonStream` -> `ChatResponse` -> `ResponsesClientResponse`
-- Error/write helpers: `writeUpstreamErrorAsJSON`, `writeJSONError`, `decodeResponsesRequest`
+- Client request adapter: `internal/compat/client/codex.ResponsesInbound`
+- Target adapter: `internal/compat/target/openai_chat.ChatOutbound`
+- Stream conversion: `target/openai_chat.ChatStreamEvents` -> `ir.StreamEvent` -> `client/codex.ResponsesStreamWriter`
+- Non-stream conversion: `target/openai_chat.ChatResponse` -> `ir.Response` -> `client/codex.ResponsesClientResponse`
+- Route: `gateway.Route{Client: codex_responses, Target: openai_chat}`
 
-### Claude compat (`internal/integrations/claude_compat_proxy.go`)
-- Handler: `handleMessages`
-- Executor: `postChatCompletions`
-- Request codec: `internal/compat/codec/anthropic.MessagesInbound`
-- Target adapter: `internal/compat/target/openai.ChatOutbound`
-- Response writer: `ChatResponse` -> `internal/compat/codec/anthropic.MessagesClientResponse`
-- Stream writer/adapter: `forwardAnthropicStream` -> `internal/compat/codec/anthropic/messages_stream_writer.go`
-- Fallback stream serialization: `writeAnthropicStreamFromMessage`, `writeAnthropicSSE`
-- Error/write helpers: `writeAnthropicError`
+### Anthropic Messages caller -> OpenAI Chat target
+- Gateway handler: `internal/compat/gateway.AnthropicMessagesHandler`
+- Integration executor: `internal/integrations.anthropicChatExecutor`
+- Client request adapter: `internal/compat/client/anthropic_messages.MessagesInbound`
+- Target adapter: `internal/compat/target/openai_chat.ChatOutbound`
+- Response writer: `target/openai_chat.ChatResponse` -> `client/anthropic_messages.MessagesClientResponse`
+- Stream writer: `client/anthropic_messages.WriteMessagesStream`
 
 ## Phased Plan
 

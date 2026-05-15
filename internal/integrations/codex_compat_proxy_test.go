@@ -12,7 +12,8 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
-	openaiadapter "spark/internal/compat/codec/openai"
+	codexadapter "spark/internal/compat/client/codex"
+	"spark/internal/compat/gateway"
 )
 
 func TestResponsesRequestTranslator_StringInput(t *testing.T) {
@@ -22,7 +23,7 @@ func TestResponsesRequestTranslator_StringInput(t *testing.T) {
 		"stream":            true,
 		"max_output_tokens": float64(32),
 	}
-	out, err := newResponsesRequestTranslator().ToChat(req)
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestResponsesRequestTranslator_ToolsMappedAndFiltered(t *testing.T) {
 			"name": "sum",
 		},
 	}
-	out, err := newResponsesRequestTranslator().ToChat(req)
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -109,7 +110,7 @@ func TestResponsesRequestTranslator_ArrayInput(t *testing.T) {
 		},
 	}
 
-	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -132,7 +133,7 @@ func TestResponsesRequestTranslator_DeveloperRoleMappedToSystem(t *testing.T) {
 			"content": "be concise",
 		},
 	}
-	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestResponsesRequestTranslator_FunctionCallOutputMapped(t *testing.T) {
 			"output":  `{"result":3}`,
 		},
 	}
-	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestResponsesRequestTranslator_ReasoningOutputMappedToSyntheticToolCall(t *
 			"output":  `{"result":3}`,
 		},
 	}
-	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -277,7 +278,7 @@ func TestResponsesRequestTranslator_ToolRolePreservesToolCallID(t *testing.T) {
 			"content":      "ok",
 		},
 	}
-	out, err := newResponsesRequestTranslator().ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -311,19 +312,19 @@ func TestShouldRetryWithMinimalChatReq(t *testing.T) {
 }
 
 func TestShouldFallbackFromResponses(t *testing.T) {
-	if !shouldFallbackFromResponses(http.StatusNotFound, []byte(`{"error":"not found"}`)) {
+	if !gateway.ShouldFallbackFromResponses(http.StatusNotFound, []byte(`{"error":"not found"}`)) {
 		t.Fatal("expected fallback on 404")
 	}
-	if !shouldFallbackFromResponses(http.StatusMethodNotAllowed, []byte(`{"error":"method not allowed"}`)) {
+	if !gateway.ShouldFallbackFromResponses(http.StatusMethodNotAllowed, []byte(`{"error":"method not allowed"}`)) {
 		t.Fatal("expected fallback on 405")
 	}
-	if !shouldFallbackFromResponses(http.StatusBadRequest, []byte(`{"error":{"message":"unknown parameter: input"}}`)) {
+	if !gateway.ShouldFallbackFromResponses(http.StatusBadRequest, []byte(`{"error":{"message":"unknown parameter: input"}}`)) {
 		t.Fatal("expected fallback for responses-only field rejection")
 	}
-	if shouldFallbackFromResponses(http.StatusUnauthorized, []byte(`{"error":"unauthorized"}`)) {
+	if gateway.ShouldFallbackFromResponses(http.StatusUnauthorized, []byte(`{"error":"unauthorized"}`)) {
 		t.Fatal("unexpected fallback on auth error")
 	}
-	if shouldFallbackFromResponses(http.StatusBadRequest, []byte(`{"error":{"message":"invalid api key"}}`)) {
+	if gateway.ShouldFallbackFromResponses(http.StatusBadRequest, []byte(`{"error":{"message":"invalid api key"}}`)) {
 		t.Fatal("unexpected fallback on generic bad request")
 	}
 }
@@ -717,7 +718,7 @@ func TestResponsesUsageFromChatPayload_MapsDetails(t *testing.T) {
 			},
 		},
 	}
-	got, ok := openaiadapter.ResponsesUsageFromChatPayload(payload)
+	got, ok := codexadapter.ResponsesUsageFromChatPayload(payload)
 	if !ok {
 		t.Fatal("expected usage mapping")
 	}
@@ -753,7 +754,7 @@ func TestMergeResponsesUsage_PrefersIncomingNonZero(t *testing.T) {
 			"reasoning_tokens": float64(1),
 		},
 	}
-	got := openaiadapter.MergeResponsesUsage(base, incoming)
+	got := codexadapter.MergeResponsesUsage(base, incoming)
 	if intFromAny(got["input_tokens"]) != 10 {
 		t.Fatalf("expected input_tokens=10, got %#v", got)
 	}

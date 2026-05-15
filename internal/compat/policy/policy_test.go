@@ -3,20 +3,20 @@ package policy
 import (
 	"testing"
 
-	"spark/internal/compatir"
+	"spark/internal/compat/ir"
 )
 
 func TestReasoningPolicyGenericOpenAIStripsReasoningContent(t *testing.T) {
 	p := OpenAIChatReasoningPolicy("https://api.openai.com/v1", "gpt-4.1")
-	msg := compatir.Message{
-		Role: compatir.RoleAssistant,
-		Content: []compatir.ContentBlock{
-			compatir.Reasoning("think first"),
+	msg := ir.Message{
+		Role: ir.RoleAssistant,
+		Content: []ir.ContentBlock{
+			ir.Reasoning("think first"),
 			{
-				Type: compatir.BlockToolCall,
-				ToolCall: &compatir.ToolCall{
+				Type: ir.BlockToolCall,
+				ToolCall: &ir.ToolCall{
 					ID:   "call_1",
-					Type: compatir.ToolTypeFunction,
+					Type: ir.ToolTypeFunction,
 					Name: "sum",
 				},
 			},
@@ -30,14 +30,14 @@ func TestReasoningPolicyGenericOpenAIStripsReasoningContent(t *testing.T) {
 
 func TestReasoningPolicyMimoRequiresEmptyReasoningForToolCalls(t *testing.T) {
 	p := OpenAIChatReasoningPolicy("https://gateway.example/v1", "mimo-v2.5-pro")
-	msg := compatir.Message{
-		Role: compatir.RoleAssistant,
-		Content: []compatir.ContentBlock{
+	msg := ir.Message{
+		Role: ir.RoleAssistant,
+		Content: []ir.ContentBlock{
 			{
-				Type: compatir.BlockToolCall,
-				ToolCall: &compatir.ToolCall{
+				Type: ir.BlockToolCall,
+				ToolCall: &ir.ToolCall{
 					ID:   "call_1",
-					Type: compatir.ToolTypeFunction,
+					Type: ir.ToolTypeFunction,
 					Name: "sum",
 				},
 			},
@@ -50,15 +50,73 @@ func TestReasoningPolicyMimoRequiresEmptyReasoningForToolCalls(t *testing.T) {
 	}
 }
 
+func TestReasoningPolicyProviderSpecificControls(t *testing.T) {
+	enabled := true
+	budget := 1024
+	reasoning := ir.ReasoningConfig{
+		Enabled:         &enabled,
+		Effort:          ir.ReasoningEffortHigh,
+		BudgetTokens:    &budget,
+		IncludeThoughts: &enabled,
+	}
+
+	tests := []struct {
+		name        string
+		policy      ReasoningPolicy
+		wantEffort  bool
+		wantDropped []string
+	}{
+		{
+			name:        "openai reasoning model allows effort but drops non-chat controls",
+			policy:      OpenAIChatReasoningPolicy("https://api.openai.com/v1", "gpt-4.1"),
+			wantEffort:  true,
+			wantDropped: []string{"thinking.type", "thinking.budget_tokens", "include_thoughts"},
+		},
+		{
+			name:        "mimo echo provider strips unknown top-level controls",
+			policy:      OpenAIChatReasoningPolicy("https://gateway.example/v1", "mimo-v2.5-pro"),
+			wantDropped: []string{"reasoning_effort", "thinking.type", "thinking.budget_tokens", "include_thoughts"},
+		},
+		{
+			name:        "strict generic provider strips unknown top-level controls",
+			policy:      OpenAIChatReasoningPolicy("https://strict.example/v1", "generic-model"),
+			wantDropped: []string{"reasoning_effort", "thinking.type", "thinking.budget_tokens", "include_thoughts"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			controls, dropped := tt.policy.ChatReasoningControls(reasoning)
+			if _, ok := controls["reasoning_effort"]; ok != tt.wantEffort {
+				t.Fatalf("reasoning_effort presence mismatch controls=%#v dropped=%#v", controls, dropped)
+			}
+			for _, want := range tt.wantDropped {
+				if !containsString(dropped, want) {
+					t.Fatalf("missing dropped control %q in %#v", want, dropped)
+				}
+			}
+		})
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestToolPolicyRejectsResultBeforeToolCall(t *testing.T) {
-	req := compatir.Request{
-		Messages: []compatir.Message{
+	req := ir.Request{
+		Messages: []ir.Message{
 			{
-				Role: compatir.RoleTool,
-				Content: []compatir.ContentBlock{
+				Role: ir.RoleTool,
+				Content: []ir.ContentBlock{
 					{
-						Type: compatir.BlockToolResult,
-						ToolResult: &compatir.ToolResult{
+						Type: ir.BlockToolResult,
+						ToolResult: &ir.ToolResult{
 							ToolCallID: "call_missing",
 							Output:     "{}",
 						},
@@ -74,27 +132,27 @@ func TestToolPolicyRejectsResultBeforeToolCall(t *testing.T) {
 }
 
 func TestToolPolicyAcceptsKnownToolCallID(t *testing.T) {
-	req := compatir.Request{
-		Messages: []compatir.Message{
+	req := ir.Request{
+		Messages: []ir.Message{
 			{
-				Role: compatir.RoleAssistant,
-				Content: []compatir.ContentBlock{
+				Role: ir.RoleAssistant,
+				Content: []ir.ContentBlock{
 					{
-						Type: compatir.BlockToolCall,
-						ToolCall: &compatir.ToolCall{
+						Type: ir.BlockToolCall,
+						ToolCall: &ir.ToolCall{
 							ID:   "call_1",
-							Type: compatir.ToolTypeFunction,
+							Type: ir.ToolTypeFunction,
 							Name: "sum",
 						},
 					},
 				},
 			},
 			{
-				Role: compatir.RoleTool,
-				Content: []compatir.ContentBlock{
+				Role: ir.RoleTool,
+				Content: []ir.ContentBlock{
 					{
-						Type: compatir.BlockToolResult,
-						ToolResult: &compatir.ToolResult{
+						Type: ir.BlockToolResult,
+						ToolResult: &ir.ToolResult{
 							ToolCallID: "call_1",
 							Output:     `{"result":3}`,
 						},

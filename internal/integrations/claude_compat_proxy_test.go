@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	anthropicadapter "spark/internal/compat/codec/anthropic"
-	openaitarget "spark/internal/compat/target/openai"
+	anthropicadapter "spark/internal/compat/client/anthropic_messages"
+	"spark/internal/compat/gateway"
+	openai_chat_target "spark/internal/compat/target/openai_chat"
 )
 
 func TestAnthropicRequestTranslator_BasicMapping(t *testing.T) {
@@ -36,7 +37,7 @@ func TestAnthropicRequestTranslator_BasicMapping(t *testing.T) {
 			"name": "sum",
 		},
 	}
-	out, err := newAnthropicRequestTranslator().ToChat(req)
+	out, err := gateway.AnthropicMessagesTranslator{}.ToChat(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestAnthropicRequestTranslator_AssistantThinkingMapsToReasoningContent(t *t
 			},
 		},
 	}
-	out, err := newAnthropicRequestTranslator().ToChat(req)
+	out, err := gateway.AnthropicMessagesTranslator{}.ToChat(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -117,12 +118,16 @@ func TestAnthropicRequestTranslator_PreservesThinkingRequestConfig(t *testing.T)
 			},
 		},
 	}
-	out, err := newAnthropicRequestTranslator().ToChat(req)
+	out, err := gateway.AnthropicMessagesTranslator{}.ToChat(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
-	if !reflect.DeepEqual(out["thinking"], thinking) {
-		t.Fatalf("expected thinking passthrough, got %#v", out)
+	wantThinking := map[string]any{
+		"type":          "enabled",
+		"budget_tokens": 1024,
+	}
+	if !reflect.DeepEqual(out["thinking"], wantThinking) {
+		t.Fatalf("expected thinking config, got %#v", out)
 	}
 }
 
@@ -139,7 +144,7 @@ func TestAnthropicRequestTranslator_MapsOutputConfigEffortToReasoningEffort(t *t
 			},
 		},
 	}
-	out, err := newAnthropicRequestTranslator().ToChat(req)
+	out, err := gateway.AnthropicMessagesTranslator{}.ToChat(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -234,7 +239,7 @@ func TestMessagesClientResponseFromChatResponse_WithToolCalls(t *testing.T) {
 			"completion_tokens": float64(6),
 		},
 	}
-	msg := anthropicadapter.MessagesClientResponse(openaitarget.ChatResponse(chatResp), "")
+	msg := anthropicadapter.MessagesClientResponse(openai_chat_target.ChatResponse(chatResp), "")
 	if msg["type"] != "message" || msg["role"] != "assistant" {
 		t.Fatalf("message shape mismatch: %#v", msg)
 	}

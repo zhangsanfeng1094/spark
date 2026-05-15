@@ -23,13 +23,19 @@ flowchart TD
     Integrations --> LocalAgent[本地 agent CLI<br/>claude / codex / droid / opencode / openclaw / pi]
     Integrations --> CompatProxy[兼容代理<br/>Codex Responses / Claude Messages]
 
-    CompatProxy --> CodecOpenAI[internal/compat/codec/openai<br/>Responses 请求/响应/SSE]
-    CompatProxy --> CodecAnthropic[internal/compat/codec/anthropic<br/>Messages 请求/响应/SSE]
-    CompatProxy --> TargetOpenAI[internal/compat/target/openai<br/>OpenAI Chat Completions 目标协议]
+    CompatProxy --> ClientCodex[internal/compat/client/codex<br/>Responses 请求/响应/SSE]
+    CompatProxy --> ClientAnthropic[internal/compat/client/anthropic_messages<br/>Messages 请求/响应/SSE]
+    CompatProxy --> ClientGemini[internal/compat/client/gemini_generate_content<br/>GenerateContent 请求/响应]
+    CompatProxy --> Gateway[internal/compat/gateway<br/>路由和流/非流编排]
+    CompatProxy --> TargetOpenAI[internal/compat/target/openai_chat<br/>OpenAI Chat Completions 目标协议]
     CompatProxy --> Policy[internal/compat/policy<br/>reasoning / tools 策略]
 
-    CodecOpenAI --> IR[internal/compatir<br/>协议中间表示]
-    CodecAnthropic --> IR
+    ClientCodex --> IR[internal/compat/ir<br/>协议中间表示]
+    ClientAnthropic --> IR
+    ClientGemini --> IR
+    Gateway --> ClientCodex
+    Gateway --> ClientAnthropic
+    Gateway --> TargetOpenAI
     TargetOpenAI --> IR
     TargetOpenAI --> Policy
     Policy --> IR
@@ -44,11 +50,12 @@ flowchart TD
 | `internal/app` | CLI 命令层。定义 `spark` 根命令、`launch/config/mcp/skill/profile/debug/version` 等子命令，连接 TUI、配置、集成和技能模块。 | `cli.go`, `mcp_cmd.go`, `mcp_sync.go`, `skill_cmd.go`, `version.go` |
 | `internal/config` | Spark 自身配置模型和持久化；管理 profiles、integrations、MCP servers；读写 Codex TOML 和 Claude JSON；从旧配置迁移。 | `config.go`, `mcp.go`, `toml.go`, `claude_json.go`, `files.go`, `migrate.go` |
 | `internal/integrations` | 各 agent 的启动/配置适配层。把 profile/model 写入目标 agent 配置或环境变量，必要时启动本地兼容代理。 | `registry.go`, `types.go`, `claude.go`, `codex.go`, `droid.go`, `opencode.go`, `openclaw.go`, `pi.go`, `*_compat_*.go` |
-| `internal/compatir` | 协议中间表示（IR）。抽象 Request、Message、ContentBlock、ReasoningBlock、ToolCall、ToolResult、Response、StreamEvent、Usage。 | `model.go`, `stream.go`, `usage.go` |
-| `internal/compat/codec/openai` | OpenAI Responses 协议 codec。把 Responses 请求转 IR，或把 IR/Chat 结果写回 Responses 客户端格式和 SSE。 | `responses_inbound.go`, `responses_client_writer.go`, `responses_stream_writer.go` |
-| `internal/compat/codec/anthropic` | Anthropic Messages 协议 codec。把 Messages 请求转 IR，或把结果写回 Anthropic Messages 响应和 SSE。 | `messages_inbound.go`, `messages_client_writer.go`, `messages_stream_writer.go` |
-| `internal/compat/codec/gemini` | Gemini GenerateContent codec。当前覆盖请求入站和客户端响应写出。 | `generate_content_inbound.go`, `generate_content_client_writer.go` |
-| `internal/compat/target/openai` | OpenAI Chat Completions 目标协议适配。把 IR 转 Chat 请求，并把 Chat 响应/流转换回 IR 事件。 | `chat_outbound.go`, `chat_response.go`, `chat_stream.go` |
+| `internal/compat/ir` | 协议中间表示（IR）。抽象 Request、Message、ContentBlock、ReasoningBlock、ToolCall、ToolResult、Response、StreamEvent、Usage。 | `model.go`, `stream.go`, `usage.go` |
+| `internal/compat/client/codex` | OpenAI Responses caller 协议适配。把 Responses 请求转 IR，或把 IR/Chat 结果写回 Responses 客户端格式和 SSE。 | `request_in.go`, `response_out.go`, `stream_out.go` |
+| `internal/compat/client/anthropic_messages` | Anthropic Messages caller 协议适配。把 Messages 请求转 IR，或把结果写回 Anthropic Messages 响应和 SSE。 | `messages_inbound.go`, `messages_client_writer.go`, `messages_stream_writer.go` |
+| `internal/compat/client/gemini_generate_content` | Gemini GenerateContent caller 协议适配。当前覆盖请求入站和客户端响应写出。 | `generate_content_inbound.go`, `generate_content_client_writer.go` |
+| `internal/compat/target/openai_chat` | OpenAI Chat Completions target 协议适配。把 IR 转 Chat 请求，并把 Chat 响应/流转换回 IR 事件。 | `request_out.go`, `response_in.go`, `stream_in.go` |
+| `internal/compat/gateway` | 兼容网关编排层。负责 route selection、HTTP handler、上游执行、stream/non-stream 转发和 gateway-level errors。 | `route.go`, `pipeline.go`, `codex_handler.go`, `stream.go`, `nonstream.go` |
 | `internal/compat/policy` | 协议转换策略。处理 reasoning 可见性/归一化、tool call/tool result 兼容规则。 | `reasoning.go`, `tools.go` |
 | `internal/skills` | 本地技能系统。管理技能根目录、registry、manifest、安装、同伴 agent 技能导入/导出。 | `types.go`, `roots.go`, `registry.go`, `manifest.go`, `install.go`, `catalog.go`, `peer.go`, `files.go` |
 | `internal/tui` | 终端交互 UI。提供选择、输入、确认、dashboard、profile/MCP/skill 管理界面和模型连通性探测 UI。 | `prompt.go`, `dashboard_*`, `profile_manager_*`, `mcp_manager_*`, `skill_manager_model.go`, `model_connection.go` |
@@ -62,12 +69,12 @@ flowchart TD
 flowchart LR
     Client[客户端协议<br/>Codex Responses<br/>Claude Messages<br/>Gemini GenerateContent]
     Proxy[integrations<br/>*_compat_proxy.go]
-    Inbound[codec inbound<br/>请求 -> compatir.Request]
+    Inbound[codec inbound<br/>请求 -> ir.Request]
     Policy[compat/policy<br/>reasoning/tools 策略]
-    ChatOut[target/openai<br/>compatir.Request -> /chat/completions]
+    ChatOut[target/openai_chat<br/>ir.Request -> /chat/completions]
     Upstream[OpenAI-compatible API]
-    ChatIn[target/openai<br/>chat response/stream -> compatir]
-    Writer[codec writer<br/>compatir -> 原客户端响应/SSE]
+    ChatIn[target/openai_chat<br/>chat response/stream -> ir]
+    Writer[codec writer<br/>ir -> 原客户端响应/SSE]
 
     Client --> Proxy --> Inbound --> Policy --> ChatOut --> Upstream
     Upstream --> ChatIn --> Writer --> Client
@@ -78,17 +85,17 @@ flowchart LR
 | 阶段 | 代码位置 | 输入 | 输出 | 责任 |
 | --- | --- | --- | --- | --- |
 | HTTP 入口 | `internal/integrations/*_compat_proxy.go` | Codex/Claude 发来的 HTTP 请求 | 原始 `map[string]any` 请求或上游响应流 | 路由、日志、错误处理、fallback/retry、转发非转换请求 |
-| 入站 codec | `internal/compat/codec/openai/responses_inbound.go` | OpenAI Responses 请求 | `compatir.Request` | 解析 `input/tools/tool_choice/max_output_tokens/stream`，补默认 user 消息 |
-| 入站 codec | `internal/compat/codec/anthropic/messages_inbound.go` | Anthropic Messages 请求 | `compatir.Request` | 解析 `system/messages/content/tool_use/tool_result/thinking/max_tokens` |
-| 入站 codec | `internal/compat/codec/gemini/generate_content_inbound.go` | Gemini GenerateContent 请求 | `compatir.Request` | 解析 `contents/parts/functionCall/functionResponse/inlineData/generationConfig` |
-| 中间表示 | `internal/compatir` | 各协议结构 | `Request/Message/ContentBlock/ToolCall/ToolResult/Response/StreamEvent/Usage` | 把文本、reasoning、工具调用、工具结果、图片、文档统一成稳定模型 |
-| 策略层 | `internal/compat/policy` | `compatir` blocks | 规范化后的 blocks/config | 控制 reasoning 是否保留、tool call/tool result 怎么兼容 |
-| 上游请求 | `internal/compat/target/openai/chat_outbound.go` | `compatir.Request` | OpenAI Chat Completions 请求 | 映射 role、messages、tools、tool_choice、generation 参数 |
-| 上游响应 | `internal/compat/target/openai/chat_response.go` | Chat Completions 非流式响应 | `compatir.Response` | 提取 assistant text、reasoning、tool_calls、usage、stop reason |
-| 上游流 | `internal/compat/target/openai/chat_stream.go` | Chat Completions chunk | `[]compatir.StreamEvent` | 把 delta 拆成 text/reasoning/tool_call/usage 事件 |
-| 出站 writer | `internal/compat/codec/openai/*writer.go` | `compatir.Response` 或 stream events | Responses JSON/SSE | 写 `response.created`、reasoning item、message item、tool_call item、usage、completed |
-| 出站 writer | `internal/compat/codec/anthropic/*writer.go` | `compatir.Response` 或 stream events | Messages JSON/SSE | 写 `message_start`、`content_block_*`、`message_delta`、`message_stop` |
-| 出站 writer | `internal/compat/codec/gemini/*writer.go` | `compatir.Response` | GenerateContent JSON | 写 `candidates/content/parts/usageMetadata` |
+| 入站 client | `internal/compat/client/codex/request_in.go` | OpenAI Responses 请求 | `ir.Request` | 解析 `input/tools/tool_choice/max_output_tokens/stream`，补默认 user 消息 |
+| 入站 client | `internal/compat/client/anthropic_messages/messages_inbound.go` | Anthropic Messages 请求 | `ir.Request` | 解析 `system/messages/content/tool_use/tool_result/thinking/max_tokens` |
+| 入站 client | `internal/compat/client/gemini_generate_content/generate_content_inbound.go` | Gemini GenerateContent 请求 | `ir.Request` | 解析 `contents/parts/functionCall/functionResponse/inlineData/generationConfig` |
+| 中间表示 | `internal/compat/ir` | 各协议结构 | `Request/Message/ContentBlock/ToolCall/ToolResult/Response/StreamEvent/Usage` | 把文本、reasoning、工具调用、工具结果、图片、文档统一成稳定模型 |
+| 策略层 | `internal/compat/policy` | `ir` blocks | 规范化后的 blocks/config | 控制 reasoning 是否保留、tool call/tool result 怎么兼容 |
+| 上游请求 | `internal/compat/target/openai_chat/request_out.go` | `ir.Request` | OpenAI Chat Completions 请求 | 映射 role、messages、tools、tool_choice、generation 参数 |
+| 上游响应 | `internal/compat/target/openai_chat/response_in.go` | Chat Completions 非流式响应 | `ir.Response` | 提取 assistant text、reasoning、tool_calls、usage、stop reason |
+| 上游流 | `internal/compat/target/openai_chat/stream_in.go` | Chat Completions chunk | `[]ir.StreamEvent` | 把 delta 拆成 text/reasoning/tool_call/usage 事件 |
+| 出站 writer | `internal/compat/client/codex/*writer.go` | `ir.Response` 或 stream events | Responses JSON/SSE | 写 `response.created`、reasoning item、message item、tool_call item、usage、completed |
+| 出站 writer | `internal/compat/client/anthropic_messages/*writer.go` | `ir.Response` 或 stream events | Messages JSON/SSE | 写 `message_start`、`content_block_*`、`message_delta`、`message_stop` |
+| 出站 writer | `internal/compat/client/gemini_generate_content/*writer.go` | `ir.Response` | GenerateContent JSON | 写 `candidates/content/parts/usageMetadata` |
 
 ### 非流式路径
 
@@ -97,20 +104,20 @@ sequenceDiagram
     participant C as Client
     participant P as compat proxy
     participant I as codec Inbound
-    participant O as target/openai ChatOutbound
+    participant O as target/openai_chat ChatOutbound
     participant U as Upstream /chat/completions
-    participant R as target/openai ChatResponse
+    participant R as target/openai_chat ChatResponse
     participant W as codec ClientResponse
 
     C->>P: Responses / Messages / GenerateContent JSON
     P->>I: parse request
-    I-->>P: compatir.Request
+    I-->>P: ir.Request
     P->>O: BuildRequest(irReq)
     O-->>P: Chat Completions JSON
     P->>U: POST /chat/completions
     U-->>P: Chat response JSON
     P->>R: ChatResponse(chatResp)
-    R-->>P: compatir.Response
+    R-->>P: ir.Response
     P->>W: protocol-specific response writer
     W-->>C: 原客户端协议 JSON
 ```
@@ -122,7 +129,7 @@ sequenceDiagram
     participant C as Client
     participant P as compat proxy
     participant U as Upstream stream
-    participant S as target/openai ChatStreamEvents
+    participant S as target/openai_chat ChatStreamEvents
     participant W as codec stream writer
 
     C->>P: stream=true
@@ -134,11 +141,11 @@ sequenceDiagram
     W-->>C: Responses SSE 或 Anthropic Messages SSE
 ```
 
-流式转换不是简单转发字符串。`target/openai.ChatStreamEvents` 先把上游 chunk 解析成 `compatir.StreamEvent`，再由具体 writer 决定事件序列。Responses 会输出 `response.created -> item/delta events -> response.completed`；Anthropic 会输出 `message_start -> content_block_* -> message_delta -> message_stop`。
+流式转换不是简单转发字符串。`target/openai_chat.ChatStreamEvents` 先把上游 chunk 解析成 `ir.StreamEvent`，再由具体 writer 决定事件序列。Responses 会输出 `response.created -> item/delta events -> response.completed`；Anthropic 会输出 `message_start -> content_block_* -> message_delta -> message_stop`。
 
 ### 关键字段映射
 
-| 语义 | Responses | Anthropic Messages | Gemini | compatir | OpenAI Chat upstream |
+| 语义 | Responses | Anthropic Messages | Gemini | ir | OpenAI Chat upstream |
 | --- | --- | --- | --- | --- | --- |
 | 输入文本 | `input[].content[].text` / string input | `messages[].content[].text` | `contents[].parts[].text` | `ContentBlock{Type: text}` | `messages[].content` |
 | reasoning | `reasoning` item / summary | `thinking` / `reasoning` block | thought part | `ContentBlock{Type: reasoning}` | `reasoning_content` 或兼容字段 |
@@ -154,12 +161,12 @@ sequenceDiagram
 
 `internal/integrations` 仍保留一部分老的兼容抽象：
 
-- `compat_translators.go`: `responsesRequestTranslator` / `anthropicRequestTranslator` 调用新 codec，再用 `target/openai.ChatOutbound` 生成 Chat 请求。
+- `compat_translators.go`: `responsesRequestTranslator` / `anthropicRequestTranslator` 调用新 codec，再用 `target/openai_chat.ChatOutbound` 生成 Chat 请求。
 - `compat_executors.go`: `codexChatExecutor` / `anthropicChatExecutor` 负责请求上游和 provider-specific retry。
 - `compat_pipeline.go`: `executeTranslatedChat` 串起 translator 和 executor。
-- `compat_writers.go`: 把上游 Chat response 先转 `compatir.Response`，再调用 Anthropic writer。
+- `compat_writers.go`: 把上游 Chat response 先转 `ir.Response`，再调用 Anthropic writer。
 
-新协议转换代码已经主要落在 `internal/compatir` 和 `internal/compat/*`；`integrations` 更像 HTTP 代理和 agent 启动层。
+新协议转换代码已经主要落在 `internal/compat/ir` 和 `internal/compat/*`；`integrations` 更像 HTTP 代理和 agent 启动层。
 
 ## 关键运行链路
 
@@ -214,18 +221,18 @@ flowchart LR
 flowchart TD
     Client[Codex / Claude 客户端请求]
     Proxy[internal/integrations<br/>*_compat_proxy.go]
-    Inbound[codec inbound<br/>Responses / Messages -> compatir.Request]
+    Inbound[codec inbound<br/>Responses / Messages -> ir.Request]
     Policy[compat/policy<br/>reasoning/tools 规则]
-    Outbound[target/openai<br/>compatir.Request -> Chat Completions]
+    Outbound[target/openai_chat<br/>ir.Request -> Chat Completions]
     Upstream[OpenAI-compatible upstream]
-    Response[target/openai<br/>Chat response/stream -> compatir]
-    Writer[codec writer<br/>compatir -> 客户端协议响应/SSE]
+    Response[target/openai_chat<br/>Chat response/stream -> ir]
+    Writer[codec writer<br/>ir -> 客户端协议响应/SSE]
 
     Client --> Proxy --> Inbound --> Policy --> Outbound --> Upstream
     Upstream --> Response --> Writer --> Client
 ```
 
-这一层的设计意图是把不同客户端协议先转成 `compatir`，再统一打到 OpenAI Chat Completions 目标协议，最后按原客户端期望格式写回。这样 Responses、Anthropic Messages、Gemini 等协议差异不会散落在 runner 里。
+这一层的设计意图是把不同客户端协议先转成 `ir`，再统一打到 OpenAI Chat Completions 目标协议，最后按原客户端期望格式写回。这样 Responses、Anthropic Messages、Gemini 等协议差异不会散落在 runner 里。
 
 ## 文件级速查
 
@@ -258,9 +265,9 @@ flowchart TD
 
 ### `internal/compat*`
 
-- `compatir`: 中间协议模型，是 codec 和 target 的共同语言。
+- `ir`: 中间协议模型，是 codec 和 target 的共同语言。
 - `compat/codec/*`: 面向客户端协议的入站解析和出站写回。
-- `compat/target/openai`: 面向上游 OpenAI Chat Completions 的请求/响应/流转换。
+- `compat/target/openai_chat`: 面向上游 OpenAI Chat Completions 的请求/响应/流转换。
 - `compat/policy`: reasoning 和 tool 行为策略。
 
 ### `internal/tui`
@@ -292,14 +299,14 @@ flowchart TD
 ```text
 internal/app -> internal/config, internal/integrations, internal/skills, internal/tui, internal/version
 internal/tui -> internal/config, internal/integrations, internal/skills
-internal/integrations -> internal/config, internal/compatir, internal/compat/policy,
-                         internal/compat/codec/openai, internal/compat/codec/anthropic,
-                         internal/compat/target/openai
-internal/compat/codec/openai -> internal/compatir, internal/compat/target/openai
-internal/compat/codec/anthropic -> internal/compatir, internal/compat/target/openai
-internal/compat/codec/gemini -> internal/compatir
-internal/compat/target/openai -> internal/compatir, internal/compat/policy
-internal/compat/policy -> internal/compatir
+internal/integrations -> internal/config, internal/compat/gateway
+internal/compat/client/codex -> internal/compat/ir, internal/compat/target/openai_chat
+internal/compat/client/anthropic_messages -> internal/compat/ir, internal/compat/target/openai_chat
+internal/compat/client/gemini_generate_content -> internal/compat/ir
+internal/compat/gateway -> internal/compat/client/codex, internal/compat/client/anthropic_messages,
+                           internal/compat/target/openai_chat
+internal/compat/target/openai_chat -> internal/compat/ir, internal/compat/policy
+internal/compat/policy -> internal/compat/ir
 ```
 
 ## 测试覆盖分布

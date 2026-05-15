@@ -20,34 +20,34 @@ Provider -> Target Adapter -> Compat IR -> Client Adapter -> Client Protocol
 
 - Phase 0: 大体完成
   - 已有 Codex/Claude 兼容路径测试，覆盖 reasoning/tool call/stream 基本行为。
-  - 已补 `internal/compat/codec/openai/testdata/responses_stream_golden.txt` 和 `internal/compat/codec/anthropic/testdata/messages_stream_golden.txt`，冻结两条主要 SSE 事件顺序。
+  - 已补 `internal/compat/client/codex/testdata/responses_stream_golden.txt` 和 `internal/compat/client/anthropic_messages/testdata/messages_stream_golden.txt`，冻结两条主要 SSE 事件顺序。
   - MiMo reasoning/tool-call 混合流也已有 codec 级 fixture 覆盖。
   - 还没完成的是日志字段冻结和更完整的非流式 golden 样本。
 - Phase 1: 基本完成
-  - `internal/compatir` 已存在，包含 `Request`、`Message`、`ContentBlock`、`ReasoningBlock`、`ToolCall`、`ToolResult`、`Response`、`StreamEvent`、`Usage`。
-  - 已有 `internal/compatir/model_test.go` 覆盖稳定 tool call ID、reasoning 文本聚合、usage merge。
+  - `internal/compat/ir` 已存在，包含 `Request`、`Message`、`ContentBlock`、`ReasoningBlock`、`ToolCall`、`ToolResult`、`Response`、`StreamEvent`、`Usage`。
+  - 已有 `internal/compat/ir/model_test.go` 覆盖稳定 tool call ID、reasoning 文本聚合、usage merge。
 - Phase 2: 完成
-  - `internal/compat/target/openai/chat_outbound.go`
-  - `internal/compat/target/openai/chat_response.go`
-  - `internal/compat/target/openai/chat_stream.go`
+  - `internal/compat/target/openai_chat/request_out.go`
+  - `internal/compat/target/openai_chat/response_in.go`
+  - `internal/compat/target/openai_chat/stream_in.go`
   - `internal/compat/policy/reasoning.go`
   - 已覆盖 MiMo/DeepSeek reasoning echo、普通 OpenAI strip 非标准字段。
 - Phase 3: 大体完成
-  - `internal/compat/codec/openai/responses_inbound.go`
-  - `internal/compat/codec/openai/responses_client_writer.go`
-  - `internal/compat/codec/openai/responses_stream_writer.go`
+  - `internal/compat/client/codex/request_in.go`
+  - `internal/compat/client/codex/response_out.go`
+  - `internal/compat/client/codex/stream_out.go`
   - `internal/integrations` 中的 Codex request translator 已直接组合 `ResponsesInbound` + `ChatOutbound`，旧 direct translator 文件已删除。
-  - Codex Responses SSE 顺序已由 `internal/compat/codec/openai/testdata/responses_stream_golden.txt` 冻结。
+  - Codex Responses SSE 顺序已由 `internal/compat/client/codex/testdata/responses_stream_golden.txt` 冻结。
 - Phase 4: 大体完成
-  - `internal/compat/codec/anthropic/messages_inbound.go`
-  - `internal/compat/codec/anthropic/messages_client_writer.go`
-  - `internal/compat/codec/anthropic/messages_stream_writer.go`
+  - `internal/compat/client/anthropic_messages/messages_inbound.go`
+  - `internal/compat/client/anthropic_messages/messages_client_writer.go`
+  - `internal/compat/client/anthropic_messages/messages_stream_writer.go`
   - `internal/integrations` 中的 Claude request/response 路径已直接组合 `MessagesInbound`、`ChatOutbound`、`ChatResponse`、`MessagesClientResponse`，旧 direct translator 文件已删除。
   - `internal/integrations/claude_compat_proxy.go` 的流式写回已收口到 codec writer，proxy 只保留 HTTP 和 reasoning cache。
   - 仍有少量兼容缓存逻辑保留在 integration 层。
 - Phase 5: 部分完成
-  - 已有 `internal/compat/codec/gemini/generate_content_inbound.go`，支持 `contents[].parts[].text`、`functionCall`、`functionResponse`、`systemInstruction`、`generationConfig`、`tools[].functionDeclarations`、`toolConfig.functionCallingConfig`。
-  - 已有 `internal/compat/codec/gemini/generate_content_client_writer.go`，支持 IR text/tool_call/usage -> Gemini `GenerateContentResponse`。
+  - 已有 `internal/compat/client/gemini_generate_content/generate_content_inbound.go`，支持 `contents[].parts[].text`、`functionCall`、`functionResponse`、`systemInstruction`、`generationConfig`、`tools[].functionDeclarations`、`toolConfig.functionCallingConfig`。
+  - 已有 `internal/compat/client/gemini_generate_content/generate_content_client_writer.go`，支持 IR text/tool_call/usage -> Gemini `GenerateContentResponse`。
   - 已支持 Gemini inbound 解析 `inlineData` image、`fileData` document/image、`thought`/`thoughtSignature`。
   - 已补 `gemini_generate_content` API type、Gemini provider detection、Gemini `generateContent` 连接探测 payload。
   - 还没完成 Gemini stream writer，以及 multimodal/thinking 从 IR 写回 Gemini response 的完整 round-trip。
@@ -94,7 +94,7 @@ Handler 只做：
 
 ### 2. Inbound Adapter 层
 
-把客户端请求转成 `compatir.Request`。
+把客户端请求转成 `ir.Request`。
 
 首批 adapters：
 
@@ -105,7 +105,7 @@ Handler 只做：
 
 ### 3. Compat IR 层
 
-建议新建 `internal/compatir`，只放协议中立的数据结构，不放 HTTP 逻辑。
+建议新建 `internal/compat/ir`，只放协议中立的数据结构，不放 HTTP 逻辑。
 
 核心结构草案：
 
@@ -198,7 +198,7 @@ if target requires reasoning echo and assistant has tool_calls:
 首批目标：
 
 - `target/openai_chat`: IR <-> OpenAI Chat Completions
-- `target/openai_responses`: IR <-> OpenAI Responses
+- `target/openai_chat_responses`: IR <-> OpenAI Responses
 - `target/anthropic`: IR <-> Anthropic Messages
 - `target/gemini`: IR <-> Gemini GenerateContent
 
@@ -223,7 +223,7 @@ if target requires reasoning echo and assistant has tool_calls:
 ## 目录建议
 
 ```text
-internal/compatir/
+internal/compat/ir/
   model.go
   stream.go
   usage.go
@@ -240,26 +240,26 @@ internal/compat/policy/
   tools.go
   capabilities.go
 
-internal/compat/codec/openai/
-  chat_inbound.go
-  chat_client_writer.go
-  responses_inbound.go
-  responses_client_writer.go
+internal/compat/client/codex/
+  request_in.go
+  response_out.go
+  stream_out.go
 
-internal/compat/codec/anthropic/
+internal/compat/client/anthropic_messages/
   messages_inbound.go
   messages_client_writer.go
+  messages_stream_writer.go
 
-internal/compat/codec/gemini/
+internal/compat/client/gemini_generate_content/
   generate_content_inbound.go
   generate_content_client_writer.go
 
-internal/compat/target/openai/
-  chat_outbound.go
-  chat_response.go
-  chat_stream.go
+internal/compat/target/openai_chat/
+  request_out.go
+  response_in.go
+  stream_in.go
 
-internal/compat/target/anthropic/
+internal/compat/target/anthropic_messages/
   messages_outbound.go
   messages_response.go
   messages_stream.go
@@ -295,17 +295,17 @@ internal/compat/target/gemini/
 
 ### Phase 1: 引入 IR 类型，不接入生产路径
 
-目标：新增 `internal/compatir`，不改现有代理。
+目标：新增 `internal/compat/ir`，不改现有代理。
 
 任务：
 
 - 定义 `Request`、`Message`、`ContentBlock`、`ToolCall`、`ToolResult`、`ReasoningBlock`、`Response`、`StreamEvent`、`Usage`。
-- 写 `compatir` 单元测试，覆盖工具调用 ID、reasoning block、usage merge。
+- 写 `ir` 单元测试，覆盖工具调用 ID、reasoning block、usage merge。
 
 验收：
 
 - 没有现有行为变更。
-- `go test ./internal/compatir ./internal/integrations`
+- `go test ./internal/compat/ir ./internal/integrations`
 
 ### Phase 2: OpenAI Chat target adapter
 
@@ -313,8 +313,8 @@ internal/compat/target/gemini/
 
 任务：
 
-- 实现 `target/openai.ChatOutbound`：IR -> Chat request。
-- 实现 `target/openai.ChatResponse`：Chat response/stream -> IR。
+- 实现 `target/openai_chat.ChatOutbound`：IR -> Chat request。
+- 实现 `target/openai_chat.ChatResponse`：Chat response/stream -> IR。
 - 把 `reasoning_content`、`reasoning`、tool_calls、usage 都映射进 IR。
 - provider-specific reasoning 字段通过 `ReasoningPolicy` 控制。
 

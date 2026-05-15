@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"spark/internal/compat/gateway"
 )
 
 type codexChatExecutor struct {
 	proxy *responsesCompatProxy
 }
 
-func newCodexChatExecutor(proxy *responsesCompatProxy) ChatExecutor {
+func newCodexChatExecutor(proxy *responsesCompatProxy) gateway.ChatExecutor {
 	return codexChatExecutor{proxy: proxy}
 }
 
@@ -107,7 +109,7 @@ type anthropicChatExecutor struct {
 	proxy *anthropicCompatProxy
 }
 
-func newAnthropicChatExecutor(proxy *anthropicCompatProxy) ChatExecutor {
+func newAnthropicChatExecutor(proxy *anthropicCompatProxy) gateway.ChatExecutor {
 	return anthropicChatExecutor{proxy: proxy}
 }
 
