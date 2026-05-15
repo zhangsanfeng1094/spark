@@ -70,3 +70,61 @@ func TestResolveClaudeModelStripsNUL(t *testing.T) {
 		t.Fatalf("resolveClaudeModel(models)=%q", got)
 	}
 }
+
+func TestClaudeUsesDirectModeWhenAPITypeSupportsAnthropicMessages(t *testing.T) {
+	profile := &config.Profile{
+		OpenAIBaseURL:    "https://gateway.example.com/v1",
+		OpenAIAPIKey:     "profile-key",
+		OpenAIAPIType:    config.OpenAIAPITypeAnthropicMessages,
+		AnthropicBaseURL: "https://gateway.example.com/anthropic",
+	}
+
+	if claudeShouldUseCompatProxy(profile) {
+		t.Fatalf("expected Anthropic Messages API profile to use Claude direct mode")
+	}
+}
+
+func TestClaudeUsesCompatProxyWhenAPITypeDoesNotSupportAnthropicMessages(t *testing.T) {
+	profile := &config.Profile{
+		OpenAIBaseURL:    "https://gateway.example.com/v1",
+		OpenAIAPIKey:     "profile-key",
+		OpenAIAPIType:    config.OpenAIAPITypeChatCompletions,
+		AnthropicBaseURL: "https://gateway.example.com/anthropic",
+	}
+
+	if !claudeShouldUseCompatProxy(profile) {
+		t.Fatalf("expected non-Anthropic Messages API profile to use Claude compat proxy")
+	}
+}
+
+func TestClaudeDirectAuthAvoidsDefaultTokenAPIKeyConflict(t *testing.T) {
+	apiKey, apiKeySource, token, tokenSource := selectClaudeDirectAuth(
+		"profile-key",
+		"profile.openai_api_key",
+		"ollama",
+		"default",
+	)
+
+	if apiKey != "" || apiKeySource != "none" {
+		t.Fatalf("unexpected api key selection: key=%q source=%q", apiKey, apiKeySource)
+	}
+	if token != "profile-key" || tokenSource != "profile.openai_api_key" {
+		t.Fatalf("expected profile API key to be used as auth token, got token=%q source=%q", token, tokenSource)
+	}
+}
+
+func TestClaudeDirectAuthPrefersExplicitTokenOverAPIKey(t *testing.T) {
+	apiKey, apiKeySource, token, tokenSource := selectClaudeDirectAuth(
+		"profile-key",
+		"profile.openai_api_key",
+		"profile-token",
+		"profile.anthropic_auth_token",
+	)
+
+	if apiKey != "" || apiKeySource != "none" {
+		t.Fatalf("expected API key to be dropped when explicit token is set, got key=%q source=%q", apiKey, apiKeySource)
+	}
+	if token != "profile-token" || tokenSource != "profile.anthropic_auth_token" {
+		t.Fatalf("unexpected token selection: token=%q source=%q", token, tokenSource)
+	}
+}

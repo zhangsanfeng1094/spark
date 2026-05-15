@@ -79,6 +79,38 @@ func TestDetectOpenAIAPITypeWithClient(t *testing.T) {
 			t.Fatalf("expected gemini_generate_content, got %q", got)
 		}
 	})
+
+	t.Run("fallback to anthropic messages", func(t *testing.T) {
+		client := &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.URL.Path {
+				case "/responses", "/chat/completions", "/models/claude-sonnet-4-20250514:generateContent":
+					return fakeResponse(req, http.StatusNotFound, `{"error":"not found"}`), nil
+				case "/v1/messages":
+					if req.Header.Get("x-api-key") != "key-123" {
+						t.Fatalf("missing anthropic api key header: %#v", req.Header)
+					}
+					if req.Header.Get("anthropic-version") == "" {
+						t.Fatalf("missing anthropic version header: %#v", req.Header)
+					}
+					if req.Header.Get("Authorization") != "" {
+						t.Fatalf("unexpected bearer auth for anthropic probe: %#v", req.Header)
+					}
+					return fakeResponse(req, http.StatusOK, `{"id":"msg_1","type":"message"}`), nil
+				default:
+					return fakeResponse(req, http.StatusNotFound, `{"error":"not found"}`), nil
+				}
+			}),
+		}
+
+		got, err := detectOpenAIAPITypeWithClient("https://api.anthropic.com", "key-123", "claude-sonnet-4-20250514", client)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != config.OpenAIAPITypeAnthropicMessages {
+			t.Fatalf("expected anthropic_messages, got %q", got)
+		}
+	})
 }
 
 func TestOpenAIProbePayloadGeminiGenerateContent(t *testing.T) {
@@ -100,6 +132,23 @@ func TestOpenAIProbePayloadGeminiGenerateContent(t *testing.T) {
 	configPayload, ok := payload["generationConfig"].(map[string]any)
 	if !ok || configPayload["maxOutputTokens"] != 1024 {
 		t.Fatalf("generation config mismatch: %#v", payload["generationConfig"])
+	}
+}
+
+func TestOpenAIProbePayloadAnthropicMessages(t *testing.T) {
+	path, payload, err := openAIProbePayload("claude-sonnet-4-20250514", config.OpenAIAPITypeAnthropicMessages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "/v1/messages" {
+		t.Fatalf("path mismatch: %q", path)
+	}
+	messages, ok := payload["messages"].([]map[string]string)
+	if !ok || len(messages) != 1 || messages[0]["role"] != "user" || messages[0]["content"] != "ping" {
+		t.Fatalf("messages mismatch: %#v", payload["messages"])
+	}
+	if payload["max_tokens"] != 1024 {
+		t.Fatalf("max_tokens mismatch: %#v", payload["max_tokens"])
 	}
 }
 

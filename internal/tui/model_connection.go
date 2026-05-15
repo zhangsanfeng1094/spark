@@ -75,7 +75,7 @@ func TestModelConnection(profile *config.Profile, model string) TestResult {
 
 	const perEndpointTimeout = 8 * time.Second
 
-	endpointOrder := make([]string, 0, 2)
+	endpointOrder := make([]string, 0, 4)
 	if apiTypes[0] == config.OpenAIAPITypeAuto || config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeResponses) {
 		endpointOrder = append(endpointOrder, config.OpenAIAPITypeResponses)
 	}
@@ -84,6 +84,9 @@ func TestModelConnection(profile *config.Profile, model string) TestResult {
 	}
 	if apiTypes[0] == config.OpenAIAPITypeAuto || config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeGeminiGenerateContent) {
 		endpointOrder = append(endpointOrder, config.OpenAIAPITypeGeminiGenerateContent)
+	}
+	if apiTypes[0] == config.OpenAIAPITypeAuto || config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
+		endpointOrder = append(endpointOrder, config.OpenAIAPITypeAnthropicMessages)
 	}
 	if len(endpointOrder) == 0 {
 		endpointOrder = append(endpointOrder, config.OpenAIAPITypeResponses)
@@ -289,10 +292,18 @@ func DetectOpenAIAPIType(profile *config.Profile, model string) (string, error) 
 }
 
 func FetchOpenAIModels(profile *config.Profile) ([]string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return fetchModelsWithClient(profile, client)
+}
+
+func fetchModelsWithClient(profile *config.Profile, client *http.Client) ([]string, error) {
 	if profile == nil {
 		return nil, fmt.Errorf("profile is nil")
 	}
 	baseURL := strings.TrimSpace(profile.OpenAIBaseURL)
+	if config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) && strings.TrimSpace(profile.AnthropicBaseURL) != "" {
+		baseURL = strings.TrimSpace(profile.AnthropicBaseURL)
+	}
 	if baseURL == "" {
 		return nil, fmt.Errorf("base URL is empty")
 	}
@@ -300,8 +311,21 @@ func FetchOpenAIModels(profile *config.Profile) ([]string, error) {
 		baseURL = "https://" + baseURL
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	return fetchOpenAIModelsWithClient(baseURL, strings.TrimSpace(profile.OpenAIAPIKey), strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
+	apiKey := strings.TrimSpace(profile.OpenAIAPIKey)
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(profile.AnthropicAuthToken)
+	}
+	modelListURL := strings.TrimSpace(profile.ModelListURL)
+	if config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
+		if modelListURL != "" {
+			return fetchAnthropicModelsFromURLWithClient(modelListURL, apiKey, client)
+		}
+		return fetchAnthropicModelsWithClient(baseURL, apiKey, client)
+	}
+	if modelListURL != "" {
+		return fetchOpenAIModelsFromURLWithClient(modelListURL, apiKey, strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
+	}
+	return fetchOpenAIModelsWithClient(baseURL, apiKey, strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
 }
 
 func fetchOpenAIModelsWithClient(baseURL, apiKey, org, project string, client *http.Client) ([]string, error) {
@@ -316,7 +340,23 @@ func fetchOpenAIModelsWithClient(baseURL, apiKey, org, project string, client *h
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/models", nil)
+	return fetchOpenAIModelsFromURLWithContext(ctx, base+"/models", apiKey, org, project, client)
+}
+
+func fetchOpenAIModelsFromURLWithClient(modelListURL, apiKey, org, project string, client *http.Client) ([]string, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	return fetchOpenAIModelsFromURLWithContext(ctx, modelListURL, apiKey, org, project, client)
+}
+
+func fetchOpenAIModelsFromURLWithContext(ctx context.Context, modelListURL, apiKey, org, project string, client *http.Client) ([]string, error) {
+	if strings.TrimSpace(modelListURL) == "" {
+		return nil, fmt.Errorf("empty models url")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(modelListURL), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -342,6 +382,74 @@ func fetchOpenAIModelsWithClient(baseURL, apiKey, org, project string, client *h
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("models request failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	models, err := parseOpenAIModelsResponse(body)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(models)
+	return models, nil
+}
+
+func fetchAnthropicModelsWithClient(baseURL, apiKey string, client *http.Client) ([]string, error) {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		return nil, fmt.Errorf("empty base url")
+	}
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+
+	path := "/v1/models"
+	if strings.HasSuffix(base, "/v1") {
+		path = "/models"
+	}
+	return fetchAnthropicModelsFromURLWithContext(ctx, base+path, apiKey, client)
+}
+
+func fetchAnthropicModelsFromURLWithClient(modelListURL, apiKey string, client *http.Client) ([]string, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	return fetchAnthropicModelsFromURLWithContext(ctx, modelListURL, apiKey, client)
+}
+
+func fetchAnthropicModelsFromURLWithContext(ctx context.Context, modelListURL, apiKey string, client *http.Client) ([]string, error) {
+	requestURL := strings.TrimSpace(modelListURL)
+	if requestURL == "" {
+		return nil, fmt.Errorf("empty models url")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("x-api-key", apiKey)
+	}
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("API source does not support Anthropic model listing at %s; add model IDs manually or use a source that supports GET /v1/models", requestURL)
+		}
 		return nil, fmt.Errorf("models request failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 

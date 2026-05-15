@@ -15,6 +15,7 @@ const (
 	OpenAIAPITypeResponses             = "responses"
 	OpenAIAPITypeChatCompletions       = "chat_completions"
 	OpenAIAPITypeGeminiGenerateContent = "gemini_generate_content"
+	OpenAIAPITypeAnthropicMessages     = "anthropic_messages"
 	OpenAIAPITypeAuto                  = "auto"
 )
 
@@ -24,6 +25,7 @@ type Profile struct {
 	OpenAIAPIType      string   `json:"openai_api_type,omitempty"`
 	OpenAIOrg          string   `json:"openai_org,omitempty"`
 	OpenAIProject      string   `json:"openai_project,omitempty"`
+	ModelListURL       string   `json:"model_list_url,omitempty"`
 	AnthropicBaseURL   string   `json:"anthropic_base_url,omitempty"`
 	AnthropicAuthToken string   `json:"anthropic_auth_token,omitempty"`
 	Models             []string `json:"models,omitempty"`
@@ -40,6 +42,8 @@ func NormalizeOpenAIAPIType(v string) string {
 		return OpenAIAPITypeChatCompletions
 	case OpenAIAPITypeGeminiGenerateContent, "gemini", "generatecontent", "generate_content", "gemini-generate-content":
 		return OpenAIAPITypeGeminiGenerateContent
+	case OpenAIAPITypeAnthropicMessages, "anthropic", "messages", "anthropic-messages", "anthropic/messages":
+		return OpenAIAPITypeAnthropicMessages
 	default:
 		return ""
 	}
@@ -91,6 +95,9 @@ func ParseOpenAIAPITypes(v string) []string {
 	}
 	if _, ok := seen[OpenAIAPITypeGeminiGenerateContent]; ok {
 		canonical = append(canonical, OpenAIAPITypeGeminiGenerateContent)
+	}
+	if _, ok := seen[OpenAIAPITypeAnthropicMessages]; ok {
+		canonical = append(canonical, OpenAIAPITypeAnthropicMessages)
 	}
 	if len(canonical) > 0 {
 		return canonical

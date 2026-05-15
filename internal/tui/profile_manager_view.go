@@ -226,10 +226,14 @@ func (m *pmModel) renderRightPane(height int) string {
 		if m.focusArea == pmFocusFields && i == m.focusField {
 			labelStyle = pmFocusedLabelStyle
 		}
+		label := f.label
+		if f.required {
+			label = "* " + label
+		}
 		divider := lipgloss.NewStyle().Foreground(colorBorder).Render("│")
 
 		row := lipgloss.JoinHorizontal(lipgloss.Center,
-			labelStyle.Render(f.label),
+			labelStyle.Render(label),
 			divider,
 			currentInputStyle.Render(displayVal),
 		)
@@ -293,7 +297,7 @@ func (m *pmModel) overlayModal(bg string) string {
 	case pmModalKindOpenAIAPIType:
 		options = append(options, "Select OpenAI API Types:")
 		options = append(options, "")
-		for i, opt := range m.apiTypeOptions {
+		for i, opt := range m.visibleAPITypeOptions() {
 			cursor := "   "
 			style := pmItemStyle
 			if i == m.modalCursor {
@@ -451,8 +455,8 @@ func renderModelModalHelpRows(editing bool, searchFocused bool) []string {
 	return []string{
 		row("Search", "type text · Backspace edit · Delete clear"),
 		row("Move", navigation),
-		row("Actions", "F5 Fetch · F6 Add · F7 Edit · F8 Delete · F9 Default"),
-		row("Finish", "Enter Confirm · Esc Cancel"),
+		row("Actions", "Ctrl+F Fetch · F6 Add · F7 Edit · F8 Delete"),
+		row("Finish", "Enter Select · Esc Cancel"),
 	}
 }
 

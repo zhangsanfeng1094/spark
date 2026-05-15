@@ -79,11 +79,12 @@ func (m *pmModel) loadSelectedProfileFields() {
 	}
 
 	m.fields = []pmField{
-		{label: "Profile Name", value: name},
+		{label: "Profile Name", value: name, required: true},
 		{label: "Provider Type", value: detectProviderType(p), readOnly: true},
-		{label: "Base URL", value: p.OpenAIBaseURL},
+		{label: "Base URL", value: p.OpenAIBaseURL, required: true},
 		{label: "API Key", value: p.OpenAIAPIKey, masked: true},
 		{label: "API Type", value: displayOpenAIAPIType(p.OpenAIAPIType), readOnly: true},
+		{label: "Models URL", value: p.ModelListURL},
 		{label: "Models", value: formatModelsSummary(m.modelsDraft, m.defaultModel), readOnly: true},
 	}
 	for i := range m.fields {
@@ -119,7 +120,29 @@ func displayOpenAIAPIType(v string) string {
 	return canonical
 }
 
+func (m *pmModel) visibleAPITypeOptions() []string {
+	provider := ""
+	if pmFieldProviderType < len(m.fields) {
+		provider = strings.TrimSpace(m.fields[pmFieldProviderType].value)
+	}
+	switch provider {
+	case "Anthropic":
+		return []string{config.OpenAIAPITypeAnthropicMessages}
+	case "Gemini":
+		return []string{config.OpenAIAPITypeGeminiGenerateContent}
+	default:
+		return []string{
+			config.OpenAIAPITypeAuto,
+			config.OpenAIAPITypeResponses,
+			config.OpenAIAPITypeChatCompletions,
+		}
+	}
+}
+
 func detectProviderType(p *config.Profile) string {
+	if strings.TrimSpace(p.AnthropicBaseURL) != "" {
+		return "Anthropic"
+	}
 	base := strings.ToLower(strings.TrimSpace(p.OpenAIBaseURL))
 	switch {
 	case strings.Contains(base, "localhost:11434") || strings.Contains(base, "127.0.0.1:11434"):
@@ -137,8 +160,11 @@ func (m *pmModel) profileTemplate(kind string) *config.Profile {
 	switch kind {
 	case "anthropic":
 		return &config.Profile{
-			OpenAIBaseURL:    "https://api.openai.com/v1",
+			OpenAIBaseURL:    "https://api.anthropic.com",
+			OpenAIAPIType:    config.OpenAIAPITypeAnthropicMessages,
 			AnthropicBaseURL: "https://api.anthropic.com",
+			Models:           []string{"claude-sonnet-4-20250514"},
+			DefaultModel:     "claude-sonnet-4-20250514",
 		}
 	case "ollama":
 		return &config.Profile{OpenAIBaseURL: "http://localhost:11434/v1"}

@@ -269,11 +269,7 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 			if i < len(m.fieldStartRelY) && fieldY >= m.fieldStartRelY[i] && fieldY <= m.fieldEndRelY[i] {
 				m.focusArea = pmFocusFields
 				m.focusField = i
-				if i == pmFieldOpenAIAPIType {
-					m.openAPITypeModal()
-				} else if i == pmFieldModelsCSV {
-					m.openModelsModal()
-				}
+				m.openFieldModalIfNeeded()
 				return nil
 			}
 		}
@@ -624,7 +620,7 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		case "tab", "shift+tab":
 			m.modelSearchFocused = !m.modelSearchFocused
 			return nil
-		case "f5":
+		case "ctrl+f":
 			return m.fetchModelsFromAPI()
 		case "f6":
 			m.startModelAdd()
@@ -634,9 +630,6 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case "f8":
 			m.deleteModelAtCursor()
-			return nil
-		case "f9":
-			m.setDefaultModelAtCursor()
 			return nil
 		}
 		if m.modelSearchFocused {
@@ -753,6 +746,9 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		case pmModalKindOpenAIAPIType:
 			m.confirmAPITypeSelection()
 		case pmModalKindModels:
+			if m.modalCursor >= 0 && m.modalCursor < len(m.modelItems) {
+				m.defaultModel = m.modelItems[m.modalCursor]
+			}
 			m.confirmModelsSelection()
 		}
 		return nil
