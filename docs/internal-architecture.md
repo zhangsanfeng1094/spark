@@ -49,7 +49,7 @@ flowchart TD
 | --- | --- | --- |
 | `internal/app` | CLI 命令层。定义 `spark` 根命令、`launch/config/mcp/skill/profile/debug/version` 等子命令，连接 TUI、配置、集成和技能模块。 | `cli.go`, `mcp_cmd.go`, `mcp_sync.go`, `skill_cmd.go`, `version.go` |
 | `internal/config` | Spark 自身配置模型和持久化；管理 profiles、integrations、MCP servers；读写 Codex TOML 和 Claude JSON；从旧配置迁移。 | `config.go`, `mcp.go`, `toml.go`, `claude_json.go`, `files.go`, `migrate.go` |
-| `internal/integrations` | 各 agent 的启动/配置适配层。把 profile/model 写入目标 agent 配置或环境变量，必要时启动本地兼容代理。 | `registry.go`, `types.go`, `claude.go`, `codex.go`, `droid.go`, `opencode.go`, `openclaw.go`, `pi.go`, `*_compat_*.go` |
+| `internal/integrations` | 各 agent 的启动/配置适配层。把 profile/model 写入目标 agent 配置或环境变量，必要时启动本地兼容代理。 | `registry.go`, `types.go`, `claude.go`, `codex.go`, `droid.go`, `opencode.go`, `openclaw.go`, `pi.go`, `compatproxy/`, `proxyutil/` |
 | `internal/compat/ir` | 协议中间表示（IR）。抽象 Request、Message、ContentBlock、ReasoningBlock、ToolCall、ToolResult、Response、StreamEvent、Usage。 | `model.go`, `stream.go`, `usage.go` |
 | `internal/compat/client/codex` | OpenAI Responses caller 协议适配。把 Responses 请求转 IR，或把 IR/Chat 结果写回 Responses 客户端格式和 SSE。 | `request_in.go`, `response_out.go`, `stream_out.go` |
 | `internal/compat/client/anthropic_messages` | Anthropic Messages caller 协议适配。把 Messages 请求转 IR，或把结果写回 Anthropic Messages 响应和 SSE。 | `messages_inbound.go`, `messages_client_writer.go`, `messages_stream_writer.go` |
@@ -159,11 +159,11 @@ sequenceDiagram
 
 ### 兼容代理中的旧/新边界
 
-`internal/integrations` 只保留兼容代理运行时外壳：
+`internal/integrations` 根包只保留 agent 启动和配置接线；兼容代理运行时外壳在 `internal/integrations/compatproxy`：
 
-- `codex_compat_proxy.go` / `claude_compat_proxy.go`: 负责本地 HTTP server、上游 URL/key、日志、重试和 agent 启动集成。
-- `compat_executors.go`: `codexChatExecutor` 负责 Codex fallback 路径的上游请求和 provider-specific retry；Anthropic Messages 兼容路径由 `gateway.AnthropicMessagesHandler` 直接调用 `postChatCompletions`。
-- `compat_helpers.go` / `compatio.go`: 保留 integration runtime 需要的通用值读取、日志截断和请求 body 解码。
+- `compatproxy/codex_compat_proxy.go` / `compatproxy/claude_compat_proxy.go`: 负责本地 HTTP server、上游 URL/key、日志、重试和本地代理状态。
+- `compatproxy/compat_executors.go`: `codexChatExecutor` 负责 Codex fallback 路径的上游请求和 provider-specific retry；Anthropic Messages 兼容路径由 `gateway.AnthropicMessagesHandler` 直接调用 `postChatCompletions`。
+- `proxyutil/compatio.go`: 保留 integration runtime 需要的日志截断、请求 body 解码、rolling log 和 streaming HTTP client 工具。
 
 协议字段转换、route selection、stream/non-stream 写回已经落在 `internal/compat/ir`、`internal/compat/client/*`、`internal/compat/target/*` 和 `internal/compat/gateway`。
 
@@ -258,9 +258,9 @@ flowchart TD
 - `registry.go`: 集成注册表和名称列表。
 - `claude.go`, `codex.go`, `droid.go`, `opencode.go`, `openclaw.go`, `pi.go`: 各 agent 的配置写入和启动逻辑。
 - `openai_api_probe.go`: 探测 OpenAI-compatible API 可用性/模型连接。
-- `*_compat_proxy.go`: 本地 HTTP 兼容代理。
-- `*_compat_io.go`, `*_compat_errors.go`, `*_compat_reasoning.go`: 兼容代理的 IO、错误和 reasoning 辅助。
-- `compat_*`: 老兼容 pipeline/translator/writer/executor/helper 抽象，正在向 `internal/compat*` 拆分。
+- `compatproxy/`: 本地 HTTP 兼容代理 runtime，包含 Codex Responses 和 Claude Messages 的代理启动、上游 HTTP 调用、retry、日志接线和本地状态。
+- `proxyutil/`: 兼容代理和 launch route 共享的日志、请求解码、JSON 日志格式化和 streaming HTTP client 工具。
+- `compatio.go`: `integrations` 根包保留的 launch route 日志薄封装。
 
 ### `internal/compat*`
 
@@ -312,7 +312,7 @@ internal/compat/policy -> internal/compat/ir
 
 - `internal/app`: CLI、交互流程、MCP 同步。
 - `internal/config`: JSON/TOML 配置读写、规范化、迁移边界。
-- `internal/integrations`: Claude/Codex/OpenClaw runner、兼容代理、API probe、兼容 IR 清理。
+- `internal/integrations`: Claude/Codex/OpenClaw runner、兼容代理 runtime、API probe、兼容 IR 清理。
 - `internal/compat/*`: OpenAI Responses、Anthropic Messages、Gemini、OpenAI Chat 转换和 golden SSE。
 - `internal/skills`: catalog、安装、peer 同步、registry。
 - `internal/tui`: dashboard、profile/MCP/skill 管理视图和交互辅助。

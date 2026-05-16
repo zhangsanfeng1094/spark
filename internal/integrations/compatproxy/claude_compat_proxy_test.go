@@ -1,4 +1,4 @@
-package integrations
+package compatproxy
 
 import (
 	"net/http"
@@ -157,7 +157,7 @@ func TestAnthropicRequestTranslator_MapsOutputConfigEffortToReasoningEffort(t *t
 }
 
 func TestAnthropicCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testing.T) {
-	p := &anthropicCompatProxy{upstreamBase: "https://gateway.example/v1"}
+	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://gateway.example/v1"}
 	chatReq := map[string]any{
 		"model": "mimo-v2.5-pro",
 		"messages": []map[string]any{
@@ -177,7 +177,7 @@ func TestAnthropicCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testin
 			},
 		},
 	}
-	p.applyReasoningContent(chatReq)
+	reasoning.ApplyToChatRequest(chatReq)
 	msgs := chatReq["messages"].([]map[string]any)
 	got, ok := msgs[0]["reasoning_content"]
 	if !ok || got != "" {
@@ -186,7 +186,7 @@ func TestAnthropicCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testin
 }
 
 func TestAnthropicCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *testing.T) {
-	p := &anthropicCompatProxy{upstreamBase: "https://api.openai.com/v1"}
+	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://api.openai.com/v1"}
 	chatReq := map[string]any{
 		"messages": []map[string]any{
 			{
@@ -205,7 +205,7 @@ func TestAnthropicCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *tes
 			},
 		},
 	}
-	p.applyReasoningContent(chatReq)
+	reasoning.ApplyToChatRequest(chatReq)
 	msgs := chatReq["messages"].([]map[string]any)
 	if _, ok := msgs[0]["reasoning_content"]; ok {
 		t.Fatalf("did not expect reasoning_content for generic gateway, got %#v", msgs[0])
@@ -285,7 +285,8 @@ func TestForwardAnthropicStream_RealTimeTextDelta(t *testing.T) {
 }
 
 func TestForwardAnthropicStream_CachesReasoningContentForToolCalls(t *testing.T) {
-	p := &anthropicCompatProxy{}
+	var cache gateway.ReasoningCache
+	reasoning := gateway.ChatReasoningAdapter{Cache: &cache}
 	upstream := strings.Join([]string{
 		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"think "}}]}`,
 		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"first"}}]}`,
@@ -294,7 +295,7 @@ func TestForwardAnthropicStream_CachesReasoningContentForToolCalls(t *testing.T)
 		``,
 	}, "\n")
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	gateway.ForwardAnthropicMessagesStream(rec, strings.NewReader(upstream), "mimo-v2.5-pro", p.rememberReasoningForToolCallIDs, nil)
+	gateway.ForwardAnthropicMessagesStream(rec, strings.NewReader(upstream), "mimo-v2.5-pro", reasoning.RememberForToolCallIDs, nil)
 	if !strings.Contains(rec.body.String(), "event: message_stop") {
 		t.Fatalf("missing message_stop event: %q", rec.body.String())
 	}
@@ -317,7 +318,7 @@ func TestForwardAnthropicStream_CachesReasoningContentForToolCalls(t *testing.T)
 			},
 		},
 	}
-	p.applyReasoningContent(chatReq)
+	reasoning.ApplyToChatRequest(chatReq)
 	msgs := chatReq["messages"].([]map[string]any)
 	if msgs[0]["reasoning_content"] != "think first" {
 		t.Fatalf("expected cached reasoning_content, got %#v", msgs[0])

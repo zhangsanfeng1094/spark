@@ -27,11 +27,11 @@ func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 	req, rawBody, err := DecodeJSONRequest(r)
 	if err != nil {
-		callLogf(h.Logf, "decode request failed: %v raw=%s", err, rawBody)
+		callLogf(h.Logf, "decode request failed: %v raw_bytes=%d", err, len(rawBody))
 		WriteAnthropicError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	callLogf(h.Logf, "incoming request=%s", mustJSONForLog(req))
+	callLogf(h.Logf, "incoming request structure=%s", structureJSONForLog(req))
 
 	reqTranslator := AnthropicMessagesTranslator{}
 	chatReq, err := reqTranslator.ToChat(req)
@@ -52,7 +52,7 @@ func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	if h.ApplyReasoningContent != nil {
 		h.ApplyReasoningContent(chatReq)
 	}
-	callLogf(h.Logf, "mapped chat request=%s", mustJSONForLog(chatReq))
+	callLogf(h.Logf, "mapped chat request structure=%s", structureJSONForLog(chatReq))
 
 	if h.PostChatCompletions == nil {
 		WriteAnthropicError(w, http.StatusBadGateway, "upstream request failed")
@@ -67,7 +67,7 @@ func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(resp.Body)
-		callLogf(h.Logf, "upstream status=%d body=%s", resp.StatusCode, truncateForLog(string(data), 16*1024))
+		callLogf(h.Logf, "upstream status=%d body_bytes=%d", resp.StatusCode, len(data))
 		WriteAnthropicError(w, resp.StatusCode, string(bytes.TrimSpace(data)))
 		return
 	}
@@ -96,8 +96,8 @@ func ForwardAnthropicMessagesStream(
 	w.Header().Set("Connection", "keep-alive")
 
 	result := anthropicadapter.WriteMessagesStream(w, upBody, requestedModel, flusher.Flush)
-	callLogf(logf, "stream parse flags chunks=%d saw_done=%t message_started=%t reasoning_len=%d tool_call_ids=%d first_chunk=%q last_chunk=%q",
-		result.ChunkCount, result.SawDone, result.MessageStarted, len(result.ReasoningText), len(result.ToolCallIDs), result.FirstValidChunk, result.LastValidChunk)
+	callLogf(logf, "stream parse flags chunks=%d saw_done=%t message_started=%t reasoning_len=%d tool_call_ids=%d first_chunk_bytes=%d last_chunk_bytes=%d",
+		result.ChunkCount, result.SawDone, result.MessageStarted, len(result.ReasoningText), len(result.ToolCallIDs), len(result.FirstValidChunk), len(result.LastValidChunk))
 	if result.EmptyStream {
 		WriteAnthropicError(w, http.StatusBadGateway, "empty upstream stream")
 		return
@@ -121,11 +121,11 @@ func ForwardAnthropicMessagesNonStream(
 	}
 	var chatResp map[string]any
 	if err := json.Unmarshal(data, &chatResp); err != nil {
-		callLogf(logf, "upstream invalid json=%s", truncateForLog(string(data), 16*1024))
+		callLogf(logf, "upstream invalid json bytes=%d", len(data))
 		WriteAnthropicError(w, http.StatusBadGateway, "invalid upstream response")
 		return
 	}
-	callLogf(logf, "upstream response=%s", mustJSONForLog(chatResp))
+	callLogf(logf, "upstream response structure=%s", structureJSONForLog(chatResp))
 	irResp := openai_chat_target.ChatResponse(chatResp)
 	if remember != nil {
 		remember(toolCallIDsFromBlocks(irResp.Output), reasoningTextFromBlocks(irResp.Output))

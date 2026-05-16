@@ -28,6 +28,7 @@ type CodexResponsesHandler struct {
 	Warnf         func(summary string)
 	PostResponses func(ctx context.Context, req map[string]any) (*http.Response, error)
 	Executor      ChatExecutor
+	PrepareChat   ChatRequestPreparer
 }
 
 func (h CodexResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -41,14 +42,14 @@ func (h CodexResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	req, rawBody, err := DecodeJSONRequest(r)
 	if err != nil {
-		h.Logf("raw incoming body=%s", rawBody)
+		h.Logf("raw incoming body bytes=%d", len(rawBody))
 		h.Logf("decode request failed: %v", err)
 		h.Warnf("request decode failed")
 		WriteJSONError(w, http.StatusBadRequest, "invalid json (adapter request decode failed: "+err.Error()+")")
 		return
 	}
-	h.Logf("raw incoming body=%s", rawBody)
-	h.Logf("decoded responses request=%s", mustJSONForLog(req))
+	h.Logf("raw incoming body bytes=%d", len(rawBody))
+	h.Logf("decoded responses request structure=%s", structureJSONForLog(req))
 
 	if h.Mode == ResponsesModePreferResponses && h.PostResponses != nil {
 		upResp, err := h.PostResponses(r.Context(), req)
@@ -75,7 +76,7 @@ func (h CodexResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
-		h.Logf("responses passthrough fallback triggered status=%d body=%s", upResp.StatusCode, truncateForLog(string(errBody), 16*1024))
+		h.Logf("responses passthrough fallback triggered status=%d body_bytes=%d", upResp.StatusCode, len(errBody))
 		h.Logf("route=request->chat_fallback reason=responses_not_supported status=%d", upResp.StatusCode)
 	}
 
@@ -88,7 +89,7 @@ func (h CodexResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	selection.Translator = h.translatorForSelection(selection, req)
 	h.logDroppedReasoningControls(req)
 
-	chatReq, upResp, err := ExecuteTranslatedChat(r.Context(), req, selection.Translator, h.Executor)
+	chatReq, upResp, err := ExecuteTranslatedChat(r.Context(), req, selection.Translator, h.Executor, h.PrepareChat)
 	if err != nil {
 		var perr PipelineError
 		if errors.As(err, &perr) && perr.Stage == PipelineStageTranslate {
@@ -101,7 +102,7 @@ func (h CodexResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		WriteJSONError(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
 		return
 	}
-	h.Logf("mapped chat request(initial)=%s", mustJSONForLog(chatReq))
+	h.Logf("mapped chat request(initial) structure=%s", structureJSONForLog(chatReq))
 	h.Logf("route=request->chat_completions status=%d", upResp.StatusCode)
 	defer upResp.Body.Close()
 
@@ -192,13 +193,14 @@ func ForwardCodexNonStream(w http.ResponseWriter, upResp *http.Response, warnf f
 		WriteJSONError(w, http.StatusBadGateway, "invalid upstream response")
 		return
 	}
-	callLogf(logf, "upstream non-stream raw body=%s", truncateForLog(string(rawBody), 16*1024))
 	var chatResp map[string]any
 	if err := json.NewDecoder(bytes.NewReader(rawBody)).Decode(&chatResp); err != nil {
+		callLogf(logf, "upstream non-stream invalid json bytes=%d", len(rawBody))
 		callWarnf(warnf, "invalid upstream non-stream JSON")
 		WriteJSONError(w, http.StatusBadGateway, "invalid upstream response")
 		return
 	}
+	callLogf(logf, "upstream non-stream response structure=%s", structureJSONForLog(chatResp))
 
 	out := CodexResponsesFromOpenAIChatResponse(chatResp)
 	text := stringValue(out["output_text"])
@@ -243,10 +245,10 @@ func ForwardCodexStream(w http.ResponseWriter, upResp *http.Response, warnf func
 	if result.ScanErr != nil {
 		callLogf(logf, "upstream stream scan error: %v", result.ScanErr)
 	}
-	callLogf(logf, "stream parse summary chunks=%d extracted_text_len=%d samples=%s",
-		result.ChunkCount, result.ExtractedTextLen, truncateForLog(strings.Join(result.ChunkSamples, " || "), 16*1024))
-	callLogf(logf, "stream parse flags saw_done=%t saw_content_delta=%t reasoning_len=%d first_chunk=%q last_chunk=%q",
-		result.SawDone, result.SawContentDelta, result.ReasoningLen, result.FirstValidChunk, result.LastValidChunk)
+	callLogf(logf, "stream parse summary chunks=%d extracted_text_len=%d sample_count=%d",
+		result.ChunkCount, result.ExtractedTextLen, len(result.ChunkSamples))
+	callLogf(logf, "stream parse flags saw_done=%t saw_content_delta=%t reasoning_len=%d first_chunk_bytes=%d last_chunk_bytes=%d",
+		result.SawDone, result.SawContentDelta, result.ReasoningLen, len(result.FirstValidChunk), len(result.LastValidChunk))
 	if result.HandledError {
 		callWarnf(warnf, "upstream stream failed before first chunk")
 		return

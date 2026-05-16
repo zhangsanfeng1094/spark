@@ -1,4 +1,4 @@
-package integrations
+package compatproxy
 
 func stringValue(v any) string {
 	s, _ := v.(string)

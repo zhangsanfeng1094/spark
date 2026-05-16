@@ -1,4 +1,4 @@
-package integrations
+package compatproxy
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 
 	codexadapter "spark/internal/compat/client/codex"
 	"spark/internal/compat/gateway"
+	"spark/internal/integrations/proxyutil"
 )
 
 func TestResponsesRequestTranslator_StringInput(t *testing.T) {
@@ -213,7 +214,7 @@ func TestResponsesRequestTranslator_ReasoningOutputMappedToSyntheticToolCall(t *
 }
 
 func TestResponsesCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testing.T) {
-	p := &responsesCompatProxy{upstreamBase: "https://gateway.example/v1"}
+	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://gateway.example/v1"}
 	chatReq := map[string]any{
 		"model": "mimo-v2.5-pro",
 		"messages": []map[string]any{
@@ -233,7 +234,7 @@ func TestResponsesCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testin
 			},
 		},
 	}
-	p.applyReasoningContent(chatReq)
+	reasoning.ApplyToChatRequest(chatReq)
 	msgs := chatReq["messages"].([]map[string]any)
 	got, ok := msgs[0]["reasoning_content"]
 	if !ok || got != "" {
@@ -242,7 +243,7 @@ func TestResponsesCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testin
 }
 
 func TestResponsesCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *testing.T) {
-	p := &responsesCompatProxy{upstreamBase: "https://api.openai.com/v1"}
+	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://api.openai.com/v1"}
 	chatReq := map[string]any{
 		"model": "gpt-4.1",
 		"messages": []map[string]any{
@@ -263,7 +264,7 @@ func TestResponsesCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *tes
 			},
 		},
 	}
-	p.applyReasoningContent(chatReq)
+	reasoning.ApplyToChatRequest(chatReq)
 	msgs := chatReq["messages"].([]map[string]any)
 	if _, ok := msgs[0]["reasoning_content"]; ok {
 		t.Fatalf("did not expect reasoning_content for generic gateway, got %#v", msgs[0])
@@ -353,7 +354,7 @@ func TestUltraMinimalChatCompletionsRequest(t *testing.T) {
 
 func TestDecodeResponsesRequest_PlainJSON(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"GLM-4.7","input":"hi"}`))
-	req, raw, err := decodeResponsesRequest(r)
+	req, raw, err := proxyutil.DecodeResponsesRequest(r)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -373,7 +374,7 @@ func TestForwardNonStream_MapsToolCallsToFunctionCallOutputItems(t *testing.T) {
 		)),
 	}
 	rec := &responseRecorder{header: make(http.Header)}
-	p := &responsesCompatProxy{}
+	p := &ResponsesProxy{}
 	p.forwardNonStream(rec, upResp)
 
 	if rec.status != 0 && rec.status != 200 {
@@ -396,7 +397,7 @@ func TestForwardNonStream_MapsUsageDetails(t *testing.T) {
 		)),
 	}
 	rec := &responseRecorder{header: make(http.Header)}
-	p := &responsesCompatProxy{}
+	p := &ResponsesProxy{}
 	p.forwardNonStream(rec, upResp)
 
 	body := rec.body.String()
@@ -422,7 +423,7 @@ func TestForwardNonStream_MapsReasoningContentSeparately(t *testing.T) {
 		)),
 	}
 	rec := &responseRecorder{header: make(http.Header)}
-	p := &responsesCompatProxy{}
+	p := &ResponsesProxy{}
 	p.forwardNonStream(rec, upResp)
 
 	var got map[string]any
@@ -458,7 +459,7 @@ func TestDecodeResponsesRequest_GzipJSON(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf.Bytes()))
 	r.Header.Set("Content-Encoding", "gzip")
-	req, raw, err := decodeResponsesRequest(r)
+	req, raw, err := proxyutil.DecodeResponsesRequest(r)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -472,7 +473,7 @@ func TestDecodeResponsesRequest_GzipJSON(t *testing.T) {
 
 func TestDecodeResponsesRequest_InvalidBody(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`not-json`))
-	_, raw, err := decodeResponsesRequest(r)
+	_, raw, err := proxyutil.DecodeResponsesRequest(r)
 	if err == nil {
 		t.Fatal("expected decode error")
 	}
@@ -492,7 +493,7 @@ func TestDecodeResponsesRequest_ZstdJSON(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf.Bytes()))
 	r.Header.Set("Content-Encoding", "zstd")
-	req, raw, err := decodeResponsesRequest(r)
+	req, raw, err := proxyutil.DecodeResponsesRequest(r)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -588,7 +589,7 @@ func TestForwardStream_FallbackForSingleJSONLine(t *testing.T) {
 		)),
 	}
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p := &responsesCompatProxy{}
+	p := &ResponsesProxy{}
 	p.forwardStream(rec, upResp)
 
 	body := rec.body.String()
@@ -611,7 +612,7 @@ func TestForwardStream_EmitsFunctionCallEventsFromToolCallDeltas(t *testing.T) {
 		}, "\n"))),
 	}
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p := &responsesCompatProxy{}
+	p := &ResponsesProxy{}
 	p.forwardStream(rec, upResp)
 
 	body := rec.body.String()
@@ -637,7 +638,7 @@ func TestForwardStream_ReasoningContentDoesNotPolluteOutputText(t *testing.T) {
 		}, "\n"))),
 	}
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p := &responsesCompatProxy{}
+	p := &ResponsesProxy{}
 	p.forwardStream(rec, upResp)
 
 	events := decodeSSEJSONEvents(t, rec.body.String())
@@ -686,7 +687,7 @@ func TestForwardStream_ResponseCompletedIncludesUsageDetails(t *testing.T) {
 		}, "\n"))),
 	}
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p := &responsesCompatProxy{}
+	p := &ResponsesProxy{}
 	p.forwardStream(rec, upResp)
 
 	body := rec.body.String()

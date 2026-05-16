@@ -16,9 +16,10 @@ caller protocol
   -> internal/integrations runtime shell
 ```
 
-`internal/integrations` should now stay focused on agent startup, local proxy
-server setup, upstream URL/key handling, HTTP clients, retry/logging, and local
-state wiring. Protocol field conversion should live under `internal/compat`.
+`internal/integrations` should now stay focused on agent startup and configuration
+wiring. Local proxy runtime lives under `internal/integrations/compatproxy`;
+shared proxy logging/body utilities live under `internal/integrations/proxyutil`.
+Protocol field conversion should live under `internal/compat`.
 
 ## Important Completed Work
 
@@ -36,9 +37,9 @@ state wiring. Protocol field conversion should live under `internal/compat`.
 - Removed `internal/integrations/compat_chat_extractors.go`.
 - Removed obsolete `anthropicChatExecutor` and `forwardAnthropicStream`
   integration wrappers.
-- Trimmed `internal/integrations/compat_helpers.go` to runtime-only helpers.
-- Moved integration-only test helpers to
-  `internal/integrations/compat_test_helpers_test.go`.
+- Moved local proxy runtime from the `internal/integrations` root package to
+  `internal/integrations/compatproxy`.
+- Moved shared proxy utilities to `internal/integrations/proxyutil`.
 
 ## Current Validation
 
@@ -65,15 +66,15 @@ review rename staging carefully. The current focused dirty set includes:
 - `docs/compat-proxy-architecture.md`
 - `docs/internal-architecture.md`
 - `internal/compat/gateway/reasoning_cache.go`
-- `internal/integrations/claude_compat_proxy.go`
-- `internal/integrations/claude_compat_proxy_test.go`
-- `internal/integrations/claude_compat_reasoning.go`
-- `internal/integrations/codex_compat_proxy.go`
-- `internal/integrations/codex_compat_proxy_test.go`
+- `internal/integrations/compatproxy/claude_compat_proxy.go`
+- `internal/integrations/compatproxy/claude_compat_proxy_test.go`
+- `internal/integrations/compatproxy/codex_compat_proxy.go`
+- `internal/integrations/compatproxy/codex_compat_proxy_test.go`
 - deleted `internal/integrations/compat_chat_extractors.go`
-- `internal/integrations/compat_executors.go`
-- `internal/integrations/compat_helpers.go`
-- `internal/integrations/compat_test_helpers_test.go`
+- `internal/integrations/compatproxy/compat_executors.go`
+- `internal/integrations/compatproxy/compat_helpers.go`
+- `internal/integrations/compatproxy/compat_test_helpers_test.go`
+- `internal/integrations/proxyutil/compatio.go`
 
 There are also broader compat migration changes in the worktree from earlier
 steps, including client/target package moves and docs updates. Use

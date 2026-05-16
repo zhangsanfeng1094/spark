@@ -1,4 +1,4 @@
-package integrations
+package compatproxy
 
 import (
 	"bytes"
@@ -14,15 +14,16 @@ import (
 	"time"
 
 	"spark/internal/compat/gateway"
+	"spark/internal/integrations/proxyutil"
 )
 
-type responsesCompatProxy struct {
+type ResponsesProxy struct {
 	server       *http.Server
 	listener     net.Listener
 	baseURL      string
 	upstreamBase string
 	upstreamKey  string
-	mode         responsesProxyMode
+	mode         ResponsesProxyMode
 	client       *http.Client
 	quietStderr  bool
 	logFile      io.WriteCloser
@@ -30,28 +31,28 @@ type responsesCompatProxy struct {
 	logPath      string
 }
 
-type responsesProxyMode string
+type ResponsesProxyMode string
 
 const (
-	responsesProxyModeChatCompletionsOnly responsesProxyMode = "chat_completions_only"
-	responsesProxyModePreferResponses     responsesProxyMode = "prefer_responses"
+	ResponsesProxyModeChatCompletionsOnly ResponsesProxyMode = "chat_completions_only"
+	ResponsesProxyModePreferResponses     ResponsesProxyMode = "prefer_responses"
 )
 
-func startResponsesCompatProxy(upstreamBase, upstreamKey string, quietStderr bool, mode responsesProxyMode) (*responsesCompatProxy, error) {
+func StartResponsesProxy(upstreamBase, upstreamKey string, quietStderr bool, mode ResponsesProxyMode) (*ResponsesProxy, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
 	if mode == "" {
-		mode = responsesProxyModeChatCompletionsOnly
+		mode = ResponsesProxyModeChatCompletionsOnly
 	}
-	p := &responsesCompatProxy{
+	p := &ResponsesProxy{
 		listener:     ln,
 		baseURL:      "http://" + ln.Addr().String() + "/v1",
 		upstreamBase: strings.TrimRight(upstreamBase, "/"),
 		upstreamKey:  upstreamKey,
 		mode:         mode,
-		client:       newStreamingHTTPClient(),
+		client:       proxyutil.NewStreamingHTTPClient(),
 		quietStderr:  quietStderr,
 	}
 	logFile, logPath, err := openCompatLogFile()
@@ -71,11 +72,11 @@ func startResponsesCompatProxy(upstreamBase, upstreamKey string, quietStderr boo
 	return p, nil
 }
 
-func (p *responsesCompatProxy) BaseURL() string {
+func (p *ResponsesProxy) BaseURL() string {
 	return p.baseURL
 }
 
-func (p *responsesCompatProxy) Close() error {
+func (p *ResponsesProxy) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := p.server.Shutdown(ctx)
@@ -85,11 +86,11 @@ func (p *responsesCompatProxy) Close() error {
 	return err
 }
 
-func (p *responsesCompatProxy) LogPath() string {
+func (p *ResponsesProxy) LogPath() string {
 	return p.logPath
 }
 
-func (p *responsesCompatProxy) logf(format string, args ...any) {
+func (p *ResponsesProxy) logf(format string, args ...any) {
 	line := fmt.Sprintf("[compat] "+format, args...)
 	p.logMu.Lock()
 	defer p.logMu.Unlock()
@@ -98,14 +99,15 @@ func (p *responsesCompatProxy) logf(format string, args ...any) {
 	}
 }
 
-func (p *responsesCompatProxy) warnf(summary string) {
+func (p *ResponsesProxy) warnf(summary string) {
 	if p.quietStderr {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "[compat] %s (details: %s)\n", summary, p.logPath)
 }
 
-func (p *responsesCompatProxy) handleResponses(w http.ResponseWriter, r *http.Request) {
+func (p *ResponsesProxy) handleResponses(w http.ResponseWriter, r *http.Request) {
+	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: p.upstreamBase}
 	handler := gateway.CodexResponsesHandler{
 		Mode:          string(p.mode),
 		Route:         gateway.Route{Client: gateway.ClientCodexResponses, Target: gateway.TargetOpenAIChat},
@@ -114,11 +116,12 @@ func (p *responsesCompatProxy) handleResponses(w http.ResponseWriter, r *http.Re
 		Warnf:         p.warnf,
 		PostResponses: p.postResponses,
 		Executor:      newCodexChatExecutor(p),
+		PrepareChat:   reasoning.ApplyToChatRequest,
 	}
 	handler.ServeHTTP(w, r)
 }
 
-func (p *responsesCompatProxy) postResponses(ctx context.Context, req map[string]any) (*http.Response, error) {
+func (p *ResponsesProxy) postResponses(ctx context.Context, req map[string]any) (*http.Response, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -132,11 +135,11 @@ func (p *responsesCompatProxy) postResponses(ctx context.Context, req map[string
 	if p.upstreamKey != "" {
 		upReq.Header.Set("Authorization", "Bearer "+p.upstreamKey)
 	}
-	p.logf("upstream POST %s payload=%s", p.upstreamBase+"/responses", truncateForLog(string(body), 16*1024))
+	p.logf("upstream POST %s payload_structure=%s", p.upstreamBase+"/responses", gateway.StructureJSONForLog(req))
 	return p.client.Do(upReq)
 }
 
-func (p *responsesCompatProxy) postChatCompletions(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
+func (p *ResponsesProxy) postChatCompletions(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
 	body, err := json.Marshal(chatReq)
 	if err != nil {
 		return nil, err
@@ -150,7 +153,7 @@ func (p *responsesCompatProxy) postChatCompletions(ctx context.Context, chatReq 
 	if p.upstreamKey != "" {
 		upReq.Header.Set("Authorization", "Bearer "+p.upstreamKey)
 	}
-	p.logf("upstream POST %s payload=%s", p.upstreamBase+"/chat/completions", truncateForLog(string(body), 16*1024))
+	p.logf("upstream POST %s payload_structure=%s", p.upstreamBase+"/chat/completions", gateway.StructureJSONForLog(chatReq))
 	return p.client.Do(upReq)
 }
 
@@ -209,14 +212,14 @@ func ultraMinimalChatCompletionsRequest(chatReq map[string]any) map[string]any {
 	return out
 }
 
-func (p *responsesCompatProxy) forwardResponsesPassthrough(w http.ResponseWriter, upResp *http.Response) {
+func (p *ResponsesProxy) forwardResponsesPassthrough(w http.ResponseWriter, upResp *http.Response) {
 	gateway.ForwardResponsesPassthrough(w, upResp, p.logf)
 }
 
-func (p *responsesCompatProxy) forwardNonStream(w http.ResponseWriter, upResp *http.Response) {
+func (p *ResponsesProxy) forwardNonStream(w http.ResponseWriter, upResp *http.Response) {
 	gateway.ForwardCodexNonStream(w, upResp, p.warnf, p.logf)
 }
 
-func (p *responsesCompatProxy) forwardStream(w http.ResponseWriter, upResp *http.Response) {
+func (p *ResponsesProxy) forwardStream(w http.ResponseWriter, upResp *http.Response) {
 	gateway.ForwardCodexStream(w, upResp, p.warnf, p.logf)
 }

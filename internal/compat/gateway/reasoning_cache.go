@@ -18,6 +18,27 @@ type ReasoningCache struct {
 	byToolCall map[string]string
 }
 
+type ChatReasoningAdapter struct {
+	UpstreamBase string
+	Cache        *ReasoningCache
+}
+
+func (a ChatReasoningAdapter) ApplyToChatRequest(chatReq map[string]any) {
+	if a.Cache != nil {
+		a.Cache.ApplyToChatRequest(a.UpstreamBase, chatReq)
+		return
+	}
+	var cache ReasoningCache
+	cache.ApplyToChatRequest(a.UpstreamBase, chatReq)
+}
+
+func (a ChatReasoningAdapter) RememberForToolCallIDs(ids []string, reasoning string) {
+	if a.Cache == nil {
+		return
+	}
+	a.Cache.RememberForToolCallIDs(ids, reasoning)
+}
+
 func ChatReasoningSummary(chatReq map[string]any) ChatReasoningStats {
 	stats := ChatReasoningStats{}
 	if chatReq == nil {

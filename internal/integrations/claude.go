@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"spark/internal/config"
+	"spark/internal/integrations/compatproxy"
 )
 
 type Claude struct{}
@@ -124,7 +125,7 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 
 	// Use direct mode when the selected API type is Anthropic Messages.
 	if claudeShouldUseCompatProxy(profile) {
-		proxy, err := startAnthropicCompatProxy(profileBase(profile), upstreamKey, effectiveModel)
+		proxy, err := compatproxy.StartAnthropicProxy(profileBase(profile), upstreamKey, effectiveModel)
 		if err != nil {
 			return err
 		}

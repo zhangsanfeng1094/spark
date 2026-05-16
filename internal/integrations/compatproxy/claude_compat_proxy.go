@@ -1,4 +1,4 @@
-package integrations
+package compatproxy
 
 import (
 	"bytes"
@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"spark/internal/compat/gateway"
+	"spark/internal/integrations/proxyutil"
 )
 
-type anthropicCompatProxy struct {
+type AnthropicProxy struct {
 	server         *http.Server
 	listener       net.Listener
 	baseURL        string
@@ -29,7 +30,7 @@ type anthropicCompatProxy struct {
 	reasoningCache gateway.ReasoningCache
 }
 
-func startAnthropicCompatProxy(upstreamBase, upstreamKey, preferredModel string) (*anthropicCompatProxy, error) {
+func StartAnthropicProxy(upstreamBase, upstreamKey, preferredModel string) (*AnthropicProxy, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
@@ -38,13 +39,13 @@ func startAnthropicCompatProxy(upstreamBase, upstreamKey, preferredModel string)
 	if err != nil {
 		return nil, err
 	}
-	p := &anthropicCompatProxy{
+	p := &AnthropicProxy{
 		listener:       ln,
 		baseURL:        "http://" + ln.Addr().String(),
 		upstreamBase:   strings.TrimRight(upstreamBase, "/"),
 		upstreamKey:    upstreamKey,
 		preferredModel: strings.TrimSpace(preferredModel),
-		client:         newStreamingHTTPClient(),
+		client:         proxyutil.NewStreamingHTTPClient(),
 		logFile:        logFile,
 		logPath:        logPath,
 	}
@@ -58,11 +59,11 @@ func startAnthropicCompatProxy(upstreamBase, upstreamKey, preferredModel string)
 	return p, nil
 }
 
-func (p *anthropicCompatProxy) BaseURL() string { return p.baseURL }
+func (p *AnthropicProxy) BaseURL() string { return p.baseURL }
 
-func (p *anthropicCompatProxy) LogPath() string { return p.logPath }
+func (p *AnthropicProxy) LogPath() string { return p.logPath }
 
-func (p *anthropicCompatProxy) Close() error {
+func (p *AnthropicProxy) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := p.server.Shutdown(ctx)
@@ -72,7 +73,7 @@ func (p *anthropicCompatProxy) Close() error {
 	return err
 }
 
-func (p *anthropicCompatProxy) logf(format string, args ...any) {
+func (p *AnthropicProxy) logf(format string, args ...any) {
 	line := fmt.Sprintf("[anthropic-compat] "+format, args...)
 	p.logMu.Lock()
 	defer p.logMu.Unlock()
@@ -81,18 +82,22 @@ func (p *anthropicCompatProxy) logf(format string, args ...any) {
 	}
 }
 
-func (p *anthropicCompatProxy) handleMessages(w http.ResponseWriter, r *http.Request) {
+func (p *AnthropicProxy) handleMessages(w http.ResponseWriter, r *http.Request) {
+	reasoning := gateway.ChatReasoningAdapter{
+		UpstreamBase: p.upstreamBase,
+		Cache:        &p.reasoningCache,
+	}
 	handler := gateway.AnthropicMessagesHandler{
 		PreferredModel:        p.preferredModel,
 		Logf:                  p.logf,
 		PostChatCompletions:   p.postChatCompletions,
-		ApplyReasoningContent: p.applyReasoningContent,
-		RememberReasoning:     p.rememberReasoningForToolCallIDs,
+		ApplyReasoningContent: reasoning.ApplyToChatRequest,
+		RememberReasoning:     reasoning.RememberForToolCallIDs,
 	}
 	handler.ServeHTTP(w, r)
 }
 
-func (p *anthropicCompatProxy) postChatCompletions(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
+func (p *AnthropicProxy) postChatCompletions(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
 	doPost := func(payload map[string]any) (*http.Response, error) {
 		body, err := json.Marshal(payload)
 		if err != nil {

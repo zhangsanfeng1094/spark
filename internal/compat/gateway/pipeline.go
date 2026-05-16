@@ -17,6 +17,8 @@ type ChatExecutor interface {
 	Do(ctx context.Context, chatReq map[string]any) (*http.Response, error)
 }
 
+type ChatRequestPreparer func(chatReq map[string]any)
+
 type StreamWriter func(writer io.Writer, reader io.Reader, flush func()) codex.ResponsesStreamResult
 
 type NonStreamWriter func(resp map[string]any) map[string]any
@@ -44,10 +46,16 @@ func ExecuteTranslatedChat(
 	req map[string]any,
 	translator RequestTranslator,
 	executor ChatExecutor,
+	preparers ...ChatRequestPreparer,
 ) (map[string]any, *http.Response, error) {
 	chatReq, err := translator.ToChat(req)
 	if err != nil {
 		return nil, nil, PipelineError{Stage: PipelineStageTranslate, Err: err}
+	}
+	for _, prepare := range preparers {
+		if prepare != nil {
+			prepare(chatReq)
+		}
 	}
 	resp, err := executor.Do(ctx, chatReq)
 	if err != nil {
