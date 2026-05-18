@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.0](https://github.com/zhangsanfeng1094/spark/compare/v0.9.0...v0.10.0) (2026-05-18)
+
+
+### Features
+
+* Enhance reasoning content handling in Claude integration ([7fd8f84](https://github.com/zhangsanfeng1094/spark/commit/7fd8f84abb91d80bbb7ffdedb9a8bbfaf9d3b1b7))
+* Enhance support for Anthropic API integration ([07112f3](https://github.com/zhangsanfeng1094/spark/commit/07112f36ab476dd5b0c87faf268a53c1ca2f7b2c))
+* Introduce Gemini support in integrations ([da7ef9b](https://github.com/zhangsanfeng1094/spark/commit/da7ef9b2627f0b99f7917dfd1ba7f9a45ad9a69e))
+* Introduce reasoning policies and tool validation for OpenAI chat integration ([7aa6f31](https://github.com/zhangsanfeng1094/spark/commit/7aa6f31c69066df716c15fe7acedf92ee1e5ed68))
+
 ## [0.9.0](https://github.com/zhangsanfeng1094/spark/compare/v0.8.0...v0.9.0) (2026-05-13)
 
 
