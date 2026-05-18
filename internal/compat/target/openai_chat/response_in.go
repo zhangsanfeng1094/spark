@@ -3,10 +3,11 @@ package openai_chat
 import "spark/internal/compat/ir"
 
 func ChatResponse(raw map[string]any) ir.Response {
+	irUsage := usageFromChat(raw["usage"])
 	resp := ir.Response{
 		ID:    stringValue(raw["id"]),
 		Model: stringValue(raw["model"]),
-		Usage: usageFromChat(raw["usage"]),
+		Usage: irUsage,
 		Raw:   raw,
 	}
 	choices := listValue(raw["choices"])

@@ -5,12 +5,14 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"spark/internal/config"
 	"spark/internal/integrations"
 	"spark/internal/skills"
 	"spark/internal/tui"
+	"spark/internal/usage"
 	"spark/internal/version"
 )
 
@@ -130,12 +132,13 @@ func newProfileCmd() *cobra.Command {
 }
 
 func interactiveMenuOptions() []string {
-	return []string{"Launch integration", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
+	return []string{"Launch integration", "Token usage", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
 }
 
 func interactiveMenuDescriptions() map[string]string {
 	return map[string]string{
 		"Launch integration": "Start Spark with the selected coding agent integration using the active profile and model settings.",
+		"Token usage":        "Review recorded compat proxy token usage with fixed time filters.",
 		"Manage profiles":    "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
 		"Manage MCP servers": "Manage MCP server entries, health probes, and transport settings.",
 		"Manage skills":      "Browse installed skills, add new ones, and toggle them on or off.",
@@ -173,6 +176,7 @@ func newDebugSnapshotCmd() *cobra.Command {
 		Short: "Render non-interactive UI snapshots",
 	}
 	cmd.AddCommand(newDebugDashboardSnapshotCmd())
+	cmd.AddCommand(newDebugTokenUsageSnapshotCmd())
 	cmd.AddCommand(newDebugProfileSnapshotCmd())
 	cmd.AddCommand(newDebugMCPSnapshotCmd())
 	cmd.AddCommand(newDebugSkillSnapshotCmd())
@@ -209,6 +213,36 @@ func newDebugDashboardSnapshotCmd() *cobra.Command {
 	cmd.Flags().IntVar(&width, "width", 90, "Snapshot terminal width")
 	cmd.Flags().IntVar(&height, "height", 24, "Snapshot terminal height")
 	cmd.Flags().IntVar(&cursor, "cursor", 0, "Selected dashboard row")
+	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
+	return cmd
+}
+
+func newDebugTokenUsageSnapshotCmd() *cobra.Command {
+	var width int
+	var height int
+	var cursor int
+	var color bool
+
+	cmd := &cobra.Command{
+		Use:   "token-usage",
+		Short: "Render the token usage view without starting the TUI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			summaries, err := loadTokenUsageSummaries()
+			if err != nil {
+				return err
+			}
+			view, err := tui.RenderTokenUsageSnapshot(summaries, width, height, cursor)
+			if err != nil {
+				return err
+			}
+			writeSnapshot(cmd, view, color)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&width, "width", 90, "Snapshot terminal width")
+	cmd.Flags().IntVar(&height, "height", 24, "Snapshot terminal height")
+	cmd.Flags().IntVar(&cursor, "cursor", 0, "Selected time filter")
 	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
 	return cmd
 }
@@ -336,6 +370,14 @@ func runInteractive() error {
 			if err := launchIntegration(name, "", "", false, nil); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
+		case "Token usage":
+			summaries, err := loadTokenUsageSummaries()
+			if err != nil {
+				return err
+			}
+			if err := tui.ShowTokenUsage(summaries, loadTokenUsageSummaries); err != nil {
+				return err
+			}
 		case "Manage profiles":
 			if err := manageProfiles(); err != nil {
 				return err
@@ -354,6 +396,48 @@ func runInteractive() error {
 		case "Quit":
 			return nil
 		}
+	}
+}
+
+func loadTokenUsageSummaries() ([]tui.TokenUsageSummary, error) {
+	path, err := usage.DefaultPath()
+	if err != nil {
+		return nil, err
+	}
+	records, err := usage.Read(path)
+	if err != nil {
+		return nil, err
+	}
+	clients := usage.Clients(records)
+	summaries := usage.SummarizeForClients(records, clients, time.Now())
+	out := make([]tui.TokenUsageSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		out = append(out, tui.TokenUsageSummary{
+			Window:            string(summary.Window),
+			Client:            summary.Client,
+			Label:             usageWindowLabel(summary.Window),
+			Requests:          summary.Requests,
+			InputTokens:       summary.InputTokens,
+			OutputTokens:      summary.OutputTokens,
+			TotalTokens:       summary.TotalTokens,
+			CachedInputTokens: summary.CachedInputTokens,
+		})
+	}
+	return out, nil
+}
+
+func usageWindowLabel(window usage.Window) string {
+	switch window {
+	case usage.WindowToday:
+		return "Today"
+	case usage.Window7D:
+		return "7d"
+	case usage.Window30D:
+		return "30d"
+	case usage.WindowAll:
+		return "All"
+	default:
+		return string(window)
 	}
 }
 

@@ -49,6 +49,7 @@ func StartAnthropicProxy(upstreamBase, upstreamKey, preferredModel string) (*Ant
 		logFile:        logFile,
 		logPath:        logPath,
 	}
+	installUsageRecorder("claude", p.logf)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/messages", p.handleMessages)
 	mux.HandleFunc("/messages", p.handleMessages)

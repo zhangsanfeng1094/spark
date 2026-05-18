@@ -61,6 +61,7 @@ func StartResponsesProxy(upstreamBase, upstreamKey string, quietStderr bool, mod
 	}
 	p.logFile = logFile
 	p.logPath = logPath
+	installUsageRecorder("codex", p.logf)
 	p.logf("proxy started mode=%s upstream=%s listen=%s", p.mode, p.upstreamBase, p.baseURL)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/responses", p.handleResponses)

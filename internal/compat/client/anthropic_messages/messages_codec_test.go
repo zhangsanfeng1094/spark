@@ -123,8 +123,10 @@ func TestMessagesClientResponseMapsToolUseAndUsage(t *testing.T) {
 		},
 		StopReason: ir.StopReasonToolUse,
 		Usage: ir.Usage{
-			InputTokens:  12,
-			OutputTokens: 6,
+			InputTokens:              12,
+			OutputTokens:             6,
+			CacheCreationInputTokens: 3,
+			CacheReadInputTokens:     4,
 		},
 	}, "")
 
@@ -138,6 +140,9 @@ func TestMessagesClientResponseMapsToolUseAndUsage(t *testing.T) {
 	usage := msg["usage"].(map[string]any)
 	if usage["input_tokens"] != 12 || usage["output_tokens"] != 6 {
 		t.Fatalf("usage mismatch: %#v", usage)
+	}
+	if usage["cache_creation_input_tokens"] != 3 || usage["cache_read_input_tokens"] != 4 {
+		t.Fatalf("cache usage mismatch: %#v", usage)
 	}
 }
 

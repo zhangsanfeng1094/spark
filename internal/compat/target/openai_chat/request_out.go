@@ -45,7 +45,19 @@ func (o ChatOutbound) BuildRequest(req ir.Request) map[string]any {
 			out[key] = value
 		}
 	}
+	if req.Stream {
+		ensureStreamUsageOption(out)
+	}
 	return out
+}
+
+func ensureStreamUsageOption(out map[string]any) {
+	streamOptions, _ := out["stream_options"].(map[string]any)
+	if streamOptions == nil {
+		streamOptions = map[string]any{}
+		out["stream_options"] = streamOptions
+	}
+	streamOptions["include_usage"] = true
 }
 
 func applyChatReasoningControls(out map[string]any, reasoning ir.ReasoningConfig, p policy.ReasoningPolicy) {
