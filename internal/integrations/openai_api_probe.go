@@ -73,13 +73,29 @@ func DetectOpenAIAPIType(ctx context.Context, baseURL, apiKey, org, model string
 		return config.OpenAIAPITypeChatCompletions, nil
 	}
 
+	geminiStatus, _, geminiErr := ProbeOpenAIEndpoint(ctx, client, base, apiKey, org, model, config.OpenAIAPITypeGeminiGenerateContent, perEndpointTimeout)
+	if geminiErr == nil && geminiStatus >= 200 && geminiStatus < 300 {
+		return config.OpenAIAPITypeGeminiGenerateContent, nil
+	}
+
+	anthropicStatus, _, anthropicErr := ProbeOpenAIEndpoint(ctx, client, base, apiKey, org, model, config.OpenAIAPITypeAnthropicMessages, perEndpointTimeout)
+	if anthropicErr == nil && anthropicStatus >= 200 && anthropicStatus < 300 {
+		return config.OpenAIAPITypeAnthropicMessages, nil
+	}
+
 	if resErr != nil {
 		return "", resErr
 	}
 	if chatErr != nil {
 		return "", chatErr
 	}
-	return "", fmt.Errorf("probe failed (responses=%d chat_completions=%d)", resStatus, chatStatus)
+	if geminiErr != nil {
+		return "", geminiErr
+	}
+	if anthropicErr != nil {
+		return "", anthropicErr
+	}
+	return "", fmt.Errorf("probe failed (responses=%d chat_completions=%d gemini_generate_content=%d anthropic_messages=%d)", resStatus, chatStatus, geminiStatus, anthropicStatus)
 }
 
 func ProbeOpenAIEndpoint(ctx context.Context, client *http.Client, baseURL, apiKey, org, model, endpointType string, timeout time.Duration) (int, []byte, error) {
@@ -91,6 +107,9 @@ func ProbeOpenAIEndpoint(ctx context.Context, client *http.Client, baseURL, apiK
 	if err != nil {
 		return 0, nil, err
 	}
+	if endpointType == config.OpenAIAPITypeAnthropicMessages && strings.HasSuffix(base, "/v1") && path == "/v1/messages" {
+		path = "/messages"
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -99,7 +118,7 @@ func ProbeOpenAIEndpoint(ctx context.Context, client *http.Client, baseURL, apiK
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return postJSON(ctx, client, base+path, apiKey, org, payload)
+	return postProbeJSON(ctx, client, base+path, apiKey, org, endpointType, payload)
 }
 
 func openAIProbePayload(model, endpointType string) (string, map[string]any, error) {
@@ -123,12 +142,35 @@ func openAIProbePayload(model, endpointType string) (string, map[string]any, err
 			"max_tokens": 1024,
 			"stream":     false,
 		}, nil
+	case config.OpenAIAPITypeGeminiGenerateContent:
+		return "/models/" + model + ":generateContent", map[string]any{
+			"contents": []map[string]any{
+				{
+					"role": "user",
+					"parts": []map[string]any{
+						{"text": "ping"},
+					},
+				},
+			},
+			"generationConfig": map[string]any{
+				"maxOutputTokens": 1024,
+			},
+		}, nil
+	case config.OpenAIAPITypeAnthropicMessages:
+		return "/v1/messages", map[string]any{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "user", "content": "ping"},
+			},
+			"max_tokens": 1024,
+			"stream":     false,
+		}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported endpoint type: %s", endpointType)
 	}
 }
 
-func postJSON(ctx context.Context, client *http.Client, url, apiKey, org string, payload map[string]any) (int, []byte, error) {
+func postProbeJSON(ctx context.Context, client *http.Client, url, apiKey, org, endpointType string, payload map[string]any) (int, []byte, error) {
 	if client == nil {
 		client = &http.Client{Timeout: defaultProbeHTTPTimeout}
 	}
@@ -145,9 +187,19 @@ func postJSON(ctx context.Context, client *http.Client, url, apiKey, org string,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if strings.TrimSpace(apiKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+		switch endpointType {
+		case config.OpenAIAPITypeGeminiGenerateContent:
+			req.Header.Set("x-goog-api-key", strings.TrimSpace(apiKey))
+		case config.OpenAIAPITypeAnthropicMessages:
+			req.Header.Set("x-api-key", strings.TrimSpace(apiKey))
+		default:
+			req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+		}
 	}
-	if strings.TrimSpace(org) != "" {
+	if endpointType == config.OpenAIAPITypeAnthropicMessages {
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
+	if endpointType != config.OpenAIAPITypeGeminiGenerateContent && endpointType != config.OpenAIAPITypeAnthropicMessages && strings.TrimSpace(org) != "" {
 		req.Header.Set("OpenAI-Organization", strings.TrimSpace(org))
 	}
 	resp, err := client.Do(req)

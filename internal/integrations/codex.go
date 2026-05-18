@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"spark/internal/config"
+	"spark/internal/integrations/compatproxy"
 )
 
 type Codex struct{}
@@ -55,7 +56,7 @@ func (c *Codex) Run(profile *config.Profile, model string, args []string) error 
 	envKey := resolvedUpstreamKey
 
 	if proxyMode, useProxy := codexProxyModeForAPIType(apiType); useProxy {
-		proxy, err := startResponsesCompatProxy(baseURL, resolvedUpstreamKey, quietCompatStderr, proxyMode)
+		proxy, err := compatproxy.StartResponsesProxy(baseURL, resolvedUpstreamKey, quietCompatStderr, proxyMode)
 		if err != nil {
 			return err
 		}
@@ -95,15 +96,15 @@ func resolveOpenAIAPIKey(profileKey string) (key string, source string) {
 	return "", "none"
 }
 
-func codexProxyModeForAPIType(apiType string) (responsesProxyMode, bool) {
+func codexProxyModeForAPIType(apiType string) (compatproxy.ResponsesProxyMode, bool) {
 	if config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeResponses) {
 		return "", false
 	}
 	switch apiType {
 	case config.OpenAIAPITypeAuto:
-		return responsesProxyModePreferResponses, true
+		return compatproxy.ResponsesProxyModePreferResponses, true
 	default:
-		return responsesProxyModeChatCompletionsOnly, true
+		return compatproxy.ResponsesProxyModeChatCompletionsOnly, true
 	}
 }
 

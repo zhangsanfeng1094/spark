@@ -16,6 +16,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	cfg.Profiles["work"] = &Profile{
 		OpenAIBaseURL: "https://example.com/v1",
 		OpenAIAPIKey:  "token",
+		ModelListURL:  "https://example.com/custom/models",
 		Models:        []string{"gpt-4.1-mini", "gpt-4.1"},
 		DefaultModel:  "gpt-4.1",
 	}
@@ -43,6 +44,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got.Profiles["work"].DefaultModel != "gpt-4.1" {
 		t.Fatalf("work profile default model mismatch: %q", got.Profiles["work"].DefaultModel)
+	}
+	if got.Profiles["work"].ModelListURL != "https://example.com/custom/models" {
+		t.Fatalf("work profile model list url mismatch: %q", got.Profiles["work"].ModelListURL)
 	}
 	if got.Integration("codex").Profile != "work" {
 		t.Fatalf("integration profile mismatch, got %q", got.Integration("codex").Profile)
@@ -159,6 +163,11 @@ func TestNormalizeOpenAIAPIType(t *testing.T) {
 		{in: "chat_completions", want: OpenAIAPITypeChatCompletions},
 		{in: "chat/completions", want: OpenAIAPITypeChatCompletions},
 		{in: "openai-completions", want: OpenAIAPITypeChatCompletions},
+		{in: "gemini_generate_content", want: OpenAIAPITypeGeminiGenerateContent},
+		{in: "generateContent", want: OpenAIAPITypeGeminiGenerateContent},
+		{in: "anthropic", want: OpenAIAPITypeAnthropicMessages},
+		{in: "anthropic_messages", want: OpenAIAPITypeAnthropicMessages},
+		{in: "messages", want: OpenAIAPITypeAnthropicMessages},
 		{in: "unknown", want: ""},
 	}
 	for _, tt := range tests {
@@ -176,10 +185,14 @@ func TestParseOpenAIAPITypes(t *testing.T) {
 		{in: "", want: nil},
 		{in: "responses", want: []string{OpenAIAPITypeResponses}},
 		{in: "chat_completions", want: []string{OpenAIAPITypeChatCompletions}},
+		{in: "gemini_generate_content", want: []string{OpenAIAPITypeGeminiGenerateContent}},
 		{in: "auto", want: []string{OpenAIAPITypeAuto}},
 		{in: "responses,chat_completions", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
+		{in: "responses,gemini_generate_content", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeGeminiGenerateContent}},
 		{in: "chat_completions,responses", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
 		{in: "responses|chat/completions", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
+		{in: "anthropic", want: []string{OpenAIAPITypeAnthropicMessages}},
+		{in: "anthropic_messages,chat/completions", want: []string{OpenAIAPITypeChatCompletions, OpenAIAPITypeAnthropicMessages}},
 		{in: "responses,unknown", want: []string{OpenAIAPITypeResponses}},
 		{in: "unknown", want: nil},
 	}
@@ -198,7 +211,9 @@ func TestCanonicalizeOpenAIAPITypes(t *testing.T) {
 		{in: "", want: ""},
 		{in: "responses", want: OpenAIAPITypeResponses},
 		{in: "chat_completions,responses", want: "responses,chat_completions"},
+		{in: "gemini_generate_content,responses", want: "responses,gemini_generate_content"},
 		{in: "responses|chat_completions", want: "responses,chat_completions"},
+		{in: "anthropic,chat_completions", want: "chat_completions,anthropic_messages"},
 		{in: "auto,responses", want: OpenAIAPITypeAuto},
 	}
 	for _, tt := range tests {
@@ -217,6 +232,9 @@ func TestSupportsOpenAIAPIType(t *testing.T) {
 	}
 	if SupportsOpenAIAPIType("responses", OpenAIAPITypeChatCompletions) {
 		t.Fatalf("did not expect chat support")
+	}
+	if !SupportsOpenAIAPIType("responses,gemini_generate_content", OpenAIAPITypeGeminiGenerateContent) {
+		t.Fatalf("expected gemini support")
 	}
 }
 

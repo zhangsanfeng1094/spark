@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+const testSkillFrontmatter = `---
+name: brainstorming
+description: Explore intent first.
+---
+
+# Brainstorming
+`
+
 func TestInstallLocalSkillCopiesContentAndUpdatesRegistry(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -14,10 +22,7 @@ func TestInstallLocalSkillCopiesContentAndUpdatesRegistry(t *testing.T) {
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("# Brainstorming\n\nExplore intent first.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "skill.json"), []byte(`{"name":"brainstorming","description":"Explore intent first."}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte(testSkillFrontmatter), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,7 +73,7 @@ func TestSetEnabledUpdatesRegistryWithoutRemovingFiles(t *testing.T) {
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("# Brainstorming\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte(testSkillFrontmatter), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,9 +101,15 @@ func TestSetEnabledUpdatesRegistryWithoutRemovingFiles(t *testing.T) {
 	}
 }
 
-func TestLoadManifestFallsBackToSkillMarkdownTitle(t *testing.T) {
+func TestLoadManifestReadsFrontmatter(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# Brainstorming Ideas\n\nbody\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(`---
+name: brainstorming-ideas
+description: Explore adjacent directions.
+---
+
+# Brainstorming Ideas
+`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -106,8 +117,11 @@ func TestLoadManifestFallsBackToSkillMarkdownTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadManifest failed: %v", err)
 	}
-	if manifest.Name != "brainstorming ideas" {
+	if manifest.Name != "brainstorming-ideas" {
 		t.Fatalf("Name=%q", manifest.Name)
+	}
+	if manifest.Description != "Explore adjacent directions." {
+		t.Fatalf("Description=%q", manifest.Description)
 	}
 }
 
@@ -118,10 +132,13 @@ func TestInstallFromGitFallsBackToRepoRootWhenSubdirMissingSkillMarkdown(t *test
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repoDir, "SKILL.md"), []byte("# Root Skill\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repoDir, "skill.json"), []byte(`{"name":"root-skill","description":"root package"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoDir, "SKILL.md"), []byte(`---
+name: root-skill
+description: root package
+---
+
+# Root Skill
+`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, repoDir, "init")

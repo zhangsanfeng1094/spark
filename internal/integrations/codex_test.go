@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"spark/internal/config"
+	"spark/internal/integrations/compatproxy"
 )
 
 func TestCodexArgs(t *testing.T) {
@@ -65,14 +66,14 @@ func TestCodexProxyModeForAPIType(t *testing.T) {
 	tests := []struct {
 		name         string
 		apiType      string
-		wantMode     responsesProxyMode
+		wantMode     compatproxy.ResponsesProxyMode
 		wantUseProxy bool
 	}{
 		{name: "responses no proxy", apiType: config.OpenAIAPITypeResponses, wantUseProxy: false},
 		{name: "responses+chat no proxy", apiType: "responses,chat_completions", wantUseProxy: false},
-		{name: "auto prefer responses", apiType: config.OpenAIAPITypeAuto, wantMode: responsesProxyModePreferResponses, wantUseProxy: true},
-		{name: "chat only compat", apiType: config.OpenAIAPITypeChatCompletions, wantMode: responsesProxyModeChatCompletionsOnly, wantUseProxy: true},
-		{name: "unknown compat", apiType: "unknown", wantMode: responsesProxyModeChatCompletionsOnly, wantUseProxy: true},
+		{name: "auto prefer responses", apiType: config.OpenAIAPITypeAuto, wantMode: compatproxy.ResponsesProxyModePreferResponses, wantUseProxy: true},
+		{name: "chat only compat", apiType: config.OpenAIAPITypeChatCompletions, wantMode: compatproxy.ResponsesProxyModeChatCompletionsOnly, wantUseProxy: true},
+		{name: "unknown compat", apiType: "unknown", wantMode: compatproxy.ResponsesProxyModeChatCompletionsOnly, wantUseProxy: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

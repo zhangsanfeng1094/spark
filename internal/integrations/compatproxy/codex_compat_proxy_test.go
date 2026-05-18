@@ -1,0 +1,825 @@
+package compatproxy
+
+import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/klauspost/compress/zstd"
+
+	codexadapter "spark/internal/compat/client/codex"
+	"spark/internal/compat/gateway"
+	"spark/internal/integrations/proxyutil"
+)
+
+func TestResponsesRequestTranslator_StringInput(t *testing.T) {
+	req := map[string]any{
+		"model":             "glm-5:cloud",
+		"input":             "hello",
+		"stream":            true,
+		"max_output_tokens": float64(32),
+	}
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(req)
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+
+	if out["model"] != "glm-5:cloud" {
+		t.Fatalf("model mismatch: %v", out["model"])
+	}
+	if out["stream"] != true {
+		t.Fatalf("stream mismatch: %v", out["stream"])
+	}
+	streamOptions, ok := out["stream_options"].(map[string]any)
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage mismatch: %#v", out["stream_options"])
+	}
+	if out["max_tokens"] != 32 {
+		t.Fatalf("max_tokens mismatch: %v", out["max_tokens"])
+	}
+	msgs, ok := out["messages"].([]map[string]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("messages mismatch: %#v", out["messages"])
+	}
+	if msgs[0]["content"] != "hello" {
+		t.Fatalf("message content mismatch: %#v", msgs[0])
+	}
+}
+
+func TestResponsesRequestTranslator_ToolsMappedAndFiltered(t *testing.T) {
+	req := map[string]any{
+		"model": "GLM-4.7",
+		"input": "hello",
+		"tools": []any{
+			map[string]any{
+				"type":        "function",
+				"name":        "sum",
+				"description": "add numbers",
+				"parameters": map[string]any{
+					"type": "object",
+				},
+			},
+			map[string]any{
+				"type": "web_search_preview",
+			},
+		},
+		"tool_choice": map[string]any{
+			"type": "function",
+			"name": "sum",
+		},
+	}
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(req)
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+
+	tools, ok := out["tools"].([]map[string]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools mismatch: %#v", out["tools"])
+	}
+	if tools[0]["type"] != "function" {
+		t.Fatalf("tool type mismatch: %#v", tools[0])
+	}
+	fn, ok := tools[0]["function"].(map[string]any)
+	if !ok || fn["name"] != "sum" {
+		t.Fatalf("tool function mismatch: %#v", tools[0])
+	}
+
+	tc, ok := out["tool_choice"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_choice mismatch: %#v", out["tool_choice"])
+	}
+	tcFn, ok := tc["function"].(map[string]any)
+	if !ok || tcFn["name"] != "sum" {
+		t.Fatalf("tool_choice function mismatch: %#v", tc)
+	}
+}
+
+func TestResponsesRequestTranslator_ArrayInput(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"role": "user",
+			"content": []any{
+				map[string]any{"type": "input_text", "text": "first"},
+				map[string]any{"type": "input_text", "text": "second"},
+			},
+		},
+	}
+
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0]["role"] != "user" {
+		t.Fatalf("role mismatch: %#v", msgs[0])
+	}
+	if msgs[0]["content"] != "first\nsecond" {
+		t.Fatalf("content mismatch: %#v", msgs[0])
+	}
+}
+
+func TestResponsesRequestTranslator_DeveloperRoleMappedToSystem(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"role":    "developer",
+			"content": "be concise",
+		},
+	}
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0]["role"] != "system" {
+		t.Fatalf("expected system role, got %#v", msgs[0]["role"])
+	}
+}
+
+func TestResponsesRequestTranslator_FunctionCallOutputMapped(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"type":      "function_call",
+			"call_id":   "call_123",
+			"name":      "sum",
+			"arguments": `{"a":1,"b":2}`,
+		},
+		map[string]any{
+			"type":    "function_call_output",
+			"call_id": "call_123",
+			"output":  `{"result":3}`,
+		},
+	}
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d (%#v)", len(msgs), msgs)
+	}
+	if msgs[0]["role"] != "assistant" {
+		t.Fatalf("expected synthetic assistant tool_call message, got %#v", msgs[0])
+	}
+	if msgs[1]["role"] != "tool" || msgs[1]["tool_call_id"] != "call_123" {
+		t.Fatalf("expected tool message with call_id, got %#v", msgs[1])
+	}
+}
+
+func TestResponsesRequestTranslator_ReasoningOutputMappedToSyntheticToolCall(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"type": "reasoning",
+			"summary": []any{
+				map[string]any{"type": "summary_text", "text": "think first"},
+			},
+		},
+		map[string]any{
+			"type":      "function_call",
+			"call_id":   "call_123",
+			"name":      "sum",
+			"arguments": `{"a":1,"b":2}`,
+		},
+		map[string]any{
+			"type":    "function_call_output",
+			"call_id": "call_123",
+			"output":  `{"result":3}`,
+		},
+	}
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d (%#v)", len(msgs), msgs)
+	}
+	if msgs[0]["role"] != "assistant" {
+		t.Fatalf("expected synthetic assistant tool_call message, got %#v", msgs[0])
+	}
+	if msgs[0]["reasoning_content"] != "think first" {
+		t.Fatalf("expected reasoning_content on synthetic assistant, got %#v", msgs[0])
+	}
+}
+
+func TestResponsesCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testing.T) {
+	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://gateway.example/v1"}
+	chatReq := map[string]any{
+		"model": "mimo-v2.5-pro",
+		"messages": []map[string]any{
+			{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []map[string]any{
+					{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "sum",
+							"arguments": `{"a":1}`,
+						},
+					},
+				},
+			},
+		},
+	}
+	reasoning.ApplyToChatRequest(chatReq)
+	msgs := chatReq["messages"].([]map[string]any)
+	got, ok := msgs[0]["reasoning_content"]
+	if !ok || got != "" {
+		t.Fatalf("expected empty reasoning_content for MiMo cache miss, got %#v", msgs[0])
+	}
+}
+
+func TestResponsesCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *testing.T) {
+	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://api.openai.com/v1"}
+	chatReq := map[string]any{
+		"model": "gpt-4.1",
+		"messages": []map[string]any{
+			{
+				"role":              "assistant",
+				"content":           "",
+				"reasoning_content": "think first",
+				"tool_calls": []map[string]any{
+					{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "sum",
+							"arguments": `{"a":1}`,
+						},
+					},
+				},
+			},
+		},
+	}
+	reasoning.ApplyToChatRequest(chatReq)
+	msgs := chatReq["messages"].([]map[string]any)
+	if _, ok := msgs[0]["reasoning_content"]; ok {
+		t.Fatalf("did not expect reasoning_content for generic gateway, got %#v", msgs[0])
+	}
+}
+
+func TestResponsesRequestTranslator_ToolRolePreservesToolCallID(t *testing.T) {
+	input := []any{
+		map[string]any{
+			"role":         "tool",
+			"tool_call_id": "call_456",
+			"content":      "ok",
+		},
+	}
+	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	if err != nil {
+		t.Fatalf("translate failed: %v", err)
+	}
+	msgs := out["messages"].([]map[string]any)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d (%#v)", len(msgs), msgs)
+	}
+	if msgs[0]["role"] != "assistant" {
+		t.Fatalf("expected synthetic assistant before tool, got %#v", msgs[0])
+	}
+	if msgs[1]["role"] != "tool" || msgs[1]["tool_call_id"] != "call_456" {
+		t.Fatalf("expected tool_call_id passthrough, got %#v", msgs[1])
+	}
+}
+
+func TestShouldRetryWithMinimalChatReq(t *testing.T) {
+	if !shouldRetryWithMinimalChatReq(400, []byte("invalid json")) {
+		t.Fatal("expected retry for plain invalid json")
+	}
+	body, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": "invalid json",
+		},
+	})
+	if !shouldRetryWithMinimalChatReq(400, body) {
+		t.Fatal("expected retry for json invalid json")
+	}
+	if shouldRetryWithMinimalChatReq(401, body) {
+		t.Fatal("unexpected retry on non-400 status")
+	}
+}
+
+func TestShouldFallbackFromResponses(t *testing.T) {
+	if !gateway.ShouldFallbackFromResponses(http.StatusNotFound, []byte(`{"error":"not found"}`)) {
+		t.Fatal("expected fallback on 404")
+	}
+	if !gateway.ShouldFallbackFromResponses(http.StatusMethodNotAllowed, []byte(`{"error":"method not allowed"}`)) {
+		t.Fatal("expected fallback on 405")
+	}
+	if !gateway.ShouldFallbackFromResponses(http.StatusBadRequest, []byte(`{"error":{"message":"unknown parameter: input"}}`)) {
+		t.Fatal("expected fallback for responses-only field rejection")
+	}
+	if gateway.ShouldFallbackFromResponses(http.StatusUnauthorized, []byte(`{"error":"unauthorized"}`)) {
+		t.Fatal("unexpected fallback on auth error")
+	}
+	if gateway.ShouldFallbackFromResponses(http.StatusBadRequest, []byte(`{"error":{"message":"invalid api key"}}`)) {
+		t.Fatal("unexpected fallback on generic bad request")
+	}
+}
+
+func TestUltraMinimalChatCompletionsRequest(t *testing.T) {
+	chatReq := map[string]any{
+		"model": "GLM-4.7",
+		"messages": []map[string]any{
+			{"role": "system", "content": "You are helpful"},
+			{"role": "user", "content": "你好"},
+		},
+		"stream": true,
+	}
+	out := ultraMinimalChatCompletionsRequest(chatReq)
+	if out["model"] != "GLM-4.7" {
+		t.Fatalf("model mismatch: %v", out["model"])
+	}
+	msgs, ok := out["messages"].([]map[string]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("messages mismatch: %#v", out["messages"])
+	}
+	if msgs[0]["role"] != "user" || msgs[0]["content"] != "你好" {
+		t.Fatalf("unexpected minimal message: %#v", msgs[0])
+	}
+}
+
+func TestDecodeResponsesRequest_PlainJSON(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"GLM-4.7","input":"hi"}`))
+	req, raw, err := proxyutil.DecodeResponsesRequest(r)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if !strings.Contains(raw, `"model":"GLM-4.7"`) {
+		t.Fatalf("raw mismatch: %q", raw)
+	}
+	if req["model"] != "GLM-4.7" {
+		t.Fatalf("model mismatch: %#v", req)
+	}
+}
+
+func TestForwardNonStream_MapsToolCallsToFunctionCallOutputItems(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_1","model":"GLM-4.7","choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"sum","arguments":"{\"a\":1}"}}]}}]}`,
+		)),
+	}
+	rec := &responseRecorder{header: make(http.Header)}
+	p := &ResponsesProxy{}
+	p.forwardNonStream(rec, upResp)
+
+	if rec.status != 0 && rec.status != 200 {
+		t.Fatalf("unexpected status: %d", rec.status)
+	}
+	body := rec.body.String()
+	if !strings.Contains(body, `"type":"function_call"`) {
+		t.Fatalf("expected function_call output item, got %q", body)
+	}
+	if !strings.Contains(body, `"name":"sum"`) {
+		t.Fatalf("expected tool name in output, got %q", body)
+	}
+}
+
+func TestForwardNonStream_MapsUsageDetails(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_1","model":"GLM-4.7","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"prompt_tokens_details":{"cached_tokens":3},"completion_tokens_details":{"reasoning_tokens":2}}}`,
+		)),
+	}
+	rec := &responseRecorder{header: make(http.Header)}
+	p := &ResponsesProxy{}
+	p.forwardNonStream(rec, upResp)
+
+	body := rec.body.String()
+	if !strings.Contains(body, `"usage"`) {
+		t.Fatalf("expected usage in non-stream response, got %q", body)
+	}
+	if !strings.Contains(body, `"input_tokens":10`) || !strings.Contains(body, `"output_tokens":4`) || !strings.Contains(body, `"total_tokens":14`) {
+		t.Fatalf("expected mapped usage tokens, got %q", body)
+	}
+	if !strings.Contains(body, `"input_tokens_details":{"cached_tokens":3}`) {
+		t.Fatalf("expected cached usage details, got %q", body)
+	}
+	if !strings.Contains(body, `"output_tokens_details":{"reasoning_tokens":2}`) {
+		t.Fatalf("expected reasoning usage details, got %q", body)
+	}
+}
+
+func TestForwardNonStream_MapsReasoningContentSeparately(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_1","model":"deepseek-reasoner","choices":[{"message":{"reasoning_content":"think first","content":"final answer"}}]}`,
+		)),
+	}
+	rec := &responseRecorder{header: make(http.Header)}
+	p := &ResponsesProxy{}
+	p.forwardNonStream(rec, upResp)
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(rec.body.String()), &got); err != nil {
+		t.Fatalf("decode response: %v body=%q", err, rec.body.String())
+	}
+	if got["output_text"] != "final answer" {
+		t.Fatalf("expected output_text to contain only final answer, got %#v", got["output_text"])
+	}
+	output, ok := got["output"].([]any)
+	if !ok || len(output) != 2 {
+		t.Fatalf("expected reasoning and message output items, got %#v", got["output"])
+	}
+	reasoning := mapValue(output[0])
+	if reasoning["type"] != "reasoning" {
+		t.Fatalf("expected first output item to be reasoning, got %#v", reasoning)
+	}
+	summary, ok := reasoning["summary"].([]any)
+	if !ok || len(summary) != 1 || mapValue(summary[0])["text"] != "think first" {
+		t.Fatalf("expected reasoning summary text, got %#v", reasoning["summary"])
+	}
+	message := mapValue(output[1])
+	if message["type"] != "message" {
+		t.Fatalf("expected second output item to be message, got %#v", message)
+	}
+}
+
+func TestDecodeResponsesRequest_GzipJSON(t *testing.T) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, _ = zw.Write([]byte(`{"model":"GLM-4.7","input":"hi"}`))
+	_ = zw.Close()
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf.Bytes()))
+	r.Header.Set("Content-Encoding", "gzip")
+	req, raw, err := proxyutil.DecodeResponsesRequest(r)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if !strings.Contains(raw, `"model":"GLM-4.7"`) {
+		t.Fatalf("raw mismatch: %q", raw)
+	}
+	if req["model"] != "GLM-4.7" {
+		t.Fatalf("model mismatch: %#v", req)
+	}
+}
+
+func TestDecodeResponsesRequest_InvalidBody(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`not-json`))
+	_, raw, err := proxyutil.DecodeResponsesRequest(r)
+	if err == nil {
+		t.Fatal("expected decode error")
+	}
+	if raw == "" {
+		t.Fatal("expected raw body in error case")
+	}
+}
+
+func TestDecodeResponsesRequest_ZstdJSON(t *testing.T) {
+	var buf bytes.Buffer
+	zw, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatalf("zstd writer failed: %v", err)
+	}
+	_, _ = zw.Write([]byte(`{"model":"GLM-4.7","input":"hi"}`))
+	zw.Close()
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf.Bytes()))
+	r.Header.Set("Content-Encoding", "zstd")
+	req, raw, err := proxyutil.DecodeResponsesRequest(r)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if !strings.Contains(raw, `"model":"GLM-4.7"`) {
+		t.Fatalf("raw mismatch: %q", raw)
+	}
+	if req["model"] != "GLM-4.7" {
+		t.Fatalf("model mismatch: %#v", req)
+	}
+}
+
+func TestWriteUpstreamErrorAsJSON_WrapsPlainText(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 400,
+		Body:       io.NopCloser(strings.NewReader("invalid json")),
+	}
+	rec := &responseRecorder{header: make(http.Header)}
+	writeUpstreamErrorAsJSON(rec, upResp)
+
+	if rec.status != 400 {
+		t.Fatalf("status mismatch: %d", rec.status)
+	}
+	if !strings.Contains(rec.body.String(), `"error"`) {
+		t.Fatalf("expected json error body, got %q", rec.body.String())
+	}
+	if !strings.Contains(rec.body.String(), "invalid json") {
+		t.Fatalf("expected original error message, got %q", rec.body.String())
+	}
+}
+
+func TestNormalizeMessageContent_MapText(t *testing.T) {
+	raw := map[string]any{
+		"type": "text",
+		"text": "你好",
+	}
+	got := gateway.NormalizeMessageContent(raw)
+	if got != "你好" {
+		t.Fatalf("expected map text content, got %q", got)
+	}
+}
+
+func TestExtractChatText_FallbackChoiceText(t *testing.T) {
+	resp := map[string]any{
+		"choices": []any{
+			map[string]any{
+				"text": "hello",
+			},
+		},
+	}
+	got := gateway.ExtractChatText(resp)
+	if got != "hello" {
+		t.Fatalf("expected fallback choice text, got %q", got)
+	}
+}
+
+func TestExtractChatDelta_DeltaTextString(t *testing.T) {
+	chunk := map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta": map[string]any{
+					"text": "你好",
+				},
+			},
+		},
+	}
+	got := gateway.ExtractChatDelta(chunk)
+	if got != "你好" {
+		t.Fatalf("expected delta text, got %q", got)
+	}
+}
+
+func TestExtractChatReasoningDelta_ReasoningContent(t *testing.T) {
+	chunk := map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta": map[string]any{
+					"reasoning_content": "先想一下",
+				},
+			},
+		},
+	}
+	got := gateway.ExtractChatReasoningDelta(chunk)
+	if got != "先想一下" {
+		t.Fatalf("expected reasoning_content delta, got %q", got)
+	}
+}
+
+func TestForwardStream_FallbackForSingleJSONLine(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_1","model":"GLM-4.7","choices":[{"message":{"content":"你好"}}]}` + "\n",
+		)),
+	}
+	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
+	p := &ResponsesProxy{}
+	p.forwardStream(rec, upResp)
+
+	body := rec.body.String()
+	if !strings.Contains(body, `"response.output_text.done"`) {
+		t.Fatalf("expected done event, got %q", body)
+	}
+	if !strings.Contains(body, "你好") {
+		t.Fatalf("expected output text in stream response, got %q", body)
+	}
+}
+
+func TestForwardStream_EmitsFunctionCallEventsFromToolCallDeltas(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"id":"chatcmpl_1","model":"GLM-4.7","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"sum","arguments":"{\"a\":"}}]}}]}`,
+			`data: {"id":"chatcmpl_1","model":"GLM-4.7","choices":[{"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"1}"}}]}}]}`,
+			`data: [DONE]`,
+			``,
+		}, "\n"))),
+	}
+	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
+	p := &ResponsesProxy{}
+	p.forwardStream(rec, upResp)
+
+	body := rec.body.String()
+	if !strings.Contains(body, `"response.function_call_arguments.delta"`) {
+		t.Fatalf("expected function_call argument delta event, got %q", body)
+	}
+	if !strings.Contains(body, `"type":"function_call"`) {
+		t.Fatalf("expected function_call output item in stream, got %q", body)
+	}
+	if !strings.Contains(body, `"call_id":"call_1"`) {
+		t.Fatalf("expected call_id in stream output, got %q", body)
+	}
+}
+
+func TestForwardStream_ReasoningContentDoesNotPolluteOutputText(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"id":"chatcmpl_1","model":"deepseek-reasoner","choices":[{"delta":{"reasoning_content":"think first"}}]}`,
+			`data: {"id":"chatcmpl_1","model":"deepseek-reasoner","choices":[{"delta":{"content":"final answer"}}]}`,
+			`data: [DONE]`,
+			``,
+		}, "\n"))),
+	}
+	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
+	p := &ResponsesProxy{}
+	p.forwardStream(rec, upResp)
+
+	events := decodeSSEJSONEvents(t, rec.body.String())
+	var outputTextDeltas []string
+	var completed map[string]any
+	for _, event := range events {
+		switch stringValue(event["type"]) {
+		case "response.output_text.delta":
+			outputTextDeltas = append(outputTextDeltas, stringValue(event["delta"]))
+		case "response.completed":
+			completed = mapValue(event["response"])
+		}
+	}
+	if got := strings.Join(outputTextDeltas, ""); got != "final answer" {
+		t.Fatalf("expected output text deltas to exclude reasoning, got %q body=%q", got, rec.body.String())
+	}
+	if completed == nil {
+		t.Fatalf("expected response.completed event, got %q", rec.body.String())
+	}
+	if completed["output_text"] != "final answer" {
+		t.Fatalf("expected completed output_text to contain only final answer, got %#v", completed["output_text"])
+	}
+	output, ok := completed["output"].([]any)
+	if !ok || len(output) != 2 {
+		t.Fatalf("expected reasoning and message output items, got %#v", completed["output"])
+	}
+	reasoning := mapValue(output[0])
+	if reasoning["type"] != "reasoning" {
+		t.Fatalf("expected first output item to be reasoning, got %#v", reasoning)
+	}
+	summary, ok := reasoning["summary"].([]any)
+	if !ok || len(summary) != 1 || mapValue(summary[0])["text"] != "think first" {
+		t.Fatalf("expected reasoning summary text, got %#v", reasoning["summary"])
+	}
+}
+
+func TestForwardStream_ResponseCompletedIncludesUsageDetails(t *testing.T) {
+	upResp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"id":"chatcmpl_1","model":"GLM-4.7","choices":[{"delta":{"content":"he"}}]}`,
+			`data: {"id":"chatcmpl_1","model":"GLM-4.7","choices":[{"delta":{"content":"llo"}}]}`,
+			`data: {"id":"chatcmpl_1","model":"GLM-4.7","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":2}}}`,
+			`data: [DONE]`,
+			``,
+		}, "\n"))),
+	}
+	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
+	p := &ResponsesProxy{}
+	p.forwardStream(rec, upResp)
+
+	body := rec.body.String()
+	if !strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("expected response.completed event, got %q", body)
+	}
+	if !strings.Contains(body, `"input_tokens":12`) {
+		t.Fatalf("expected usage tokens in completed event, got %q", body)
+	}
+	if !strings.Contains(body, `"input_tokens_details":{"cached_tokens":4}`) {
+		t.Fatalf("expected cached usage details in completed event, got %q", body)
+	}
+	if !strings.Contains(body, `"output_tokens_details":{"reasoning_tokens":2}`) {
+		t.Fatalf("expected reasoning usage details in completed event, got %q", body)
+	}
+}
+
+func TestResponsesUsageFromChatPayload_MapsDetails(t *testing.T) {
+	payload := map[string]any{
+		"usage": map[string]any{
+			"prompt_tokens":     float64(10),
+			"completion_tokens": float64(4),
+			"total_tokens":      float64(14),
+			"prompt_tokens_details": map[string]any{
+				"cached_tokens": float64(3),
+			},
+			"completion_tokens_details": map[string]any{
+				"reasoning_tokens": float64(2),
+			},
+		},
+	}
+	got, ok := codexadapter.ResponsesUsageFromChatPayload(payload)
+	if !ok {
+		t.Fatal("expected usage mapping")
+	}
+	if intFromAny(got["input_tokens"]) != 10 || intFromAny(got["output_tokens"]) != 4 || intFromAny(got["total_tokens"]) != 14 {
+		t.Fatalf("unexpected token mapping: %#v", got)
+	}
+	if intFromAny(mapValue(got["input_tokens_details"])["cached_tokens"]) != 3 {
+		t.Fatalf("expected cached_tokens in input_tokens_details, got %#v", got["input_tokens_details"])
+	}
+	if intFromAny(got["cached_input_tokens"]) != 3 {
+		t.Fatalf("expected cached_input_tokens=3, got %#v", got["cached_input_tokens"])
+	}
+	if intFromAny(mapValue(got["output_tokens_details"])["reasoning_tokens"]) != 2 {
+		t.Fatalf("expected reasoning_tokens in output_tokens_details, got %#v", got["output_tokens_details"])
+	}
+	if intFromAny(got["reasoning_output_tokens"]) != 2 {
+		t.Fatalf("expected reasoning_output_tokens=2, got %#v", got["reasoning_output_tokens"])
+	}
+}
+
+func TestMergeResponsesUsage_PrefersIncomingNonZero(t *testing.T) {
+	base := map[string]any{
+		"input_tokens":  float64(10),
+		"output_tokens": float64(0),
+		"input_tokens_details": map[string]any{
+			"cached_tokens": float64(2),
+		},
+	}
+	incoming := map[string]any{
+		"output_tokens": float64(5),
+		"total_tokens":  float64(15),
+		"output_tokens_details": map[string]any{
+			"reasoning_tokens": float64(1),
+		},
+	}
+	got := codexadapter.MergeResponsesUsage(base, incoming)
+	if intFromAny(got["input_tokens"]) != 10 {
+		t.Fatalf("expected input_tokens=10, got %#v", got)
+	}
+	if intFromAny(got["output_tokens"]) != 5 {
+		t.Fatalf("expected output_tokens=5, got %#v", got)
+	}
+	if intFromAny(got["total_tokens"]) != 15 {
+		t.Fatalf("expected total_tokens=15, got %#v", got)
+	}
+	if intFromAny(mapValue(got["input_tokens_details"])["cached_tokens"]) != 2 {
+		t.Fatalf("expected cached_tokens=2, got %#v", got)
+	}
+	if intFromAny(got["cached_input_tokens"]) != 2 {
+		t.Fatalf("expected cached_input_tokens=2, got %#v", got)
+	}
+	if intFromAny(mapValue(got["output_tokens_details"])["reasoning_tokens"]) != 1 {
+		t.Fatalf("expected reasoning_tokens=1, got %#v", got)
+	}
+	if intFromAny(got["reasoning_output_tokens"]) != 1 {
+		t.Fatalf("expected reasoning_output_tokens=1, got %#v", got)
+	}
+}
+
+type responseRecorder struct {
+	header http.Header
+	body   strings.Builder
+	status int
+}
+
+type flushResponseRecorder struct {
+	responseRecorder
+}
+
+func (r *responseRecorder) Header() http.Header {
+	return r.header
+}
+
+func (r *responseRecorder) Write(data []byte) (int, error) {
+	return r.body.Write(data)
+}
+
+func (r *responseRecorder) WriteHeader(statusCode int) {
+	r.status = statusCode
+}
+
+func (r *flushResponseRecorder) Flush() {}
+
+func decodeSSEJSONEvents(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	events := make([]map[string]any, 0)
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatalf("decode SSE event %q: %v", data, err)
+		}
+		events = append(events, event)
+	}
+	return events
+}

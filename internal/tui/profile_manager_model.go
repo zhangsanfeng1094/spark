@@ -186,6 +186,7 @@ const (
 	pmFieldOpenAIBaseURL
 	pmFieldOpenAIAPIKey
 	pmFieldOpenAIAPIType
+	pmFieldModelListURL
 	pmFieldModelsCSV
 	pmFieldDefaultModel
 )
@@ -196,6 +197,7 @@ type pmField struct {
 	cursor   int
 	masked   bool
 	readOnly bool
+	required bool
 }
 
 type pmProviderOption struct {
@@ -206,6 +208,7 @@ type pmProviderOption struct {
 const (
 	pmModalKindNone = iota
 	pmModalKindAddProfile
+	pmModalKindProviderType
 	pmModalKindOpenAIAPIType
 	pmModalKindModels
 )
@@ -295,11 +298,15 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 		cfg: cfg,
 		providerOptions: []pmProviderOption{
 			{name: "OpenAI", kind: "openai"},
+			{name: "Anthropic", kind: "anthropic"},
+			{name: "Gemini", kind: "gemini"},
 		},
 		apiTypeOptions: []string{
 			config.OpenAIAPITypeAuto,
 			config.OpenAIAPITypeResponses,
 			config.OpenAIAPITypeChatCompletions,
+			config.OpenAIAPITypeGeminiGenerateContent,
+			config.OpenAIAPITypeAnthropicMessages,
 		},
 		apiTypeSelected: map[string]bool{},
 		focusArea:       pmFocusProfiles,

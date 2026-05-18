@@ -269,11 +269,7 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 			if i < len(m.fieldStartRelY) && fieldY >= m.fieldStartRelY[i] && fieldY <= m.fieldEndRelY[i] {
 				m.focusArea = pmFocusFields
 				m.focusField = i
-				if i == pmFieldOpenAIAPIType {
-					m.openAPITypeModal()
-				} else if i == pmFieldModelsCSV {
-					m.openModelsModal()
-				}
+				m.openFieldModalIfNeeded()
 				return nil
 			}
 		}
@@ -348,6 +344,11 @@ func (m *pmModel) handleModalMouse(msg tea.MouseMsg) {
 			m.modalCursor = idx
 			m.createProfileFromModal()
 		}
+	case pmModalKindProviderType:
+		if idx >= 0 && idx < len(m.providerOptions) {
+			m.modalCursor = idx
+			m.confirmProviderTypeSelection()
+		}
 	case pmModalKindOpenAIAPIType:
 		if idx >= 0 && idx < len(m.apiTypeOptions) {
 			m.modalCursor = idx
@@ -381,6 +382,10 @@ func (m *pmModel) openFieldModalIfNeeded() bool {
 	if m.focusArea != pmFocusFields {
 		return false
 	}
+	if m.focusField == pmFieldProviderType {
+		m.openProviderTypeModal()
+		return true
+	}
 	if m.focusField == pmFieldOpenAIAPIType {
 		m.openAPITypeModal()
 		return true
@@ -396,12 +401,14 @@ func (m *pmModel) handleFieldShortcut(msg tea.KeyMsg) bool {
 	if m.focusArea != pmFocusFields {
 		return false
 	}
-	if m.focusField != pmFieldOpenAIAPIType && m.focusField != pmFieldModelsCSV {
+	if m.focusField != pmFieldProviderType && m.focusField != pmFieldOpenAIAPIType && m.focusField != pmFieldModelsCSV {
 		return false
 	}
 	switch msg.String() {
 	case " ", "space":
-		if m.focusField == pmFieldOpenAIAPIType {
+		if m.focusField == pmFieldProviderType {
+			m.openProviderTypeModal()
+		} else if m.focusField == pmFieldOpenAIAPIType {
 			m.openAPITypeModal()
 		} else {
 			m.openModelsModal()
@@ -613,7 +620,7 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		case "tab", "shift+tab":
 			m.modelSearchFocused = !m.modelSearchFocused
 			return nil
-		case "f5":
+		case "ctrl+f":
 			return m.fetchModelsFromAPI()
 		case "f6":
 			m.startModelAdd()
@@ -623,9 +630,6 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case "f8":
 			m.deleteModelAtCursor()
-			return nil
-		case "f9":
-			m.setDefaultModelAtCursor()
 			return nil
 		}
 		if m.modelSearchFocused {
@@ -737,9 +741,14 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		switch m.modalKind {
 		case pmModalKindAddProfile:
 			m.createProfileFromModal()
+		case pmModalKindProviderType:
+			m.confirmProviderTypeSelection()
 		case pmModalKindOpenAIAPIType:
 			m.confirmAPITypeSelection()
 		case pmModalKindModels:
+			if m.modalCursor >= 0 && m.modalCursor < len(m.modelItems) {
+				m.defaultModel = m.modelItems[m.modalCursor]
+			}
 			m.confirmModelsSelection()
 		}
 		return nil

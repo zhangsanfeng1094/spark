@@ -180,12 +180,15 @@ func TestSkillListCommandPrintsInstalledSkills(t *testing.T) {
 
 	registry := skills.DefaultRegistry()
 	registry.Skills["brainstorming"] = &skills.SkillEntry{
-		Name:       "brainstorming",
-		SourceType: skills.SourceTypeLocal,
-		Source:     "/tmp/brainstorming",
-		Enabled:    true,
-		Managed:    true,
-		Targets:    []string{"codex", "claude"},
+		Name:                "brainstorming",
+		Scope:               skills.ScopeGlobal,
+		SourceKind:          skills.SourceKindLocal,
+		SourceType:          skills.SourceTypeLocal,
+		Source:              "/tmp/brainstorming",
+		Enabled:             true,
+		Managed:             true,
+		AgentTargets:        []string{"codex", "claude"},
+		MaterializationMode: skills.MaterializationCopy,
 	}
 	if err := skills.SaveRegistry(registry); err != nil {
 		t.Fatalf("SaveRegistry failed: %v", err)
@@ -214,7 +217,7 @@ func TestSkillSearchCommandUsesCatalogResultsInSelector(t *testing.T) {
 		return options[0], nil
 	})
 	defer restoreSelect()
-	restoreInstall := stubSkillInstallFromCatalog(func(name string) (*skills.SkillEntry, error) {
+	restoreInstall := stubSkillInstallFromCatalog(func(name string, opts ...skills.InstallOptions) (*skills.SkillEntry, error) {
 		return &skills.SkillEntry{Name: name}, nil
 	})
 	defer restoreInstall()
@@ -253,7 +256,7 @@ func TestSkillSearchCommandSelectsCandidateAndInstalls(t *testing.T) {
 	defer restoreSelect()
 
 	installed := ""
-	restoreInstall := stubSkillInstallFromCatalog(func(name string) (*skills.SkillEntry, error) {
+	restoreInstall := stubSkillInstallFromCatalog(func(name string, opts ...skills.InstallOptions) (*skills.SkillEntry, error) {
 		installed = name
 		return &skills.SkillEntry{Name: name}, nil
 	})

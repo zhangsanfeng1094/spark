@@ -1,32 +1,32 @@
-# Compat Proxy Architecture (Cautious Migration Plan)
+# Compat Proxy Architecture
 
 ## Goal
-Refactor compat proxies to a layered architecture without changing behavior:
-- `handler`: HTTP entry + request validation + stream/non-stream dispatch
-- `translator`: protocol mapping (`responses/anthropic <-> chat/completions`)
-- `executor`: upstream HTTP call + retry + SSE reading
-- `writer`: response/error shaping and SSE/json writeback
-
-This document defines a phased path so each step is testable and reversible.
+Keep compatibility conversion layered without changing external behavior:
+- `client`: caller protocol <-> Compat IR
+- `ir`: provider-neutral request, response, stream event, tool, usage, and reasoning model
+- `target`: Compat IR <-> upstream provider protocol
+- `gateway`: route selection, HTTP entry, stream/non-stream dispatch, gateway errors
+- `integration`: upstream URL/key loading, HTTP client, retry policy, logs, local state
 
 ## Current State (Function Mapping)
 
-### Codex compat (`internal/integrations/codex_compat_proxy.go`)
-- Handler: `handleResponses`
-- Executor: `postChatCompletions`
+### Codex Responses caller -> OpenAI Chat target
+- Gateway handler: `internal/compat/gateway.CodexResponsesHandler`
+- Integration executor: `internal/integrations.codexChatExecutor`
 - Retry strategy: `shouldRetryWithMinimalChatReq`, `minimalChatCompletionsRequest`, `ultraMinimalChatCompletionsRequest`
-- Translators: `responsesToChatCompletions`, `responsesInputToMessages`, `responsesToolsToChatTools`, `responsesToolChoiceToChatToolChoice`
-- Stream writer/adapter: `forwardStream`, `writeSSE`
-- Non-stream writer/adapter: `forwardNonStream`
-- Error/write helpers: `writeUpstreamErrorAsJSON`, `writeJSONError`, `decodeResponsesRequest`
+- Client request adapter: `internal/compat/client/codex.ResponsesInbound`
+- Target adapter: `internal/compat/target/openai_chat.ChatOutbound`
+- Stream conversion: `target/openai_chat.ChatStreamEvents` -> `ir.StreamEvent` -> `client/codex.ResponsesStreamWriter`
+- Non-stream conversion: `target/openai_chat.ChatResponse` -> `ir.Response` -> `client/codex.ResponsesClientResponse`
+- Route: `gateway.Route{Client: codex_responses, Target: openai_chat}`
 
-### Claude compat (`internal/integrations/claude_compat_proxy.go`)
-- Handler: `handleMessages`
-- Executor: `postChatCompletions`
-- Translator (request): `anthropicToChatCompletions`, `anthropicMessagesToChatMessages`, `anthropicContentToChatParts`, `anthropicToolsToChatTools`, `anthropicToolChoiceToChatToolChoice`
-- Translator (response): `chatToAnthropicMessage`, `chatStopReason`
-- Stream writer/adapter: `forwardAnthropicStream`, `writeAnthropicStreamFromMessage`, `writeAnthropicSSE`
-- Error/write helpers: `writeAnthropicError`
+### Anthropic Messages caller -> OpenAI Chat target
+- Gateway handler: `internal/compat/gateway.AnthropicMessagesHandler`
+- Integration executor: `internal/integrations.anthropicCompatProxy.postChatCompletions`
+- Client request adapter: `internal/compat/client/anthropic_messages.MessagesInbound`
+- Target adapter: `internal/compat/target/openai_chat.ChatOutbound`
+- Response writer: `target/openai_chat.ChatResponse` -> `client/anthropic_messages.MessagesClientResponse`
+- Stream writer: `client/anthropic_messages.WriteMessagesStream`
 
 ## Phased Plan
 
@@ -54,12 +54,10 @@ This document defines a phased path so each step is testable and reversible.
   - no HTTP payload schema changes
   - golden tests for decode and malformed payloads remain identical
 
-### Phase 2 (Introduce translator interfaces)
-- Add interfaces in `internal/integrations/compat_types.go`:
-  - `type RequestTranslator interface { ToChat(map[string]any) (map[string]any, error) }`
-  - `type NonStreamTranslator interface { FromChat(map[string]any, string) (map[string]any, error) }`
-  - `type StreamTranslator interface { ConsumeChunk([]byte) ([]map[string]any, error); Finalize() []map[string]any }`
-- Wrap existing functions with adapter structs; keep old functions internally.
+### Phase 2 (Introduce request translator interface)
+- Move `RequestTranslator` and route selection into `internal/compat/gateway`.
+- Implement translators by composing client adapter + target adapter directly.
+- Response and stream paths use client writer functions through gateway orchestration.
 - Acceptance:
   - stream and non-stream snapshot tests unchanged
 
@@ -98,9 +96,9 @@ These are safe, low-scope improvements before large refactor:
 3. Guard against very long lines:
    - keep scanner max-size setting and log if limit likely hit
 
-Suggested target locations:
-- `internal/integrations/codex_compat_proxy.go` in `forwardStream`
-- `internal/integrations/claude_compat_proxy.go` in `forwardAnthropicStream`
+Current target locations:
+- `internal/compat/gateway/stream.go` for Codex Responses stream conversion
+- `internal/compat/gateway/anthropic_handler.go` for Anthropic Messages stream conversion
 
 ## Test Strategy Per Phase
 - Unit tests:

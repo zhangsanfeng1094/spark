@@ -3,6 +3,7 @@ package tui
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,151 @@ func TestFetchOpenAIModelsWithClientHTTPError(t *testing.T) {
 	_, err := fetchOpenAIModelsWithClient("https://example.com", "", "", "", client)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestFetchAnthropicModelsWithClient(t *testing.T) {
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path != "/v1/models" {
+				t.Fatalf("path mismatch: %s", req.URL.Path)
+			}
+			if req.Method != http.MethodGet {
+				t.Fatalf("method mismatch: %s", req.Method)
+			}
+			if req.Header.Get("x-api-key") != "anthropic-key" {
+				t.Fatalf("missing anthropic api key header: %#v", req.Header)
+			}
+			if req.Header.Get("anthropic-version") == "" {
+				t.Fatalf("missing anthropic version header: %#v", req.Header)
+			}
+			if req.Header.Get("Authorization") != "" {
+				t.Fatalf("unexpected bearer auth for anthropic model fetch: %#v", req.Header)
+			}
+			return fakeResponse(req, http.StatusOK, `{"data":[{"id":"claude-b"},{"id":"claude-a"}]}`), nil
+		}),
+	}
+
+	got, err := fetchModelsWithClient(&config.Profile{
+		OpenAIBaseURL: "https://api.anthropic.com",
+		OpenAIAPIKey:  "anthropic-key",
+		OpenAIAPIType: config.OpenAIAPITypeAnthropicMessages,
+	}, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0] != "claude-a" || got[1] != "claude-b" {
+		t.Fatalf("expected sorted anthropic models, got %v", got)
+	}
+}
+
+func TestFetchAnthropicModelsWithClientBaseURLWithV1Suffix(t *testing.T) {
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path != "/v1/models" {
+				t.Fatalf("path mismatch: %s", req.URL.Path)
+			}
+			return fakeResponse(req, http.StatusOK, `{"data":[{"id":"claude-a"}]}`), nil
+		}),
+	}
+
+	got, err := fetchModelsWithClient(&config.Profile{
+		OpenAIBaseURL: "https://api.anthropic.com/v1",
+		OpenAIAPIKey:  "anthropic-key",
+		OpenAIAPIType: config.OpenAIAPITypeAnthropicMessages,
+	}, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "claude-a" {
+		t.Fatalf("models mismatch: %v", got)
+	}
+}
+
+func TestFetchAnthropicModelsWithClientUnsupportedEndpointErrorIsActionable(t *testing.T) {
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return fakeResponse(req, http.StatusNotFound, `<html><body><h1>404 Not Found</h1><center>openresty</center></body></html>`), nil
+		}),
+	}
+
+	_, err := fetchModelsWithClient(&config.Profile{
+		OpenAIBaseURL: "https://gateway.example",
+		OpenAIAPIKey:  "anthropic-key",
+		OpenAIAPIType: config.OpenAIAPITypeAnthropicMessages,
+	}, client)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "does not support Anthropic model listing") || !strings.Contains(msg, "https://gateway.example/v1/models") {
+		t.Fatalf("expected actionable unsupported endpoint error, got %q", msg)
+	}
+	if strings.Contains(msg, "<html>") || strings.Contains(msg, "openresty") {
+		t.Fatalf("expected sanitized error without HTML body, got %q", msg)
+	}
+}
+
+func TestFetchModelsWithCustomModelListURL(t *testing.T) {
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://gateway.example/custom/list-models" {
+				t.Fatalf("url mismatch: %s", req.URL.String())
+			}
+			if req.Header.Get("x-api-key") != "anthropic-key" {
+				t.Fatalf("missing anthropic api key header: %#v", req.Header)
+			}
+			return fakeResponse(req, http.StatusOK, `{"data":[{"id":"claude-custom"}]}`), nil
+		}),
+	}
+
+	got, err := fetchModelsWithClient(&config.Profile{
+		OpenAIBaseURL: "https://gateway.example",
+		OpenAIAPIKey:  "anthropic-key",
+		OpenAIAPIType: config.OpenAIAPITypeAnthropicMessages,
+		ModelListURL:  "https://gateway.example/custom/list-models",
+	}, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "claude-custom" {
+		t.Fatalf("models mismatch: %v", got)
+	}
+}
+
+func TestProfileManagerFetchModelsUsesSelectedAPIType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path mismatch: %s", r.URL.Path)
+		}
+		if r.Header.Get("x-api-key") != "anthropic-key" {
+			t.Fatalf("missing anthropic api key header: %#v", r.Header)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-a"}]}`))
+	}))
+	defer server.Close()
+
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {
+				OpenAIBaseURL: server.URL,
+				OpenAIAPIKey:  "anthropic-key",
+				OpenAIAPIType: config.OpenAIAPITypeAnthropicMessages,
+			},
+		},
+	})
+	m.openModelsModal()
+
+	cmd := m.fetchModelsFromAPI()
+	msg := cmd()
+	got := msg.(fetchModelsResultMsg)
+	if got.err != nil {
+		t.Fatalf("unexpected error: %v", got.err)
+	}
+	if len(got.models) != 1 || got.models[0] != "claude-a" {
+		t.Fatalf("models mismatch: %v", got.models)
 	}
 }
 
@@ -436,6 +582,33 @@ func TestModelsModalFunctionShortcutsDoNotConflictWithSearch(t *testing.T) {
 	}
 }
 
+func TestModelsModalFetchUsesCtrlFNotF5(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {OpenAIBaseURL: "https://api.openai.com/v1"},
+		},
+	})
+	m.modelsDraft = []string{"gpt-4o"}
+	m.defaultModel = "gpt-4o"
+	m.openModelsModal()
+
+	if cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyF5}); cmd != nil {
+		t.Fatal("expected F5 not to trigger model fetch")
+	}
+	if m.modelModalNote != "" {
+		t.Fatalf("expected F5 not to change fetch note, got %q", m.modelModalNote)
+	}
+
+	cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyCtrlF})
+	if cmd == nil {
+		t.Fatal("expected Ctrl+F to trigger model fetch")
+	}
+	if m.modelModalNote != "Fetching models from API..." {
+		t.Fatalf("expected Ctrl+F to set fetch note, got %q", m.modelModalNote)
+	}
+}
+
 func TestHandleMainMouse_ProfileListClickMatchesRenderedRow(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "alpha",
@@ -482,5 +655,23 @@ func TestTestModelConnection_TestsAllEnabledEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(got.Message, "responses=ERR") || !strings.Contains(got.Message, "chat_completions=ERR") {
 		t.Fatalf("expected both endpoint results in message, got %q", got.Message)
+	}
+}
+
+func TestTestModelConnection_AnthropicEndpointDoesNotFallbackToResponses(t *testing.T) {
+	profile := &config.Profile{
+		OpenAIBaseURL: "http://127.0.0.1:1",
+		OpenAIAPIType: config.OpenAIAPITypeAnthropicMessages,
+		DefaultModel:  "claude-sonnet-4-20250514",
+	}
+	got := TestModelConnection(profile, "")
+	if got.Success {
+		t.Fatalf("expected failure against closed port, got success: %s", got.Message)
+	}
+	if !strings.Contains(got.Message, "anthropic_messages=ERR") {
+		t.Fatalf("expected anthropic endpoint result in message, got %q", got.Message)
+	}
+	if strings.Contains(got.Message, "responses=ERR") {
+		t.Fatalf("did not expect responses fallback for anthropic profile, got %q", got.Message)
 	}
 }

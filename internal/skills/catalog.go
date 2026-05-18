@@ -83,18 +83,28 @@ func ResolveCatalogInstall(name string) (CatalogEntry, error) {
 	return *match, nil
 }
 
-func InstallFromCatalog(name string) (*SkillEntry, error) {
+func InstallFromCatalog(name string, opts ...InstallOptions) (*SkillEntry, error) {
 	entry, err := ResolveCatalogInstall(name)
 	if err != nil {
 		return nil, err
 	}
-	return Install(InstallOptions{
+	installOpts := InstallOptions{
 		Name:       entry.Name,
 		SourceType: SourceTypeGit,
+		SourceKind: SourceKindCatalog,
 		Source:     entry.Source,
 		Ref:        entry.Ref,
 		Subdir:     entry.Subdir,
-	})
+	}
+	if len(opts) > 0 {
+		override := opts[0]
+		installOpts.Name = firstNonEmpty(override.Name, installOpts.Name)
+		installOpts.Scope = override.Scope
+		installOpts.SourceKind = firstNonEmpty(override.SourceKind, installOpts.SourceKind)
+		installOpts.Targets = override.Targets
+		installOpts.MaterializationMode = override.MaterializationMode
+	}
+	return Install(installOpts)
 }
 
 func SaveCatalogCache(name string, entries []CatalogEntry) error {

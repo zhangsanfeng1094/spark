@@ -22,7 +22,7 @@ func stubSkillSelector(fn func(title string, options []string) (string, error)) 
 	}
 }
 
-func stubSkillInstallFromCatalog(fn func(name string) (*skills.SkillEntry, error)) func() {
+func stubSkillInstallFromCatalog(fn func(name string, opts ...skills.InstallOptions) (*skills.SkillEntry, error)) func() {
 	original := installFromCatalog
 	installFromCatalog = fn
 	return func() {

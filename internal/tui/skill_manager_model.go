@@ -46,6 +46,9 @@ type skillInstallField struct {
 const (
 	skillInstallFieldName = iota
 	skillInstallFieldSource
+	skillInstallFieldScope
+	skillInstallFieldTargets
+	skillInstallFieldMode
 )
 
 type skillManagerModel struct {
@@ -94,22 +97,27 @@ func newSkillManagerModel(registry *skills.Registry) *skillManagerModel {
 	skills.NormalizeRegistry(registry)
 	m := &skillManagerModel{
 		registry:    registry,
-		status:      "Ready.\nInstall a local skill or sync with Codex/Claude.",
+		status:      "Ready.\nInstall a local skill or sync with project/global skill roots.",
 		browseFocus: skillBrowseFocusQuickAdd,
 		quickAddItems: []skillQuickAddItem{
 			{Key: "install_local", Label: "Install Local", Description: "Copy a local skill package into Spark storage"},
 			{Key: "browse_catalog", Label: "Browse Catalog", Description: "Search skills.sh and install a listed skill"},
-			{Key: "transfer", Label: "Transfer", Description: "Import from or sync to Codex and Claude"},
+			{Key: "transfer", Label: "Transfer", Description: "Import from or sync to Codex, Claude, and .agents roots"},
 		},
 		transferItems: []skillTransferItem{
-			{Key: "import_codex", Label: "Import from Codex", Description: "Load skills from ~/.codex/skills"},
-			{Key: "import_claude", Label: "Import from Claude", Description: "Load skills from ~/.claude/skills"},
-			{Key: "sync_codex", Label: "Sync to Codex", Description: "Write enabled skills to ~/.codex/skills"},
-			{Key: "sync_claude", Label: "Sync to Claude", Description: "Write enabled skills to ~/.claude/skills"},
+			{Key: "import_agents", Label: "Import from .agents", Description: "Scan project/global .agents/skills roots"},
+			{Key: "import_codex", Label: "Import from Codex", Description: "Scan project/global .codex/skills roots"},
+			{Key: "import_claude", Label: "Import from Claude", Description: "Scan project/global .claude/skills roots"},
+			{Key: "sync_agents", Label: "Sync to .agents", Description: "Project enabled managed skills into .agents/skills"},
+			{Key: "sync_codex", Label: "Sync to Codex", Description: "Project enabled managed skills into .codex/skills"},
+			{Key: "sync_claude", Label: "Sync to Claude", Description: "Project enabled managed skills into .claude/skills"},
 		},
 		installFields: []skillInstallField{
 			{label: "Name"},
 			{label: "Local Path"},
+			{label: "Scope", value: skills.ScopeGlobal},
+			{label: "Targets", value: "agents,codex,claude"},
+			{label: "Mode", value: skills.MaterializationCopy},
 		},
 	}
 	m.refreshNames()
@@ -330,9 +338,18 @@ func (m *skillManagerModel) openInstallModal() {
 	m.installing = true
 	m.installFocus = 0
 	for i := range m.installFields {
-		m.installFields[i].value = ""
+		switch i {
+		case skillInstallFieldScope:
+			m.installFields[i].value = skills.ScopeGlobal
+		case skillInstallFieldTargets:
+			m.installFields[i].value = "agents,codex,claude"
+		case skillInstallFieldMode:
+			m.installFields[i].value = skills.MaterializationCopy
+		default:
+			m.installFields[i].value = ""
+		}
 	}
-	m.status = infoStatus("Install a local skill by name and path.")
+	m.status = infoStatus("Install a local skill by name, path, scope, targets, and projection mode.")
 }
 
 func (m *skillManagerModel) openCatalogModal() {
@@ -355,6 +372,10 @@ func (m *skillManagerModel) activateTransferItem() tea.Cmd {
 	}
 	item := m.transferItems[m.transferIndex]
 	switch item.Key {
+	case "import_agents":
+		m.transferring = false
+		m.status = infoStatus("Importing skills from .agents roots...")
+		return m.importFromPeer("agents")
 	case "import_codex":
 		m.transferring = false
 		m.status = infoStatus("Importing skills from Codex...")
@@ -363,6 +384,10 @@ func (m *skillManagerModel) activateTransferItem() tea.Cmd {
 		m.transferring = false
 		m.status = infoStatus("Importing skills from Claude...")
 		return m.importFromPeer("claude")
+	case "sync_agents":
+		m.transferring = false
+		m.status = infoStatus("Syncing skills to .agents roots...")
+		return m.syncToPeer("agents")
 	case "sync_codex":
 		m.transferring = false
 		m.status = infoStatus("Syncing skills to Codex...")
@@ -410,7 +435,7 @@ func (m *skillManagerModel) View() string {
 		return "loading..."
 	}
 	header := pmTitleStyle.Render("Skill Manager")
-	subtitle := lipgloss.NewStyle().Foreground(colorDim).Render("Manage installed skills, local installs, and Codex/Claude sync.")
+	subtitle := lipgloss.NewStyle().Foreground(colorDim).Render("Manage installed skills, local installs, and project/global skill projections.")
 	leftW := 42
 	if m.width > 0 && leftW > m.width/2 {
 		leftW = m.width / 2
@@ -470,7 +495,7 @@ func (m *skillManagerModel) renderSkillList() string {
 			if entry.Enabled {
 				state = "enabled"
 			}
-			row := fmt.Sprintf("%s\n%s", name, lipgloss.NewStyle().Foreground(colorDim).Render(fmt.Sprintf("%s • %s", entry.SourceType, state)))
+			row := fmt.Sprintf("%s\n%s", name, lipgloss.NewStyle().Foreground(colorDim).Render(fmt.Sprintf("%s • %s • %s", entry.SourceKind, entry.Scope, state)))
 			if m.browseFocus == skillBrowseFocusSkills && i == m.selected {
 				lines = append(lines, pmFocusedItemStyle.Width(max(36, 42-4)).Render(row))
 			} else {
@@ -501,24 +526,33 @@ func (m *skillManagerModel) renderDetails() string {
 	}
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Overview"),
-		lipgloss.NewStyle().Foreground(colorText).Bold(true).Render(entry.Name),
+		lipgloss.NewStyle().Foreground(colorText).Bold(true).Render(entry.Manifest.Name),
 		"",
 		fmt.Sprintf("Status: %s", status),
 		fmt.Sprintf("Managed: %t", entry.Managed),
-		fmt.Sprintf("Source: %s", entry.SourceType),
+		fmt.Sprintf("Scope: %s", entry.Scope),
+		fmt.Sprintf("Source: %s", entry.SourceKind),
+		fmt.Sprintf("Mode: %s", entry.MaterializationMode),
 		fmt.Sprintf("Origin: %s", entry.Source),
 	}
 	if entry.InstalledPath != "" {
 		lines = append(lines, fmt.Sprintf("Installed Path: %s", entry.InstalledPath))
 	}
-	if len(entry.Targets) > 0 {
-		lines = append(lines, fmt.Sprintf("Targets: %s", strings.Join(entry.Targets, ", ")))
+	if len(entry.AgentTargets) > 0 {
+		lines = append(lines, fmt.Sprintf("Targets: %s", strings.Join(entry.AgentTargets, ", ")))
 	}
 	if entry.Ref != "" {
 		lines = append(lines, fmt.Sprintf("Ref: %s", entry.Ref))
 	}
 	if entry.Manifest.Description != "" {
 		lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Description"), entry.Manifest.Description)
+	}
+	if projections, err := skills.ProjectionStatuses(entry, ""); err == nil && len(projections) > 0 {
+		lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Projections"))
+		for _, projection := range projections {
+			lines = append(lines, fmt.Sprintf("%s/%s [%s]", projection.Scope, projection.Target, projection.State))
+			lines = append(lines, lipgloss.NewStyle().Foreground(colorDim).Render(projection.Path))
+		}
 	}
 	lines = append(lines, "", lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Actions"), "Space toggle enabled • D delete • T transfer")
 	return strings.Join(lines, "\n")
@@ -531,7 +565,7 @@ func (m *skillManagerModel) renderEmptyState() string {
 		"",
 		"Install a local skill from the left action list.",
 		fmt.Sprintf("Spark stores skill metadata in %s", registryPath),
-		"Installed content lives under ~/.spark/skills/.",
+		"Managed content lives under ~/.spark/skills/ and sync projects into .agents/.codex/.claude roots.",
 	}, "\n")
 }
 
@@ -539,7 +573,7 @@ func (m *skillManagerModel) renderInstallModal() string {
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Install Local Skill"),
 		"",
-		"Copy a local skill package into Spark storage.",
+		"Copy a local skill package into Spark storage and choose how it projects back out.",
 		"",
 	}
 	for i, field := range m.installFields {
@@ -606,6 +640,20 @@ func displaySkillValue(v string) string {
 	return v
 }
 
+func parseSkillCSV(csv string) []string {
+	if strings.TrimSpace(csv) == "" {
+		return nil
+	}
+	parts := strings.Split(csv, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 func (m *skillManagerModel) renderStatusBar() string {
 	text := m.status
 	if text == "" {
@@ -640,6 +688,9 @@ func (m *skillManagerModel) contextHelpText() string {
 func (m *skillManagerModel) installLocalSkill() tea.Cmd {
 	name := strings.TrimSpace(m.installFields[skillInstallFieldName].value)
 	source := strings.TrimSpace(m.installFields[skillInstallFieldSource].value)
+	scope := strings.TrimSpace(m.installFields[skillInstallFieldScope].value)
+	targets := strings.TrimSpace(m.installFields[skillInstallFieldTargets].value)
+	mode := strings.TrimSpace(m.installFields[skillInstallFieldMode].value)
 	m.installing = false
 	if name == "" {
 		m.status = errorStatus("Skill name cannot be empty.")
@@ -652,9 +703,12 @@ func (m *skillManagerModel) installLocalSkill() tea.Cmd {
 	m.status = infoStatus(fmt.Sprintf("Installing %s...", name))
 	return func() tea.Msg {
 		if _, err := skills.Install(skills.InstallOptions{
-			Name:       name,
-			SourceType: skills.SourceTypeLocal,
-			Source:     source,
+			Name:                name,
+			Scope:               scope,
+			SourceType:          skills.SourceTypeLocal,
+			Source:              source,
+			Targets:             parseSkillCSV(targets),
+			MaterializationMode: mode,
 		}); err != nil {
 			return skillSaveFinishedMsg{Err: err}
 		}
@@ -696,7 +750,11 @@ func (m *skillManagerModel) installCatalogSelection() tea.Cmd {
 	m.cataloging = false
 	m.status = infoStatus(fmt.Sprintf("Installing %s from catalog...", selected.Name))
 	return func() tea.Msg {
-		if _, err := skills.InstallFromCatalog(selected.Name); err != nil {
+		if _, err := skills.InstallFromCatalog(selected.Name, skills.InstallOptions{
+			Scope:               skills.ScopeGlobal,
+			Targets:             []string{"agents", "codex", "claude"},
+			MaterializationMode: skills.MaterializationCopy,
+		}); err != nil {
 			return skillSaveFinishedMsg{Err: err}
 		}
 		registry, err := skills.LoadRegistry()
@@ -759,7 +817,7 @@ func (m *skillManagerModel) deleteCurrent() tea.Cmd {
 
 func (m *skillManagerModel) importFromPeer(peer string) tea.Cmd {
 	return func() tea.Msg {
-		result, err := skills.ImportFromPeer(peer, "")
+		result, err := skills.Import(skills.ImportOptions{Targets: []string{peer}})
 		if err != nil {
 			return skillSaveFinishedMsg{Err: err}
 		}
@@ -776,7 +834,8 @@ func (m *skillManagerModel) importFromPeer(peer string) tea.Cmd {
 
 func (m *skillManagerModel) syncToPeer(peer string) tea.Cmd {
 	return func() tea.Msg {
-		if err := skills.SyncToPeer(peer, ""); err != nil {
+		result, err := skills.Sync(skills.SyncOptions{Targets: []string{peer}})
+		if err != nil {
 			return skillSaveFinishedMsg{Err: err}
 		}
 		registry, err := skills.LoadRegistry()
@@ -784,7 +843,7 @@ func (m *skillManagerModel) syncToPeer(peer string) tea.Cmd {
 			return skillSaveFinishedMsg{Err: err}
 		}
 		return skillSaveFinishedMsg{
-			Status:   successStatus(fmt.Sprintf("Synced skills to %s.", strings.Title(peer))),
+			Status:   successStatus(fmt.Sprintf("Synced %s roots: +%d ~%d =%d -%d.", strings.Title(peer), result.Added, result.Updated, result.Skipped, result.Cleaned)),
 			Registry: registry,
 		}
 	}

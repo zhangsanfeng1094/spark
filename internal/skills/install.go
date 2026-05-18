@@ -39,19 +39,26 @@ func Install(opts InstallOptions) (*SkillEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	if name == "" {
+		name = normalizeManifestName(manifest.Name, name)
+	}
 
 	entry := &SkillEntry{
-		Name:          name,
-		SourceType:    sourceType,
-		Source:        opts.Source,
-		Ref:           strings.TrimSpace(opts.Ref),
-		Subdir:        strings.TrimSpace(opts.Subdir),
-		Enabled:       true,
-		Targets:       NormalizeTargets(opts.Targets),
-		Managed:       true,
-		InstalledPath: targetDir,
-		Manifest:      manifest,
-		InstalledAt:   time.Now().UTC(),
+		Name:                name,
+		Scope:               NormalizeScope(opts.Scope),
+		AgentTargets:        NormalizeTargets(opts.Targets),
+		SourceKind:          NormalizeSourceKind(opts.SourceKind, sourceType, true),
+		MaterializationMode: NormalizeMaterializationMode(opts.MaterializationMode),
+		SourceType:          sourceType,
+		Source:              opts.Source,
+		Ref:                 strings.TrimSpace(opts.Ref),
+		Subdir:              strings.TrimSpace(opts.Subdir),
+		Enabled:             true,
+		Targets:             NormalizeTargets(opts.Targets),
+		Managed:             true,
+		InstalledPath:       targetDir,
+		Manifest:            manifest,
+		InstalledAt:         time.Now().UTC(),
 	}
 	registry.Skills[name] = entry
 	if err := SaveRegistry(registry); err != nil {
@@ -83,7 +90,7 @@ func Remove(name string) error {
 	if entry == nil {
 		return fmt.Errorf("skill not found: %s", name)
 	}
-	if entry.InstalledPath != "" {
+	if entry.Managed && entry.InstalledPath != "" {
 		if err := os.RemoveAll(entry.InstalledPath); err != nil {
 			return err
 		}

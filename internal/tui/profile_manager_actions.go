@@ -32,9 +32,19 @@ func (m *pmModel) runAction(action int) tea.Cmd {
 }
 
 func (m *pmModel) setCurrentProfileDefault() {
-	m.cfg.DefaultProfile = m.currentProfileName()
-	m.dirty = true
-	m.status = "Set '" + m.cfg.DefaultProfile + "' as default. Save to persist."
+	wasDirty := m.dirty
+	name := m.currentProfileName()
+	if err := m.cfg.SetDefaultProfile(name); err != nil {
+		m.status = "Default failed: " + err.Error()
+		return
+	}
+	if err := config.Save(m.cfg); err != nil {
+		m.dirty = true
+		m.status = "Default save failed: " + err.Error()
+		return
+	}
+	m.dirty = wasDirty
+	m.status = "Set '" + name + "' as default."
 }
 
 func (m *pmModel) openAddModal() {
@@ -43,19 +53,44 @@ func (m *pmModel) openAddModal() {
 	m.modalKind = pmModalKindAddProfile
 }
 
+func (m *pmModel) openProviderTypeModal() {
+	m.modalOpen = true
+	m.modalCursor = 0
+	m.modalKind = pmModalKindProviderType
+	current := ""
+	if pmFieldProviderType < len(m.fields) {
+		current = strings.TrimSpace(m.fields[pmFieldProviderType].value)
+	}
+	for i, opt := range m.providerOptions {
+		if opt.name == current {
+			m.modalCursor = i
+			break
+		}
+	}
+}
+
 func (m *pmModel) openAPITypeModal() {
 	m.modalOpen = true
 	m.modalKind = pmModalKindOpenAIAPIType
 	m.modalCursor = 0
 	m.apiTypeSelected = map[string]bool{}
+	options := m.visibleAPITypeOptions()
 	current := config.ParseOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value)
 	for _, apiType := range current {
-		m.apiTypeSelected[apiType] = true
+		for _, opt := range options {
+			if apiType == opt {
+				m.apiTypeSelected[apiType] = true
+				break
+			}
+		}
+	}
+	if len(m.apiTypeSelected) == 0 && len(options) > 0 {
+		m.apiTypeSelected[options[0]] = true
 	}
 	if len(m.apiTypeSelected) == 0 {
 		m.apiTypeSelected[config.OpenAIAPITypeAuto] = true
 	}
-	for i, opt := range m.apiTypeOptions {
+	for i, opt := range options {
 		if m.apiTypeSelected[opt] {
 			m.modalCursor = i
 			break
@@ -100,11 +135,43 @@ func (m *pmModel) createProfileFromModal() {
 	m.status = fmt.Sprintf("Created '%s'. Edit fields, then save.", name)
 }
 
-func (m *pmModel) toggleAPITypeOptionAtCursor() {
-	if m.modalCursor < 0 || m.modalCursor >= len(m.apiTypeOptions) {
+func (m *pmModel) confirmProviderTypeSelection() {
+	if m.modalCursor < 0 || m.modalCursor >= len(m.providerOptions) {
 		return
 	}
-	selected := m.apiTypeOptions[m.modalCursor]
+	opt := m.providerOptions[m.modalCursor]
+	template := m.profileTemplate(opt.kind)
+	apiKey := ""
+	if pmFieldOpenAIAPIKey < len(m.fields) {
+		apiKey = m.fields[pmFieldOpenAIAPIKey].value
+	}
+	m.fields[pmFieldProviderType].value = opt.name
+	m.fields[pmFieldProviderType].cursor = len([]rune(opt.name))
+	m.fields[pmFieldOpenAIBaseURL].value = template.OpenAIBaseURL
+	m.fields[pmFieldOpenAIBaseURL].cursor = len([]rune(template.OpenAIBaseURL))
+	m.fields[pmFieldOpenAIAPIKey].value = apiKey
+	m.fields[pmFieldOpenAIAPIKey].cursor = len([]rune(apiKey))
+	apiType := displayOpenAIAPIType(template.OpenAIAPIType)
+	m.fields[pmFieldOpenAIAPIType].value = apiType
+	m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(apiType))
+	m.modelsDraft = config.NormalizeModels(template.Models)
+	m.defaultModel = strings.TrimSpace(template.DefaultModel)
+	if m.defaultModel == "" && len(m.modelsDraft) > 0 {
+		m.defaultModel = m.modelsDraft[0]
+	}
+	m.syncModelFieldViews()
+	m.modalOpen = false
+	m.modalKind = pmModalKindNone
+	m.dirty = true
+	m.status = "Provider type updated. Save to persist."
+}
+
+func (m *pmModel) toggleAPITypeOptionAtCursor() {
+	options := m.visibleAPITypeOptions()
+	if m.modalCursor < 0 || m.modalCursor >= len(options) {
+		return
+	}
+	selected := options[m.modalCursor]
 	if selected == config.OpenAIAPITypeAuto {
 		m.apiTypeSelected = map[string]bool{
 			config.OpenAIAPITypeAuto: true,
@@ -117,8 +184,8 @@ func (m *pmModel) toggleAPITypeOptionAtCursor() {
 	} else {
 		m.apiTypeSelected[selected] = true
 	}
-	if len(m.apiTypeSelected) == 0 {
-		m.apiTypeSelected[config.OpenAIAPITypeAuto] = true
+	if len(m.apiTypeSelected) == 0 && len(options) > 0 {
+		m.apiTypeSelected[options[0]] = true
 	}
 }
 
@@ -234,13 +301,19 @@ func (m *pmModel) fetchModelsFromAPI() tea.Cmd {
 	profileCopy := &config.Profile{
 		OpenAIBaseURL: strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
 		OpenAIAPIKey:  strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
+		OpenAIAPIType: config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value),
+		ModelListURL:  strings.TrimSpace(m.fields[pmFieldModelListURL].value),
 		OpenAIOrg:     "",
 		OpenAIProject: "",
+	}
+	if config.SupportsOpenAIAPIType(profileCopy.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
+		profileCopy.AnthropicBaseURL = profileCopy.OpenAIBaseURL
 	}
 	name := m.currentProfileName()
 	if p := m.cfg.Profiles[name]; p != nil {
 		profileCopy.OpenAIOrg = strings.TrimSpace(p.OpenAIOrg)
 		profileCopy.OpenAIProject = strings.TrimSpace(p.OpenAIProject)
+		profileCopy.AnthropicAuthToken = strings.TrimSpace(p.AnthropicAuthToken)
 	}
 	return func() tea.Msg {
 		models, err := FetchOpenAIModels(profileCopy)
@@ -274,18 +347,19 @@ func (m *pmModel) handleFetchModelsResult(msg fetchModelsResultMsg) {
 }
 
 func (m *pmModel) confirmAPITypeSelection() {
-	selected := make([]string, 0, 2)
-	if m.apiTypeSelected[config.OpenAIAPITypeResponses] {
-		selected = append(selected, config.OpenAIAPITypeResponses)
-	}
-	if m.apiTypeSelected[config.OpenAIAPITypeChatCompletions] {
-		selected = append(selected, config.OpenAIAPITypeChatCompletions)
+	options := m.visibleAPITypeOptions()
+	selected := make([]string, 0, len(options))
+	for _, opt := range options {
+		if opt == config.OpenAIAPITypeAuto {
+			continue
+		}
+		if m.apiTypeSelected[opt] {
+			selected = append(selected, opt)
+		}
 	}
 	value := config.OpenAIAPITypeAuto
-	if len(selected) == 1 {
-		value = selected[0]
-	} else if len(selected) == 2 {
-		value = strings.Join(selected, ",")
+	if len(selected) > 0 {
+		value = config.CanonicalizeOpenAIAPITypes(strings.Join(selected, ","))
 	}
 	m.fields[pmFieldOpenAIAPIType].value = value
 	m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(value))
@@ -342,6 +416,7 @@ func (m *pmModel) copySelectedProfile() {
 		OpenAIAPIType:      profile.OpenAIAPIType,
 		OpenAIOrg:          profile.OpenAIOrg,
 		OpenAIProject:      profile.OpenAIProject,
+		ModelListURL:       profile.ModelListURL,
 		AnthropicBaseURL:   profile.AnthropicBaseURL,
 		AnthropicAuthToken: profile.AnthropicAuthToken,
 		Models:             append([]string{}, profile.Models...),
@@ -415,6 +490,10 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 	p.OpenAIBaseURL = strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value)
 	p.OpenAIAPIKey = strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value)
 	p.OpenAIAPIType = config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value)
+	p.ModelListURL = strings.TrimSpace(m.fields[pmFieldModelListURL].value)
+	if config.SupportsOpenAIAPIType(p.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
+		p.AnthropicBaseURL = p.OpenAIBaseURL
+	}
 	p.Models = append([]string{}, m.modelsDraft...)
 	p.DefaultModel = strings.TrimSpace(m.defaultModel)
 	return nil
@@ -454,6 +533,7 @@ func (m *pmModel) testConnection() tea.Cmd {
 		OpenAIBaseURL: strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
 		OpenAIAPIKey:  strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
 		OpenAIAPIType: config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value),
+		ModelListURL:  strings.TrimSpace(m.fields[pmFieldModelListURL].value),
 		Models:        append([]string{}, m.modelsDraft...),
 		DefaultModel:  model,
 	}

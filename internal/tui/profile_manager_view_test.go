@@ -82,10 +82,42 @@ func TestModelsModalHelpAvoidsTextLetterShortcuts(t *testing.T) {
 			t.Fatalf("expected models modal help to avoid text shortcut %s, got %q", blocked, view)
 		}
 	}
-	for _, want := range []string{"Search", "type text", "F5 Fetch", "F6 Add", "F7 Edit", "F8 Delete", "F9 Default"} {
+	for _, want := range []string{"Search", "type text", "Ctrl+F Fetch", "F6 Add", "F7 Edit", "F8 Delete", "Enter Select"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected models modal help to contain %q, got %q", want, view)
 		}
+	}
+	if strings.Contains(view, "F5 Fetch") {
+		t.Fatalf("expected models modal help to avoid F5 Fetch, got %q", view)
+	}
+	if strings.Contains(view, "F9 Default") {
+		t.Fatalf("expected models modal help to omit F9 Default, got %q", view)
+	}
+}
+
+func TestModelsModalEnterSelectsDefaultAndCloses(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "gptload",
+		Profiles: map[string]*config.Profile{
+			"gptload": {},
+		},
+	})
+	m.modelsDraft = []string{"gpt-4o", "claude-sonnet-4-20250514"}
+	m.defaultModel = "gpt-4o"
+	m.openModelsModal()
+	m.modelSearchFocused = false
+	m.modalCursor = 1
+
+	m.handleModalKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.modalOpen {
+		t.Fatal("expected enter to close models modal")
+	}
+	if got := m.defaultModel; got != "claude-sonnet-4-20250514" {
+		t.Fatalf("expected enter to select cursor model as default, got %q", got)
+	}
+	if got := m.fields[pmFieldModelsCSV].value; !strings.Contains(got, "claude-sonnet-4") {
+		t.Fatalf("expected model summary to show selected default, got %q", got)
 	}
 }
 
@@ -191,6 +223,46 @@ func TestProfileManagerRightPaneShowsActionsAndHelpSections(t *testing.T) {
 		if !strings.Contains(right, want) {
 			t.Fatalf("expected %q in right pane, got %q", want, right)
 		}
+	}
+}
+
+func TestProfileManagerRightPaneMarksRequiredFields(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "gptload",
+		Profiles: map[string]*config.Profile{
+			"gptload": {OpenAIBaseURL: "https://api.openai.com/v1"},
+		},
+	})
+
+	right := m.renderRightPane(0)
+	if !strings.Contains(right, "* Profile Name") {
+		t.Fatalf("expected required marker before profile name, got %q", right)
+	}
+	if !strings.Contains(right, "* Base URL") {
+		t.Fatalf("expected required marker before base URL, got %q", right)
+	}
+	if strings.Contains(right, "* API Key") {
+		t.Fatalf("did not expect API key to be marked required, got %q", right)
+	}
+}
+
+func TestProfileManagerClickProviderTypeFieldOpensModal(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "gptload",
+		Profiles: map[string]*config.Profile{
+			"gptload": {OpenAIBaseURL: "https://api.openai.com/v1"},
+		},
+	})
+	m.width = 100
+	m.height = 30
+	_ = m.View()
+
+	x := m.rightContentX + pmLabelWidth + 1
+	y := m.rightContentY + m.fieldStartRelY[pmFieldProviderType]
+	m.handleMainMouse(tea.MouseMsg{X: x, Y: y})
+
+	if !m.modalOpen || m.modalKind != pmModalKindProviderType {
+		t.Fatalf("expected provider type modal, open=%v kind=%d", m.modalOpen, m.modalKind)
 	}
 }
 
