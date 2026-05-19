@@ -208,6 +208,35 @@ func TestProfileManagerLeftButtonsUseTwoRowsWithDefault(t *testing.T) {
 	}
 }
 
+func TestProfileManagerViewScrollsLongProfileList(t *testing.T) {
+	profiles := map[string]*config.Profile{}
+	for _, name := range []string{
+		"p00", "p01", "p02", "p03", "p04", "p05", "p06", "p07",
+		"p08", "p09", "p10", "p11", "p12", "p13", "p14",
+	} {
+		profiles[name] = &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1"}
+	}
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p00",
+		Profiles:       profiles,
+	})
+	m.width = 100
+	m.height = 18
+	m.focusArea = pmFocusProfiles
+	m.switchProfile(11)
+
+	view := m.View()
+	if !strings.Contains(view, "> p11") {
+		t.Fatalf("expected selected profile to stay visible, got %q", view)
+	}
+	if !strings.Contains(view, "↑ more") || !strings.Contains(view, "↓ more") {
+		t.Fatalf("expected scroll indicators in long profile list, got %q", view)
+	}
+	if strings.Contains(view, "p00") {
+		t.Fatalf("expected early profiles to be scrolled out, got %q", view)
+	}
+}
+
 func TestProfileManagerRightPaneShowsActionsAndHelpSections(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "gptload",

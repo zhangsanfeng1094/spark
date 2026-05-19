@@ -10,12 +10,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"spark/internal/compat/client/codex"
 	"spark/internal/compat/policy"
-	openai_chat_target "spark/internal/compat/target/openai_chat"
-	"spark/internal/usage"
 )
 
 const (
@@ -111,10 +108,10 @@ func (h CodexResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	stream, _ := req["stream"].(bool)
 	if stream {
-		ForwardCodexStream(w, upResp, h.Warnf, h.Logf)
+		ForwardCodexStreamWithWriter(w, upResp, selection.Stream, h.Warnf, h.Logf)
 		return
 	}
-	ForwardCodexNonStream(w, upResp, h.Warnf, h.Logf)
+	ForwardCodexNonStreamWithWriter(w, upResp, selection.NonStream, h.Warnf, h.Logf)
 }
 
 func (h CodexResponsesHandler) translatorForSelection(selection RouteSelection, req map[string]any) RequestTranslator {
@@ -128,6 +125,9 @@ func (h CodexResponsesHandler) translatorForSelection(selection RouteSelection, 
 }
 
 func (h CodexResponsesHandler) logDroppedReasoningControls(req map[string]any) {
+	if h.Route.normalized().Target != TargetOpenAIChat {
+		return
+	}
 	irReq := codex.ResponsesInbound(req)
 	reasoning := policy.OpenAIChatReasoningPolicy(h.UpstreamBase, irReq.Model)
 	_, dropped := reasoning.ChatReasoningControls(irReq.Generation.Reasoning)
@@ -185,10 +185,17 @@ func ForwardResponsesPassthrough(w http.ResponseWriter, upResp *http.Response, l
 }
 
 func ForwardCodexNonStream(w http.ResponseWriter, upResp *http.Response, warnf func(string), logf func(string, ...any)) {
+	ForwardCodexNonStreamWithWriter(w, upResp, CodexResponsesFromOpenAIChatResponse, warnf, logf)
+}
+
+func ForwardCodexNonStreamWithWriter(w http.ResponseWriter, upResp *http.Response, writer NonStreamWriter, warnf func(string), logf func(string, ...any)) {
 	if upResp.StatusCode >= 400 {
 		callWarnf(warnf, fmt.Sprintf("forward non-stream upstream status %d", upResp.StatusCode))
 		WriteUpstreamErrorAsJSON(w, upResp)
 		return
+	}
+	if writer == nil {
+		writer = CodexResponsesFromOpenAIChatResponse
 	}
 	rawBody, err := io.ReadAll(upResp.Body)
 	if err != nil {
@@ -205,9 +212,7 @@ func ForwardCodexNonStream(w http.ResponseWriter, upResp *http.Response, warnf f
 	}
 	callLogf(logf, "upstream non-stream response structure=%s", structureJSONForLog(chatResp))
 
-	irResp := openai_chat_target.ChatResponse(chatResp)
-	usage.RecordIR(irResp.Usage, irResp.Model, false, time.Now().UTC())
-	out := codex.ResponsesClientResponse(irResp)
+	out := writer(chatResp)
 	text := stringValue(out["output_text"])
 	callLogf(logf, "non-stream extracted text length=%d", len(text))
 	model := stringValue(out["model"])
@@ -229,10 +234,17 @@ func ForwardCodexNonStream(w http.ResponseWriter, upResp *http.Response, warnf f
 }
 
 func ForwardCodexStream(w http.ResponseWriter, upResp *http.Response, warnf func(string), logf func(string, ...any)) {
+	ForwardCodexStreamWithWriter(w, upResp, WriteCodexResponsesStreamFromOpenAIChat, warnf, logf)
+}
+
+func ForwardCodexStreamWithWriter(w http.ResponseWriter, upResp *http.Response, writer StreamWriter, warnf func(string), logf func(string, ...any)) {
 	if upResp.StatusCode >= 400 {
 		callWarnf(warnf, fmt.Sprintf("forward stream upstream status %d", upResp.StatusCode))
 		WriteUpstreamErrorAsJSON(w, upResp)
 		return
+	}
+	if writer == nil {
+		writer = WriteCodexResponsesStreamFromOpenAIChat
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -246,7 +258,7 @@ func ForwardCodexStream(w http.ResponseWriter, upResp *http.Response, warnf func
 	callLogf(logf, "forward stream headers status=%d content_type=%q content_encoding=%q transfer_encoding=%v",
 		upResp.StatusCode, upResp.Header.Get("Content-Type"), upResp.Header.Get("Content-Encoding"), upResp.TransferEncoding)
 
-	result := WriteCodexResponsesStreamFromOpenAIChat(w, upResp.Body, flusher.Flush)
+	result := writer(w, upResp.Body, flusher.Flush)
 	if result.ScanErr != nil {
 		callLogf(logf, "upstream stream scan error: %v", result.ScanErr)
 	}

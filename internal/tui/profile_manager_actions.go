@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"spark/internal/config"
+	"spark/internal/probe"
 )
 
 func (m *pmModel) runAction(action int) tea.Cmd {
@@ -87,9 +88,6 @@ func (m *pmModel) openAPITypeModal() {
 	if len(m.apiTypeSelected) == 0 && len(options) > 0 {
 		m.apiTypeSelected[options[0]] = true
 	}
-	if len(m.apiTypeSelected) == 0 {
-		m.apiTypeSelected[config.OpenAIAPITypeAuto] = true
-	}
 	for i, opt := range options {
 		if m.apiTypeSelected[opt] {
 			m.modalCursor = i
@@ -147,8 +145,6 @@ func (m *pmModel) confirmProviderTypeSelection() {
 	}
 	m.fields[pmFieldProviderType].value = opt.name
 	m.fields[pmFieldProviderType].cursor = len([]rune(opt.name))
-	m.fields[pmFieldOpenAIBaseURL].value = template.OpenAIBaseURL
-	m.fields[pmFieldOpenAIBaseURL].cursor = len([]rune(template.OpenAIBaseURL))
 	m.fields[pmFieldOpenAIAPIKey].value = apiKey
 	m.fields[pmFieldOpenAIAPIKey].cursor = len([]rune(apiKey))
 	apiType := displayOpenAIAPIType(template.OpenAIAPIType)
@@ -172,13 +168,6 @@ func (m *pmModel) toggleAPITypeOptionAtCursor() {
 		return
 	}
 	selected := options[m.modalCursor]
-	if selected == config.OpenAIAPITypeAuto {
-		m.apiTypeSelected = map[string]bool{
-			config.OpenAIAPITypeAuto: true,
-		}
-		return
-	}
-	delete(m.apiTypeSelected, config.OpenAIAPITypeAuto)
 	if m.apiTypeSelected[selected] {
 		delete(m.apiTypeSelected, selected)
 	} else {
@@ -350,14 +339,11 @@ func (m *pmModel) confirmAPITypeSelection() {
 	options := m.visibleAPITypeOptions()
 	selected := make([]string, 0, len(options))
 	for _, opt := range options {
-		if opt == config.OpenAIAPITypeAuto {
-			continue
-		}
 		if m.apiTypeSelected[opt] {
 			selected = append(selected, opt)
 		}
 	}
-	value := config.OpenAIAPITypeAuto
+	value := config.DefaultOpenAIAPIType
 	if len(selected) > 0 {
 		value = config.CanonicalizeOpenAIAPITypes(strings.Join(selected, ","))
 	}
@@ -437,16 +423,6 @@ func (m *pmModel) save() {
 		m.status = "Error: " + err.Error()
 		return
 	}
-	detectedAPIType := ""
-	if p := m.cfg.Profiles[oldName]; p != nil && config.CanonicalizeOpenAIAPITypes(p.OpenAIAPIType) == config.OpenAIAPITypeAuto {
-		detected, err := DetectOpenAIAPIType(p, strings.TrimSpace(m.defaultModel))
-		if err == nil && detected != "" {
-			p.OpenAIAPIType = detected
-			detectedAPIType = detected
-			m.fields[pmFieldOpenAIAPIType].value = detected
-			m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(detected))
-		}
-	}
 	newName := strings.TrimSpace(m.fields[pmFieldProfileName].value)
 	if newName == "" {
 		m.status = "Profile Name cannot be empty."
@@ -476,10 +452,6 @@ func (m *pmModel) save() {
 	m.selectByName(newName)
 	m.loadSelectedProfileFields()
 	m.dirty = false
-	if detectedAPIType != "" {
-		m.status = fmt.Sprintf("Saved. Detected API type: %s.", detectedAPIType)
-		return
-	}
 	m.status = "Saved profile " + newName + "."
 }
 func (m *pmModel) applyFieldsToProfile(name string) error {
@@ -501,12 +473,12 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 
 // testResultMsg is sent when a connection test completes
 type testResultMsg struct {
-	result TestResult
+	result probe.TestResult
 }
 
 func (m *pmModel) testConnection() tea.Cmd {
 	m.lastTestSummary = ""
-	logPath := appendModelConnectionTestLogf(
+	logPath := probe.AppendModelConnectionTestLogf(
 		"ui trigger profile=%q base_url=%q api_type=%q default_model=%q models=%q",
 		m.currentProfileName(),
 		strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
@@ -538,7 +510,7 @@ func (m *pmModel) testConnection() tea.Cmd {
 		DefaultModel:  model,
 	}
 	return func() tea.Msg {
-		result := TestModelConnection(profileCopy, model)
+		result := probe.TestModelConnection(profileCopy, model)
 		return testResultMsg{result: result}
 	}
 }

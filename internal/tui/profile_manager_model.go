@@ -302,7 +302,6 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 			{name: "Gemini", kind: "gemini"},
 		},
 		apiTypeOptions: []string{
-			config.OpenAIAPITypeAuto,
 			config.OpenAIAPITypeResponses,
 			config.OpenAIAPITypeChatCompletions,
 			config.OpenAIAPITypeGeminiGenerateContent,

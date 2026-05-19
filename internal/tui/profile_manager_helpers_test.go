@@ -105,7 +105,7 @@ func TestSelectProviderTypeFieldUpdatesCurrentProfileDraft(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "default",
 		Profiles: map[string]*config.Profile{
-			"default": {OpenAIBaseURL: "https://api.openai.com/v1"},
+			"default": {OpenAIBaseURL: "https://gateway.example.com/v1"},
 		},
 	})
 	m.focusArea = pmFocusFields
@@ -125,7 +125,7 @@ func TestSelectProviderTypeFieldUpdatesCurrentProfileDraft(t *testing.T) {
 	if got := m.fields[pmFieldProviderType].value; got != "Gemini" {
 		t.Fatalf("provider field mismatch: %q", got)
 	}
-	if got := m.fields[pmFieldOpenAIBaseURL].value; got != "https://generativelanguage.googleapis.com/v1beta" {
+	if got := m.fields[pmFieldOpenAIBaseURL].value; got != "https://gateway.example.com/v1" {
 		t.Fatalf("base url field mismatch: %q", got)
 	}
 	if got := m.fields[pmFieldOpenAIAPIType].value; got != config.OpenAIAPITypeGeminiGenerateContent {
@@ -148,7 +148,7 @@ func TestProfileManagerAPITypeOptionsFollowProviderType(t *testing.T) {
 		{
 			name:     "openai",
 			profile:  &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1"},
-			expected: []string{config.OpenAIAPITypeAuto, config.OpenAIAPITypeResponses, config.OpenAIAPITypeChatCompletions},
+			expected: []string{config.OpenAIAPITypeResponses, config.OpenAIAPITypeChatCompletions},
 		},
 		{
 			name:     "gemini",

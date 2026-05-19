@@ -67,13 +67,39 @@ func TestSelectRouteCodexResponsesToOpenAIChat(t *testing.T) {
 	}
 }
 
+func TestSelectRouteCodexResponsesToAnthropicMessages(t *testing.T) {
+	selection, err := SelectRoute(Route{Client: ClientCodexResponses, Target: TargetAnthropicMessages})
+	if err != nil {
+		t.Fatalf("select route: %v", err)
+	}
+	if selection.Route.Client != ClientCodexResponses || selection.Route.Target != TargetAnthropicMessages {
+		t.Fatalf("route mismatch: %#v", selection.Route)
+	}
+	if selection.Translator == nil || selection.Stream == nil || selection.NonStream == nil {
+		t.Fatalf("expected translator and writers: %#v", selection)
+	}
+	msgReq, err := selection.Translator.ToChat(map[string]any{
+		"model":               "claude-sonnet-4",
+		"instructions":        "be concise",
+		"input":               "hello",
+		"max_output_tokens":   float64(123),
+		"parallel_tool_calls": false,
+	})
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if msgReq["model"] != "claude-sonnet-4" || msgReq["system"] != "be concise" || msgReq["max_tokens"] != 123 {
+		t.Fatalf("translator did not build anthropic request: %#v", msgReq)
+	}
+}
+
 func TestSelectRouteUnsupportedCombination(t *testing.T) {
-	_, err := SelectRoute(Route{Client: ClientCodexResponses, Target: TargetAnthropicMessages})
+	_, err := SelectRoute(Route{Client: ClientProtocol("unknown"), Target: TargetAnthropicMessages})
 	var routeErr UnsupportedRouteError
 	if !errors.As(err, &routeErr) {
 		t.Fatalf("expected unsupported route error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "client=codex_responses target=anthropic_messages") {
+	if !strings.Contains(err.Error(), "client=unknown target=anthropic_messages") {
 		t.Fatalf("unclear route error: %v", err)
 	}
 }

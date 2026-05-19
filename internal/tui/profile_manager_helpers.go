@@ -115,7 +115,7 @@ func (m *pmModel) syncModelFieldViews() {
 func displayOpenAIAPIType(v string) string {
 	canonical := config.CanonicalizeOpenAIAPITypes(v)
 	if canonical == "" {
-		return config.OpenAIAPITypeAuto
+		return config.DefaultOpenAIAPIType
 	}
 	return canonical
 }
@@ -132,7 +132,6 @@ func (m *pmModel) visibleAPITypeOptions() []string {
 		return []string{config.OpenAIAPITypeGeminiGenerateContent}
 	default:
 		return []string{
-			config.OpenAIAPITypeAuto,
 			config.OpenAIAPITypeResponses,
 			config.OpenAIAPITypeChatCompletions,
 		}
@@ -176,7 +175,7 @@ func (m *pmModel) profileTemplate(kind string) *config.Profile {
 			DefaultModel:  "gemini-2.5-flash",
 		}
 	default:
-		return &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1"}
+		return &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1", OpenAIAPIType: config.DefaultOpenAIAPIType}
 	}
 }
 

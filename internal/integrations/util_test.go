@@ -136,13 +136,13 @@ func TestProfileOpenAIAPIType(t *testing.T) {
 		in   *config.Profile
 		want string
 	}{
-		{name: "nil profile defaults to auto", in: nil, want: config.OpenAIAPITypeAuto},
-		{name: "empty defaults to auto", in: &config.Profile{}, want: config.OpenAIAPITypeAuto},
+		{name: "nil profile defaults to responses and chat", in: nil, want: config.DefaultOpenAIAPIType},
+		{name: "empty defaults to responses and chat", in: &config.Profile{}, want: config.DefaultOpenAIAPIType},
 		{name: "responses stays responses", in: &config.Profile{OpenAIAPIType: "responses"}, want: config.OpenAIAPITypeResponses},
-		{name: "auto stays auto", in: &config.Profile{OpenAIAPIType: "auto"}, want: config.OpenAIAPITypeAuto},
+		{name: "legacy auto maps to responses and chat", in: &config.Profile{OpenAIAPIType: "auto"}, want: config.DefaultOpenAIAPIType},
 		{name: "response alias maps responses", in: &config.Profile{OpenAIAPIType: "response"}, want: config.OpenAIAPITypeResponses},
 		{name: "multiple canonicalized", in: &config.Profile{OpenAIAPIType: "chat_completions,responses"}, want: "responses,chat_completions"},
-		{name: "unknown falls back to auto", in: &config.Profile{OpenAIAPIType: "foo"}, want: config.OpenAIAPITypeAuto},
+		{name: "unknown falls back to responses and chat", in: &config.Profile{OpenAIAPIType: "foo"}, want: config.DefaultOpenAIAPIType},
 	}
 
 	for _, tt := range tests {

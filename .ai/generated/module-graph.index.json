@@ -1,0 +1,34 @@
+{
+  "source": "ai",
+  "confidence": "medium",
+  "updated_at": "2026-05-18",
+  "artifact_role": "index",
+  "derived_from": [
+    "go list ./...",
+    "docs/internal-architecture.md",
+    "README.md"
+  ],
+  "nodes": [
+    {"id": "cli", "paths": ["cmd/spark", "internal/app"], "summary": "Executable entrypoint and Cobra command orchestration.", "confidence": "medium"},
+    {"id": "configuration", "paths": ["internal/config"], "summary": "Spark config, profiles, MCP, peer config formats, and migrations.", "confidence": "medium"},
+    {"id": "integrations", "paths": ["internal/integrations"], "summary": "Agent-specific runners/editors, registry, API probe, and proxy runtime wiring.", "confidence": "medium"},
+    {"id": "compatibility", "paths": ["internal/compat"], "summary": "Protocol adapters, shared IR, policy, target mapping, and compatibility gateway.", "confidence": "medium"},
+    {"id": "tui", "paths": ["internal/tui"], "summary": "Terminal UI models, prompts, dashboard, and managers.", "confidence": "medium"},
+    {"id": "skills", "paths": ["internal/skills", "skills"], "summary": "Skill registry, installation, manifests, roots, and peer sync.", "confidence": "medium"},
+    {"id": "usage", "paths": ["internal/usage"], "summary": "Token usage persistence and summaries.", "confidence": "medium"},
+    {"id": "packaging", "paths": ["npm", ".goreleaser.yml", ".github/workflows", "release-please-config.json"], "summary": "Binary release and npm package distribution.", "confidence": "medium"}
+  ],
+  "edges": [
+    {"from": "cli", "to": "configuration", "type": "orchestrates", "evidence_type": "documented", "evidence": "docs/internal-architecture.md", "policy_status": "unreviewed"},
+    {"from": "cli", "to": "integrations", "type": "orchestrates", "evidence_type": "documented", "evidence": "docs/internal-architecture.md", "policy_status": "unreviewed"},
+    {"from": "cli", "to": "tui", "type": "orchestrates", "evidence_type": "documented", "evidence": "docs/internal-architecture.md", "policy_status": "unreviewed"},
+    {"from": "cli", "to": "skills", "type": "orchestrates", "evidence_type": "documented", "evidence": "docs/internal-architecture.md", "policy_status": "unreviewed"},
+    {"from": "cli", "to": "usage", "type": "displays", "evidence_type": "inferred", "evidence": "repository structure and usage summary", "policy_status": "unreviewed"},
+    {"from": "tui", "to": "usage", "type": "renders", "evidence_type": "inferred", "evidence": "repository structure and usage summary", "policy_status": "unreviewed"},
+    {"from": "integrations", "to": "configuration", "type": "consumes", "evidence_type": "documented", "evidence": "docs/internal-architecture.md", "policy_status": "unreviewed"},
+    {"from": "integrations", "to": "compatibility", "type": "delegates-proxy-translation", "evidence_type": "documented", "evidence": "docs/internal-architecture.md", "policy_status": "unreviewed"},
+    {"from": "tui", "to": "configuration", "type": "presents", "evidence_type": "documented", "evidence": "docs/internal-architecture.md", "policy_status": "unreviewed"},
+    {"from": "tui", "to": "skills", "type": "presents", "evidence_type": "documented", "evidence": "docs/internal-architecture.md", "policy_status": "unreviewed"},
+    {"from": "packaging", "to": "cli", "type": "distributes", "evidence_type": "documented", "evidence": "README.md and release files", "policy_status": "unreviewed"}
+  ]
+}

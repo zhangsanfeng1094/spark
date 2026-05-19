@@ -18,6 +18,12 @@ func (t CodexResponsesTranslator) ToChat(req map[string]any) (map[string]any, er
 	return CodexResponsesToOpenAIChatRequest(req, reasoning), nil
 }
 
+type CodexResponsesToAnthropicMessagesTranslator struct{}
+
+func (CodexResponsesToAnthropicMessagesTranslator) ToChat(req map[string]any) (map[string]any, error) {
+	return CodexResponsesToAnthropicMessagesRequest(req), nil
+}
+
 type AnthropicMessagesTranslator struct{}
 
 func (AnthropicMessagesTranslator) ToChat(req map[string]any) (map[string]any, error) {

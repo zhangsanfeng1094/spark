@@ -1,6 +1,6 @@
 package integrations
 
-import "spark/internal/integrations/proxyutil"
+import "spark/internal/compat/proxyutil"
 
 func appendLaunchRouteLog(line string) string {
 	return proxyutil.AppendLaunchRouteLog(line)

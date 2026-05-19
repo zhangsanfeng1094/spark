@@ -16,7 +16,7 @@ const (
 	OpenAIAPITypeChatCompletions       = "chat_completions"
 	OpenAIAPITypeGeminiGenerateContent = "gemini_generate_content"
 	OpenAIAPITypeAnthropicMessages     = "anthropic_messages"
-	OpenAIAPITypeAuto                  = "auto"
+	DefaultOpenAIAPIType               = OpenAIAPITypeResponses + "," + OpenAIAPITypeChatCompletions
 )
 
 type Profile struct {
@@ -36,8 +36,6 @@ func NormalizeOpenAIAPIType(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case OpenAIAPITypeResponses, "response", "openai-responses", "openai_response":
 		return OpenAIAPITypeResponses
-	case OpenAIAPITypeAuto, "prefer_responses", "responses_or_chat_completions":
-		return OpenAIAPITypeAuto
 	case OpenAIAPITypeChatCompletions, "chat-completions", "chat/completions", "openai-completions", "openai_chat_completions":
 		return OpenAIAPITypeChatCompletions
 	case OpenAIAPITypeGeminiGenerateContent, "gemini", "generatecontent", "generate_content", "gemini-generate-content":
@@ -53,6 +51,9 @@ func ParseOpenAIAPITypes(v string) []string {
 	trimmed := strings.TrimSpace(v)
 	if trimmed == "" {
 		return nil
+	}
+	if legacy := legacyOpenAIAPITypes(trimmed); len(legacy) > 0 {
+		return legacy
 	}
 	if normalized := NormalizeOpenAIAPIType(trimmed); normalized != "" {
 		return []string{normalized}
@@ -70,20 +71,21 @@ func ParseOpenAIAPITypes(v string) []string {
 		return nil
 	}
 	seen := map[string]struct{}{}
-	out := make([]string, 0, 2)
 	for _, part := range parts {
+		if legacy := legacyOpenAIAPITypes(part); len(legacy) > 0 {
+			for _, apiType := range legacy {
+				seen[apiType] = struct{}{}
+			}
+			continue
+		}
 		normalized := NormalizeOpenAIAPIType(part)
 		if normalized == "" {
 			continue
-		}
-		if normalized == OpenAIAPITypeAuto {
-			return []string{OpenAIAPITypeAuto}
 		}
 		if _, ok := seen[normalized]; ok {
 			continue
 		}
 		seen[normalized] = struct{}{}
-		out = append(out, normalized)
 	}
 
 	canonical := make([]string, 0, 2)
@@ -103,6 +105,15 @@ func ParseOpenAIAPITypes(v string) []string {
 		return canonical
 	}
 	return nil
+}
+
+func legacyOpenAIAPITypes(v string) []string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "auto", "prefer_responses", "responses_or_chat_completions":
+		return []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}
+	default:
+		return nil
+	}
 }
 
 func CanonicalizeOpenAIAPITypes(v string) string {

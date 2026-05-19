@@ -158,8 +158,8 @@ func TestNormalizeOpenAIAPIType(t *testing.T) {
 		{in: "responses", want: OpenAIAPITypeResponses},
 		{in: "response", want: OpenAIAPITypeResponses},
 		{in: "openai-responses", want: OpenAIAPITypeResponses},
-		{in: "auto", want: OpenAIAPITypeAuto},
-		{in: "prefer_responses", want: OpenAIAPITypeAuto},
+		{in: "auto", want: ""},
+		{in: "prefer_responses", want: ""},
 		{in: "chat_completions", want: OpenAIAPITypeChatCompletions},
 		{in: "chat/completions", want: OpenAIAPITypeChatCompletions},
 		{in: "openai-completions", want: OpenAIAPITypeChatCompletions},
@@ -186,7 +186,8 @@ func TestParseOpenAIAPITypes(t *testing.T) {
 		{in: "responses", want: []string{OpenAIAPITypeResponses}},
 		{in: "chat_completions", want: []string{OpenAIAPITypeChatCompletions}},
 		{in: "gemini_generate_content", want: []string{OpenAIAPITypeGeminiGenerateContent}},
-		{in: "auto", want: []string{OpenAIAPITypeAuto}},
+		{in: "auto", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
+		{in: "prefer_responses", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
 		{in: "responses,chat_completions", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
 		{in: "responses,gemini_generate_content", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeGeminiGenerateContent}},
 		{in: "chat_completions,responses", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
@@ -214,7 +215,7 @@ func TestCanonicalizeOpenAIAPITypes(t *testing.T) {
 		{in: "gemini_generate_content,responses", want: "responses,gemini_generate_content"},
 		{in: "responses|chat_completions", want: "responses,chat_completions"},
 		{in: "anthropic,chat_completions", want: "chat_completions,anthropic_messages"},
-		{in: "auto,responses", want: OpenAIAPITypeAuto},
+		{in: "auto,responses", want: DefaultOpenAIAPIType},
 	}
 	for _, tt := range tests {
 		if got := CanonicalizeOpenAIAPITypes(tt.in); got != tt.want {

@@ -13,12 +13,13 @@ caller protocol
   -> internal/compat/ir
   -> internal/compat/target/*
   -> internal/compat/gateway
-  -> internal/integrations runtime shell
+  -> internal/compat/proxy
+  -> internal/integrations launch wiring
 ```
 
 `internal/integrations` should now stay focused on agent startup and configuration
-wiring. Local proxy runtime lives under `internal/integrations/compatproxy`;
-shared proxy logging/body utilities live under `internal/integrations/proxyutil`.
+wiring. Local proxy runtime lives under `internal/compat/proxy`;
+shared proxy logging/body utilities live under `internal/compat/proxyutil`.
 Protocol field conversion should live under `internal/compat`.
 
 ## Important Completed Work
@@ -38,8 +39,8 @@ Protocol field conversion should live under `internal/compat`.
 - Removed obsolete `anthropicChatExecutor` and `forwardAnthropicStream`
   integration wrappers.
 - Moved local proxy runtime from the `internal/integrations` root package to
-  `internal/integrations/compatproxy`.
-- Moved shared proxy utilities to `internal/integrations/proxyutil`.
+  `internal/compat/proxy`.
+- Moved shared proxy utilities to `internal/compat/proxyutil`.
 
 ## Current Validation
 
@@ -66,15 +67,15 @@ review rename staging carefully. The current focused dirty set includes:
 - `docs/compat-proxy-architecture.md`
 - `docs/internal-architecture.md`
 - `internal/compat/gateway/reasoning_cache.go`
-- `internal/integrations/compatproxy/claude_compat_proxy.go`
-- `internal/integrations/compatproxy/claude_compat_proxy_test.go`
-- `internal/integrations/compatproxy/codex_compat_proxy.go`
-- `internal/integrations/compatproxy/codex_compat_proxy_test.go`
+- `internal/compat/proxy/claude_compat_proxy.go`
+- `internal/compat/proxy/claude_compat_proxy_test.go`
+- `internal/compat/proxy/codex_compat_proxy.go`
+- `internal/compat/proxy/codex_compat_proxy_test.go`
 - deleted `internal/integrations/compat_chat_extractors.go`
-- `internal/integrations/compatproxy/compat_executors.go`
-- `internal/integrations/compatproxy/compat_helpers.go`
-- `internal/integrations/compatproxy/compat_test_helpers_test.go`
-- `internal/integrations/proxyutil/compatio.go`
+- `internal/compat/proxy/compat_executors.go`
+- `internal/compat/proxy/compat_helpers.go`
+- `internal/compat/proxy/compat_test_helpers_test.go`
+- `internal/compat/proxyutil/compatio.go`
 
 There are also broader compat migration changes in the worktree from earlier
 steps, including client/target package moves and docs updates. Use

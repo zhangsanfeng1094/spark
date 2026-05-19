@@ -35,7 +35,7 @@ func (m *pmModel) View() string {
 	)
 	availableOuterH := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if availableOuterH > 2 {
-		paneInnerH = max(paneInnerH, availableOuterH-2)
+		paneInnerH = availableOuterH - 2
 	}
 
 	leftPane := m.renderLeftPane(paneInnerH)
@@ -585,8 +585,6 @@ func summarizeActivityStatus(main string) string {
 	case strings.HasPrefix(trimmed, "✗ Test failed · "):
 		return "✗ " + strings.TrimPrefix(trimmed, "✗ Test failed · ")
 	case strings.HasPrefix(trimmed, "Saved profile "):
-		return "✓ Saved profile"
-	case strings.HasPrefix(trimmed, "Saved. Detected API type:"):
 		return "✓ Saved profile"
 	case strings.HasPrefix(trimmed, "Saved "):
 		return "✓ " + trimmed

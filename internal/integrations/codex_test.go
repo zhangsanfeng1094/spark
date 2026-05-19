@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	compatproxy "spark/internal/compat/proxy"
 	"spark/internal/config"
-	"spark/internal/integrations/compatproxy"
 )
 
 func TestCodexArgs(t *testing.T) {
@@ -70,9 +70,9 @@ func TestCodexProxyModeForAPIType(t *testing.T) {
 		wantUseProxy bool
 	}{
 		{name: "responses no proxy", apiType: config.OpenAIAPITypeResponses, wantUseProxy: false},
-		{name: "responses+chat no proxy", apiType: "responses,chat_completions", wantUseProxy: false},
-		{name: "auto prefer responses", apiType: config.OpenAIAPITypeAuto, wantMode: compatproxy.ResponsesProxyModePreferResponses, wantUseProxy: true},
+		{name: "responses+chat prefer responses gateway", apiType: config.DefaultOpenAIAPIType, wantMode: compatproxy.ResponsesProxyModePreferResponses, wantUseProxy: true},
 		{name: "chat only compat", apiType: config.OpenAIAPITypeChatCompletions, wantMode: compatproxy.ResponsesProxyModeChatCompletionsOnly, wantUseProxy: true},
+		{name: "anthropic messages compat", apiType: config.OpenAIAPITypeAnthropicMessages, wantMode: compatproxy.ResponsesProxyModeAnthropicMessagesOnly, wantUseProxy: true},
 		{name: "unknown compat", apiType: "unknown", wantMode: compatproxy.ResponsesProxyModeChatCompletionsOnly, wantUseProxy: true},
 	}
 	for _, tt := range tests {

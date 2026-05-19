@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
+	compatproxy "spark/internal/compat/proxy"
 	"spark/internal/config"
-	"spark/internal/integrations/compatproxy"
 )
 
 type Codex struct{}
@@ -37,20 +37,22 @@ func (c *Codex) Run(profile *config.Profile, model string, args []string) error 
 		return fmt.Errorf("codex is not installed, install with: npm install -g @openai/codex")
 	}
 
+	apiType := profileOpenAIAPIType(profile)
 	baseURL := profileBase(profile)
+	if config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeAnthropicMessages) &&
+		!config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeResponses) &&
+		!config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeChatCompletions) &&
+		profile != nil && strings.TrimSpace(profile.AnthropicBaseURL) != "" {
+		baseURL = anthropicBaseURL(profile)
+	}
 	apiKey := profileKey(profile)
 	resolvedUpstreamKey, upstreamKeySource := resolveOpenAIAPIKey(apiKey)
-	apiType := profileOpenAIAPIType(profile)
-	quietCompatStderr := shouldQuietCompatStderr()
-	if apiType == config.OpenAIAPITypeAuto {
-		detectedType, err := detectOpenAIAPIType(baseURL, resolvedUpstreamKey, model)
-		if err == nil && detectedType != "" {
-			apiType = detectedType
-			if !quietCompatStderr {
-				fmt.Fprintf(os.Stderr, "Detected OpenAI API type: %s\n", apiType)
-			}
-		}
+	if config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeAnthropicMessages) &&
+		!config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeResponses) &&
+		!config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeChatCompletions) {
+		resolvedUpstreamKey, upstreamKeySource = resolveAnthropicAPIKey(profile)
 	}
+	quietCompatStderr := shouldQuietCompatStderr()
 
 	envBaseURL := baseURL
 	envKey := resolvedUpstreamKey
@@ -97,15 +99,22 @@ func resolveOpenAIAPIKey(profileKey string) (key string, source string) {
 }
 
 func codexProxyModeForAPIType(apiType string) (compatproxy.ResponsesProxyMode, bool) {
-	if config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeResponses) {
+	supportsResponses := config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeResponses)
+	supportsChatCompletions := config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeChatCompletions)
+	supportsAnthropicMessages := config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeAnthropicMessages)
+	if supportsResponses && supportsChatCompletions {
+		return compatproxy.ResponsesProxyModePreferResponses, true
+	}
+	if supportsResponses {
 		return "", false
 	}
-	switch apiType {
-	case config.OpenAIAPITypeAuto:
-		return compatproxy.ResponsesProxyModePreferResponses, true
-	default:
+	if supportsAnthropicMessages {
+		return compatproxy.ResponsesProxyModeAnthropicMessagesOnly, true
+	}
+	if supportsChatCompletions {
 		return compatproxy.ResponsesProxyModeChatCompletionsOnly, true
 	}
+	return compatproxy.ResponsesProxyModeChatCompletionsOnly, true
 }
 
 func codexEnv(profile *config.Profile, envKey string) []string {

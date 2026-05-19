@@ -167,12 +167,12 @@ func profileKey(profile *config.Profile) string {
 
 func profileOpenAIAPIType(profile *config.Profile) string {
 	if profile == nil {
-		return config.OpenAIAPITypeAuto
+		return config.DefaultOpenAIAPIType
 	}
 	if canonical := config.CanonicalizeOpenAIAPITypes(profile.OpenAIAPIType); canonical != "" {
 		return canonical
 	}
-	return config.OpenAIAPITypeAuto
+	return config.DefaultOpenAIAPIType
 }
 
 func firstModel(models []string) (string, error) {

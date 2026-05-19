@@ -83,6 +83,19 @@ func SetRecorder(fn func(Record) error) {
 	recorder = fn
 }
 
+func ReplaceRecorder(fn func(Record) error) func() {
+	recorderMu.Lock()
+	prev := recorder
+	recorder = fn
+	recorderMu.Unlock()
+
+	return func() {
+		recorderMu.Lock()
+		defer recorderMu.Unlock()
+		recorder = prev
+	}
+}
+
 func RecordIR(usage ir.Usage, model string, stream bool, now time.Time) {
 	record, ok := RecordFromIRUsage(usage, model, stream, now)
 	if !ok {

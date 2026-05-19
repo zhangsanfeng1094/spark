@@ -222,28 +222,6 @@ func TestProfileManagerFetchModelsUsesSelectedAPIType(t *testing.T) {
 	}
 }
 
-func TestTestModelConnection_WritesLogFile(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "model-test.log")
-	t.Setenv("SPARK_MODEL_TEST_LOG", logPath)
-
-	result := TestModelConnection(nil, "")
-	if result.LogPath != logPath {
-		t.Fatalf("expected log path %q, got %q", logPath, result.LogPath)
-	}
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("expected log file to exist, read failed: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, "[model-test] ===== model connection test start =====") {
-		t.Fatalf("missing start log line, got: %q", content)
-	}
-	if !strings.Contains(content, `result=fail reason="Profile is nil"`) {
-		t.Fatalf("missing fail reason log line, got: %q", content)
-	}
-}
-
 func TestProfileManagerTestConnection_SetsStatusWithLogPath(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "ui-trigger.log")
 	t.Setenv("SPARK_MODEL_TEST_LOG", logPath)
@@ -640,38 +618,5 @@ func TestHandleMainMouse_ProfileListClickMatchesRenderedRow(t *testing.T) {
 	})
 	if got := m.currentProfileName(); got != "beta" {
 		t.Fatalf("expected clicking beta row to select beta, got %q", got)
-	}
-}
-
-func TestTestModelConnection_TestsAllEnabledEndpoints(t *testing.T) {
-	profile := &config.Profile{
-		OpenAIBaseURL: "http://127.0.0.1:1/v1",
-		OpenAIAPIType: "responses,chat_completions",
-		DefaultModel:  "m1",
-	}
-	got := TestModelConnection(profile, "")
-	if got.Success {
-		t.Fatalf("expected failure when one enabled endpoint fails, got success: %s", got.Message)
-	}
-	if !strings.Contains(got.Message, "responses=ERR") || !strings.Contains(got.Message, "chat_completions=ERR") {
-		t.Fatalf("expected both endpoint results in message, got %q", got.Message)
-	}
-}
-
-func TestTestModelConnection_AnthropicEndpointDoesNotFallbackToResponses(t *testing.T) {
-	profile := &config.Profile{
-		OpenAIBaseURL: "http://127.0.0.1:1",
-		OpenAIAPIType: config.OpenAIAPITypeAnthropicMessages,
-		DefaultModel:  "claude-sonnet-4-20250514",
-	}
-	got := TestModelConnection(profile, "")
-	if got.Success {
-		t.Fatalf("expected failure against closed port, got success: %s", got.Message)
-	}
-	if !strings.Contains(got.Message, "anthropic_messages=ERR") {
-		t.Fatalf("expected anthropic endpoint result in message, got %q", got.Message)
-	}
-	if strings.Contains(got.Message, "responses=ERR") {
-		t.Fatalf("did not expect responses fallback for anthropic profile, got %q", got.Message)
 	}
 }

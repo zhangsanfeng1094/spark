@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"strings"
 
+	compatproxy "spark/internal/compat/proxy"
 	"spark/internal/config"
-	"spark/internal/integrations/compatproxy"
 )
 
 type Claude struct{}
