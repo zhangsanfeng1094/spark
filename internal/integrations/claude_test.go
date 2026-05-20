@@ -6,48 +6,31 @@ import (
 	"spark/internal/config"
 )
 
-func TestResolveAnthropicAPIKey(t *testing.T) {
-	p := &config.Profile{OpenAIAPIKey: "profile-openai-key"}
+func TestResolveClaudeDirectToken(t *testing.T) {
+	p := &config.Profile{APIKey: "profile-key"}
 
-	t.Run("env anthropic wins", func(t *testing.T) {
+	t.Run("profile key only", func(t *testing.T) {
 		t.Setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
-		got, source := resolveAnthropicAPIKey(p)
-		if got != "env-anthropic-key" || source != "env.ANTHROPIC_API_KEY" {
-			t.Fatalf("unexpected key=%q source=%q", got, source)
+		t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+		got, source := resolveClaudeDirectToken(p)
+		if got != "profile-key" || source != "profile.api_key" {
+			t.Fatalf("unexpected token=%q source=%q", got, source)
 		}
 	})
 
-	t.Run("fallback profile openai key", func(t *testing.T) {
-		t.Setenv("ANTHROPIC_API_KEY", "")
-		got, source := resolveAnthropicAPIKey(p)
-		if got != "profile-openai-key" || source != "profile.openai_api_key" {
-			t.Fatalf("unexpected key=%q source=%q", got, source)
+	t.Run("does not read anthropic env", func(t *testing.T) {
+		t.Setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
+		t.Setenv("ANTHROPIC_AUTH_TOKEN", "env-token")
+		got, source := resolveClaudeDirectToken(&config.Profile{})
+		if got != "" || source != "none" {
+			t.Fatalf("unexpected token=%q source=%q", got, source)
 		}
 	})
 }
 
-func TestResolveAnthropicAuthToken(t *testing.T) {
-	p := &config.Profile{AnthropicAuthToken: "profile-token"}
-
-	t.Run("env wins", func(t *testing.T) {
-		t.Setenv("ANTHROPIC_AUTH_TOKEN", "env-token")
-		got, source := resolveAnthropicAuthToken(p, false)
-		if got != "env-token" || source != "env.ANTHROPIC_AUTH_TOKEN" {
-			t.Fatalf("unexpected token=%q source=%q", got, source)
-		}
-	})
-
-	t.Run("profile fallback", func(t *testing.T) {
-		t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
-		got, source := resolveAnthropicAuthToken(p, false)
-		if got != "profile-token" || source != "profile.anthropic_auth_token" {
-			t.Fatalf("unexpected token=%q source=%q", got, source)
-		}
-	})
-
+func TestResolveClaudeCompatToken(t *testing.T) {
 	t.Run("default ollama", func(t *testing.T) {
-		t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
-		got, source := resolveAnthropicAuthToken(&config.Profile{}, true)
+		got, source := resolveClaudeCompatToken(true)
 		if got != "ollama" || source != "compat.default" {
 			t.Fatalf("unexpected token=%q source=%q", got, source)
 		}
@@ -74,7 +57,7 @@ func TestResolveClaudeModelStripsNUL(t *testing.T) {
 func TestClaudeUsesDirectModeWhenAPITypeSupportsAnthropicMessages(t *testing.T) {
 	profile := &config.Profile{
 		OpenAIBaseURL:    "https://gateway.example.com/v1",
-		OpenAIAPIKey:     "profile-key",
+		APIKey:           "profile-key",
 		OpenAIAPIType:    config.OpenAIAPITypeAnthropicMessages,
 		AnthropicBaseURL: "https://gateway.example.com/anthropic",
 	}
@@ -87,7 +70,7 @@ func TestClaudeUsesDirectModeWhenAPITypeSupportsAnthropicMessages(t *testing.T) 
 func TestClaudeUsesCompatProxyWhenAPITypeDoesNotSupportAnthropicMessages(t *testing.T) {
 	profile := &config.Profile{
 		OpenAIBaseURL:    "https://gateway.example.com/v1",
-		OpenAIAPIKey:     "profile-key",
+		APIKey:           "profile-key",
 		OpenAIAPIType:    config.OpenAIAPITypeChatCompletions,
 		AnthropicBaseURL: "https://gateway.example.com/anthropic",
 	}
@@ -97,10 +80,8 @@ func TestClaudeUsesCompatProxyWhenAPITypeDoesNotSupportAnthropicMessages(t *test
 	}
 }
 
-func TestClaudeDirectAuthAvoidsDefaultTokenAPIKeyConflict(t *testing.T) {
+func TestClaudeDirectAuthDropsDefaultToken(t *testing.T) {
 	apiKey, apiKeySource, token, tokenSource := selectClaudeDirectAuth(
-		"profile-key",
-		"profile.openai_api_key",
 		"ollama",
 		"default",
 	)
@@ -108,23 +89,21 @@ func TestClaudeDirectAuthAvoidsDefaultTokenAPIKeyConflict(t *testing.T) {
 	if apiKey != "" || apiKeySource != "none" {
 		t.Fatalf("unexpected api key selection: key=%q source=%q", apiKey, apiKeySource)
 	}
-	if token != "profile-key" || tokenSource != "profile.openai_api_key" {
-		t.Fatalf("expected profile API key to be used as auth token, got token=%q source=%q", token, tokenSource)
+	if token != "" || tokenSource != "none" {
+		t.Fatalf("expected default token to be dropped, got token=%q source=%q", token, tokenSource)
 	}
 }
 
-func TestClaudeDirectAuthPrefersExplicitTokenOverAPIKey(t *testing.T) {
+func TestClaudeDirectAuthKeepsProfileToken(t *testing.T) {
 	apiKey, apiKeySource, token, tokenSource := selectClaudeDirectAuth(
-		"profile-key",
-		"profile.openai_api_key",
 		"profile-token",
-		"profile.anthropic_auth_token",
+		"profile.api_key",
 	)
 
 	if apiKey != "" || apiKeySource != "none" {
-		t.Fatalf("expected API key to be dropped when explicit token is set, got key=%q source=%q", apiKey, apiKeySource)
+		t.Fatalf("unexpected api key selection: key=%q source=%q", apiKey, apiKeySource)
 	}
-	if token != "profile-token" || tokenSource != "profile.anthropic_auth_token" {
+	if token != "profile-token" || tokenSource != "profile.api_key" {
 		t.Fatalf("unexpected token selection: token=%q source=%q", token, tokenSource)
 	}
 }

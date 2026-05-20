@@ -33,10 +33,7 @@ func fetchModelsWithClient(profile *config.Profile, client *http.Client) ([]stri
 		baseURL = "https://" + baseURL
 	}
 
-	apiKey := strings.TrimSpace(profile.OpenAIAPIKey)
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(profile.AnthropicAuthToken)
-	}
+	apiKey := strings.TrimSpace(profile.EffectiveAPIKey())
 	modelListURL := strings.TrimSpace(profile.ModelListURL)
 	if config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
 		if modelListURL != "" {

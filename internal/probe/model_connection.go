@@ -84,7 +84,7 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 	if len(apiTypes) == 0 {
 		apiTypes = config.ParseOpenAIAPITypes(config.DefaultOpenAIAPIType)
 	}
-	apiKey := strings.TrimSpace(profile.OpenAIAPIKey)
+	apiKey := strings.TrimSpace(profile.EffectiveAPIKey())
 	AppendModelConnectionTestLogf(
 		"config base_url=%q api_types=%q has_api_key=%t org=%q project=%q",
 		baseURL,

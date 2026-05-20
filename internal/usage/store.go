@@ -36,6 +36,36 @@ type Summary struct {
 	CachedInputTokens int
 }
 
+type Breakdown struct {
+	Client            string
+	Model             string
+	Requests          int
+	InputTokens       int
+	OutputTokens      int
+	TotalTokens       int
+	CachedInputTokens int
+}
+
+type DailySummary struct {
+	Day               time.Time
+	Requests          int
+	InputTokens       int
+	OutputTokens      int
+	TotalTokens       int
+	CachedInputTokens int
+}
+
+type HeavyRequest struct {
+	Timestamp         time.Time
+	Client            string
+	Model             string
+	Stream            bool
+	InputTokens       int
+	OutputTokens      int
+	TotalTokens       int
+	CachedInputTokens int
+}
+
 type Window string
 
 const (
@@ -188,6 +218,20 @@ func Summarize(records []Record, now time.Time) []Summary {
 	return SummarizeForClients(records, []string{ClientAll()}, now)
 }
 
+func SummarizeWindow(records []Record, window Window, now time.Time) Summary {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	summary := Summary{Window: window, Client: ClientAll()}
+	for _, record := range records {
+		if !inWindow(record.Timestamp, window, now) {
+			continue
+		}
+		addRecordToSummary(&summary, record)
+	}
+	return summary
+}
+
 func SummarizeForClients(records []Record, clients []string, now time.Time) []Summary {
 	if now.IsZero() {
 		now = time.Now()
@@ -204,18 +248,137 @@ func SummarizeForClients(records []Record, clients []string, now time.Time) []Su
 				if !inWindow(record.Timestamp, window, now) || !recordMatchesClient(record, client) {
 					continue
 				}
-				summary.Requests++
-				summary.InputTokens += record.InputTokens
-				summary.OutputTokens += record.OutputTokens
-				total := record.TotalTokens
-				if total == 0 {
-					total = record.InputTokens + record.OutputTokens
-				}
-				summary.TotalTokens += total
-				summary.CachedInputTokens += record.CachedInputTokens
+				addRecordToSummary(&summary, record)
 			}
 			out = append(out, summary)
 		}
+	}
+	return out
+}
+
+func BreakdownsForWindow(records []Record, window Window, now time.Time) []Breakdown {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	byKey := map[string]*Breakdown{}
+	for _, record := range records {
+		if !inWindow(record.Timestamp, window, now) {
+			continue
+		}
+		client := displayClient(record.Client)
+		model := displayModel(record.Model)
+		key := client + "\x00" + model
+		breakdown := byKey[key]
+		if breakdown == nil {
+			breakdown = &Breakdown{Client: client, Model: model}
+			byKey[key] = breakdown
+		}
+		addRecordToBreakdown(breakdown, record)
+	}
+	out := make([]Breakdown, 0, len(byKey))
+	for _, breakdown := range byKey {
+		out = append(out, *breakdown)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TotalTokens != out[j].TotalTokens {
+			return out[i].TotalTokens > out[j].TotalTokens
+		}
+		if out[i].Requests != out[j].Requests {
+			return out[i].Requests > out[j].Requests
+		}
+		if out[i].Client != out[j].Client {
+			return out[i].Client < out[j].Client
+		}
+		return out[i].Model < out[j].Model
+	})
+	return out
+}
+
+func DailySeriesForWindow(records []Record, window Window, now time.Time) []DailySummary {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	days := dailySeriesDays(window, now)
+	if len(days) == 0 {
+		return nil
+	}
+	byDay := make(map[string]*DailySummary, len(days))
+	for i := range days {
+		key := dayKey(days[i].Day)
+		byDay[key] = &days[i]
+	}
+	for _, record := range records {
+		if !inWindow(record.Timestamp, window, now) {
+			continue
+		}
+		key := dayKey(record.Timestamp.In(now.Location()))
+		day := byDay[key]
+		if day == nil {
+			continue
+		}
+		addRecordToDaily(day, record)
+	}
+	return days
+}
+
+func HourlySeriesForToday(records []Record, now time.Time) []DailySummary {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.In(now.Location())
+	start := startOfDay(now)
+	hours := now.Hour() + 1
+	out := make([]DailySummary, 0, hours)
+	byHour := make(map[string]*DailySummary, hours)
+	for i := 0; i < hours; i++ {
+		point := DailySummary{Day: start.Add(time.Duration(i) * time.Hour)}
+		out = append(out, point)
+		byHour[hourKey(point.Day)] = &out[len(out)-1]
+	}
+	for _, record := range records {
+		if !inWindow(record.Timestamp, WindowToday, now) {
+			continue
+		}
+		hour := byHour[hourKey(record.Timestamp.In(now.Location()))]
+		if hour == nil {
+			continue
+		}
+		addRecordToDaily(hour, record)
+	}
+	return out
+}
+
+func HeavyRequestsForWindow(records []Record, window Window, now time.Time, limit int) []HeavyRequest {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	out := make([]HeavyRequest, 0, limit)
+	for _, record := range records {
+		if !inWindow(record.Timestamp, window, now) {
+			continue
+		}
+		out = append(out, HeavyRequest{
+			Timestamp:         record.Timestamp,
+			Client:            displayClient(record.Client),
+			Model:             displayModel(record.Model),
+			Stream:            record.Stream,
+			InputTokens:       record.InputTokens,
+			OutputTokens:      record.OutputTokens,
+			TotalTokens:       recordTotal(record),
+			CachedInputTokens: record.CachedInputTokens,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TotalTokens != out[j].TotalTokens {
+			return out[i].TotalTokens > out[j].TotalTokens
+		}
+		return out[i].Timestamp.After(out[j].Timestamp)
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }
@@ -321,6 +484,53 @@ func normalizeClient(client string) string {
 	return strings.ToLower(strings.TrimSpace(client))
 }
 
+func displayClient(client string) string {
+	client = normalizeClient(client)
+	if client == "" {
+		return "unknown"
+	}
+	return client
+}
+
+func displayModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "unknown model"
+	}
+	return model
+}
+
+func addRecordToSummary(summary *Summary, record Record) {
+	summary.Requests++
+	summary.InputTokens += record.InputTokens
+	summary.OutputTokens += record.OutputTokens
+	summary.TotalTokens += recordTotal(record)
+	summary.CachedInputTokens += record.CachedInputTokens
+}
+
+func addRecordToBreakdown(summary *Breakdown, record Record) {
+	summary.Requests++
+	summary.InputTokens += record.InputTokens
+	summary.OutputTokens += record.OutputTokens
+	summary.TotalTokens += recordTotal(record)
+	summary.CachedInputTokens += record.CachedInputTokens
+}
+
+func addRecordToDaily(summary *DailySummary, record Record) {
+	summary.Requests++
+	summary.InputTokens += record.InputTokens
+	summary.OutputTokens += record.OutputTokens
+	summary.TotalTokens += recordTotal(record)
+	summary.CachedInputTokens += record.CachedInputTokens
+}
+
+func recordTotal(record Record) int {
+	if record.TotalTokens != 0 {
+		return record.TotalTokens
+	}
+	return record.InputTokens + record.OutputTokens
+}
+
 func recordMatchesClient(record Record, client string) bool {
 	if client == "" || client == ClientAll() {
 		return true
@@ -330,6 +540,38 @@ func recordMatchesClient(record Record, client string) bool {
 		recordClient = "unknown"
 	}
 	return recordClient == client
+}
+
+func dailySeriesDays(window Window, now time.Time) []DailySummary {
+	count := 30
+	switch window {
+	case WindowToday:
+		count = 1
+	case Window7D:
+		count = 7
+	case Window30D, WindowAll:
+		count = 30
+	}
+	start := startOfDay(now.In(now.Location())).AddDate(0, 0, -(count - 1))
+	days := make([]DailySummary, 0, count)
+	for i := 0; i < count; i++ {
+		days = append(days, DailySummary{Day: start.AddDate(0, 0, i)})
+	}
+	return days
+}
+
+func startOfDay(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+func dayKey(t time.Time) string {
+	return startOfDay(t).Format("2006-01-02")
+}
+
+func hourKey(t time.Time) string {
+	t = t.Truncate(time.Hour)
+	return t.Format("2006-01-02 15")
 }
 
 func inWindow(t time.Time, window Window, now time.Time) bool {

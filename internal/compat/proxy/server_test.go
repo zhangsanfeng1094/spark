@@ -85,6 +85,30 @@ func TestCompatProxyClose_IsIdempotentAndRestoresUsageRecorder(t *testing.T) {
 	p.logf("late log after close")
 }
 
+func TestInstallUsageRecorderAddsClientAndFallbackModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	restore := installUsageRecorder("codex", "gpt-fallback", nil)
+	usage.RecordIR(ir.Usage{InputTokens: 3, OutputTokens: 4}, "", true, time.Now())
+	restore()
+	defer usage.SetRecorder(nil)
+
+	path, err := usage.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	records, err := usage.Read(path)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	if records[0].Client != "codex" || records[0].Model != "gpt-fallback" {
+		t.Fatalf("record identity = client %q model %q, want codex gpt-fallback", records[0].Client, records[0].Model)
+	}
+}
+
 func TestPostUpstreamJSON_SetsPathHeadersAndBody(t *testing.T) {
 	t.Setenv("AGENT_LAUNCH_COMPAT_LOG", filepath.Join(t.TempDir(), "codex-compat.log"))
 

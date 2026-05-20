@@ -59,27 +59,18 @@ func resolveClaudeModel(profile *config.Profile, model string) string {
 	return ""
 }
 
-func resolveAnthropicAPIKey(profile *config.Profile) (string, string) {
-	if k := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); k != "" {
-		return k, "env.ANTHROPIC_API_KEY"
-	}
+func resolveClaudeDirectToken(profile *config.Profile) (string, string) {
 	if k := strings.TrimSpace(profileKey(profile)); k != "" {
-		return k, "profile.openai_api_key"
+		return k, "profile.api_key"
 	}
 	return "", "none"
 }
 
-func resolveAnthropicAuthToken(profile *config.Profile, usingCompatProxy bool) (string, string) {
-	if t := strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN")); t != "" {
-		return t, "env.ANTHROPIC_AUTH_TOKEN"
-	}
-	if profile != nil && strings.TrimSpace(profile.AnthropicAuthToken) != "" {
-		return strings.TrimSpace(profile.AnthropicAuthToken), "profile.anthropic_auth_token"
-	}
+func resolveClaudeCompatToken(usingCompatProxy bool) (string, string) {
 	if usingCompatProxy {
 		return "ollama", "compat.default"
 	}
-	return "ollama", "default"
+	return "", "none"
 }
 
 func claudeShouldUseCompatProxy(profile *config.Profile) bool {
@@ -89,14 +80,10 @@ func claudeShouldUseCompatProxy(profile *config.Profile) bool {
 	return !config.SupportsOpenAIAPIType(profileOpenAIAPIType(profile), config.OpenAIAPITypeAnthropicMessages)
 }
 
-func selectClaudeDirectAuth(apiKey, apiKeySource, token, tokenSource string) (string, string, string, string) {
-	apiKey = strings.TrimSpace(apiKey)
+func selectClaudeDirectAuth(token, tokenSource string) (string, string, string, string) {
 	token = strings.TrimSpace(token)
-	if apiKey == "" || token == "" {
-		return apiKey, apiKeySource, token, tokenSource
-	}
 	if tokenSource == "default" || tokenSource == "compat.default" {
-		return "", "none", apiKey, apiKeySource
+		return "", "none", "", "none"
 	}
 	return "", "none", token, tokenSource
 }
@@ -116,7 +103,8 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 	}
 	cmdArgs = append(cmdArgs, args...)
 	baseURL := anthropicBaseURL(profile)
-	apiKey, apiKeySource := resolveAnthropicAPIKey(profile)
+	apiKey := ""
+	apiKeySource := "none"
 	token := ""
 	tokenSource := "none"
 	usingCompatProxy := false
@@ -134,7 +122,7 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 		// Match Ollama's Claude launch behavior: key is required by client but ignored by backend.
 		apiKey = ""
 		usingCompatProxy = true
-		token, tokenSource = resolveAnthropicAuthToken(profile, usingCompatProxy)
+		token, tokenSource = resolveClaudeCompatToken(usingCompatProxy)
 		routeLine := fmt.Sprintf("[route] mode=compat integration=claude upstream=%s proxy=%s log=%s upstream_key_source=%s upstream_key_set=%t", profileBase(profile), baseURL, proxy.LogPath(), upstreamKeySource, strings.TrimSpace(upstreamKey) != "")
 		routeLogPath := appendLaunchRouteLog(routeLine)
 		if routeLogPath != "" {
@@ -146,8 +134,8 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 			fmt.Fprintf(os.Stderr, "Anthropic compatibility adapter log file: %s\n", proxy.LogPath())
 		}
 	} else {
-		token, tokenSource = resolveAnthropicAuthToken(profile, usingCompatProxy)
-		apiKey, apiKeySource, token, tokenSource = selectClaudeDirectAuth(apiKey, apiKeySource, token, tokenSource)
+		token, tokenSource = resolveClaudeDirectToken(profile)
+		apiKey, apiKeySource, token, tokenSource = selectClaudeDirectAuth(token, tokenSource)
 		routeLine := fmt.Sprintf("[route] mode=direct integration=claude upstream=%s api_key_source=%s api_key_set=%t token_source=%s token_set=%t", baseURL, apiKeySource, strings.TrimSpace(apiKey) != "", tokenSource, strings.TrimSpace(token) != "")
 		routeLogPath := appendLaunchRouteLog(routeLine)
 		if routeLogPath != "" {

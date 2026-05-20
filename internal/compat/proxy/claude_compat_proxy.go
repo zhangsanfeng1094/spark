@@ -29,7 +29,7 @@ func StartAnthropicProxy(upstreamBase, upstreamKey, preferredModel string) (*Ant
 		upstreamKey:       upstreamKey,
 		preferredModel:    strings.TrimSpace(preferredModel),
 	}
-	p.restore = installUsageRecorder("claude", p.logf)
+	p.restore = installUsageRecorder("claude", p.preferredModel, p.logf)
 	p.handleFunc("/v1/messages", p.handleMessages)
 	p.handleFunc("/messages", p.handleMessages)
 	p.start()

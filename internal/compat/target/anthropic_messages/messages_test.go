@@ -104,6 +104,20 @@ func TestMessageResponseMapsContentToolUseAndUsage(t *testing.T) {
 
 func TestMessageStreamEventsMapDeltas(t *testing.T) {
 	events := MessageStreamEvents(map[string]any{
+		"type":  "content_block_start",
+		"index": float64(1),
+		"content_block": map[string]any{
+			"type":  "tool_use",
+			"id":    "toolu_1",
+			"name":  "exec_command",
+			"input": map[string]any{},
+		},
+	})
+	if len(events) != 1 || events[0].Delta.ToolCall == nil || events[0].Delta.ToolCall.Arguments != "" {
+		t.Fatalf("tool start should not treat empty input as arguments: %#v", events)
+	}
+
+	events = MessageStreamEvents(map[string]any{
 		"type":  "content_block_delta",
 		"index": float64(1),
 		"delta": map[string]any{"type": "input_json_delta", "partial_json": `{"a":`},

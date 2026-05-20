@@ -70,7 +70,7 @@ func TestCodexProxyModeForAPIType(t *testing.T) {
 		wantUseProxy bool
 	}{
 		{name: "responses no proxy", apiType: config.OpenAIAPITypeResponses, wantUseProxy: false},
-		{name: "responses+chat prefer responses gateway", apiType: config.DefaultOpenAIAPIType, wantMode: compatproxy.ResponsesProxyModePreferResponses, wantUseProxy: true},
+		{name: "responses+chat direct", apiType: config.DefaultOpenAIAPIType, wantUseProxy: false},
 		{name: "chat only compat", apiType: config.OpenAIAPITypeChatCompletions, wantMode: compatproxy.ResponsesProxyModeChatCompletionsOnly, wantUseProxy: true},
 		{name: "anthropic messages compat", apiType: config.OpenAIAPITypeAnthropicMessages, wantMode: compatproxy.ResponsesProxyModeAnthropicMessagesOnly, wantUseProxy: true},
 		{name: "unknown compat", apiType: "unknown", wantMode: compatproxy.ResponsesProxyModeChatCompletionsOnly, wantUseProxy: true},
@@ -90,7 +90,7 @@ func TestResolveOpenAIAPIKey(t *testing.T) {
 		t.Setenv("OPENAI_API_KEY", "")
 		t.Setenv("CODEX_API_KEY", "")
 		got, source := resolveOpenAIAPIKey("profile-key")
-		if got != "profile-key" || source != "profile.openai_api_key" {
+		if got != "profile-key" || source != "profile.api_key" {
 			t.Fatalf("expected profile key, got key=%q source=%q", got, source)
 		}
 	})

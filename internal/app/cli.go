@@ -228,11 +228,11 @@ func newDebugTokenUsageSnapshotCmd() *cobra.Command {
 		Short: "Render the token usage view without starting the TUI",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			summaries, err := loadTokenUsageSummaries()
+			snapshot, err := loadTokenUsageSnapshot()
 			if err != nil {
 				return err
 			}
-			view, err := tui.RenderTokenUsageSnapshot(summaries, width, height, cursor)
+			view, err := tui.RenderTokenUsageSnapshot(snapshot, width, height, cursor)
 			if err != nil {
 				return err
 			}
@@ -371,11 +371,11 @@ func runInteractive() error {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
 		case "Token usage":
-			summaries, err := loadTokenUsageSummaries()
+			snapshot, err := loadTokenUsageSnapshot()
 			if err != nil {
 				return err
 			}
-			if err := tui.ShowTokenUsage(summaries, loadTokenUsageSummaries); err != nil {
+			if err := tui.ShowTokenUsage(snapshot, loadTokenUsageSnapshot); err != nil {
 				return err
 			}
 		case "Manage profiles":
@@ -399,31 +399,34 @@ func runInteractive() error {
 	}
 }
 
-func loadTokenUsageSummaries() ([]tui.TokenUsageSummary, error) {
+func loadTokenUsageSnapshot() (tui.TokenUsageSnapshot, error) {
 	path, err := usage.DefaultPath()
 	if err != nil {
-		return nil, err
+		return tui.TokenUsageSnapshot{}, err
 	}
 	records, err := usage.Read(path)
 	if err != nil {
-		return nil, err
+		return tui.TokenUsageSnapshot{}, err
 	}
-	clients := usage.Clients(records)
-	summaries := usage.SummarizeForClients(records, clients, time.Now())
-	out := make([]tui.TokenUsageSummary, 0, len(summaries))
-	for _, summary := range summaries {
-		out = append(out, tui.TokenUsageSummary{
-			Window:            string(summary.Window),
-			Client:            summary.Client,
-			Label:             usageWindowLabel(summary.Window),
-			Requests:          summary.Requests,
-			InputTokens:       summary.InputTokens,
-			OutputTokens:      summary.OutputTokens,
-			TotalTokens:       summary.TotalTokens,
-			CachedInputTokens: summary.CachedInputTokens,
+	now := time.Now()
+	snapshot := tui.TokenUsageSnapshot{
+		SourcePath:  path,
+		UpdatedAt:   now,
+		RecordCount: len(records),
+	}
+	for _, window := range usage.Windows() {
+		summary := usage.SummarizeWindow(records, window, now)
+		snapshot.Windows = append(snapshot.Windows, tui.TokenUsageWindow{
+			Window:        string(window),
+			Label:         usageWindowLabel(window),
+			TrendLabel:    tokenUsageTrendLabel(window),
+			Summary:       tokenUsageSummary(summary),
+			Breakdowns:    tokenUsageBreakdowns(usage.BreakdownsForWindow(records, window, now)),
+			DailySeries:   tokenUsageSeries(records, window, now),
+			HeavyRequests: tokenUsageHeavyRequests(usage.HeavyRequestsForWindow(records, window, now, 5)),
 		})
 	}
-	return out, nil
+	return snapshot, nil
 }
 
 func usageWindowLabel(window usage.Window) string {
@@ -439,6 +442,78 @@ func usageWindowLabel(window usage.Window) string {
 	default:
 		return string(window)
 	}
+}
+
+func tokenUsageTrendLabel(window usage.Window) string {
+	if window == usage.WindowToday {
+		return "Hourly trend"
+	}
+	return "Daily trend"
+}
+
+func tokenUsageSummary(summary usage.Summary) tui.TokenUsageSummary {
+	return tui.TokenUsageSummary{
+		Requests:          summary.Requests,
+		InputTokens:       summary.InputTokens,
+		OutputTokens:      summary.OutputTokens,
+		TotalTokens:       summary.TotalTokens,
+		CachedInputTokens: summary.CachedInputTokens,
+	}
+}
+
+func tokenUsageBreakdowns(rows []usage.Breakdown) []tui.TokenUsageBreakdown {
+	out := make([]tui.TokenUsageBreakdown, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, tui.TokenUsageBreakdown{
+			Client:            row.Client,
+			Model:             row.Model,
+			Requests:          row.Requests,
+			InputTokens:       row.InputTokens,
+			OutputTokens:      row.OutputTokens,
+			TotalTokens:       row.TotalTokens,
+			CachedInputTokens: row.CachedInputTokens,
+		})
+	}
+	return out
+}
+
+func tokenUsageSeries(records []usage.Record, window usage.Window, now time.Time) []tui.TokenUsageDailyPoint {
+	if window == usage.WindowToday {
+		return tokenUsageDailySeries(usage.HourlySeriesForToday(records, now), "15:00")
+	}
+	return tokenUsageDailySeries(usage.DailySeriesForWindow(records, window, now), "01-02")
+}
+
+func tokenUsageDailySeries(rows []usage.DailySummary, labelFormat string) []tui.TokenUsageDailyPoint {
+	out := make([]tui.TokenUsageDailyPoint, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, tui.TokenUsageDailyPoint{
+			Label:             row.Day.Format(labelFormat),
+			Requests:          row.Requests,
+			InputTokens:       row.InputTokens,
+			OutputTokens:      row.OutputTokens,
+			TotalTokens:       row.TotalTokens,
+			CachedInputTokens: row.CachedInputTokens,
+		})
+	}
+	return out
+}
+
+func tokenUsageHeavyRequests(rows []usage.HeavyRequest) []tui.TokenUsageRequest {
+	out := make([]tui.TokenUsageRequest, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, tui.TokenUsageRequest{
+			Timestamp:         row.Timestamp,
+			Client:            row.Client,
+			Model:             row.Model,
+			Stream:            row.Stream,
+			InputTokens:       row.InputTokens,
+			OutputTokens:      row.OutputTokens,
+			TotalTokens:       row.TotalTokens,
+			CachedInputTokens: row.CachedInputTokens,
+		})
+	}
+	return out
 }
 
 func launchIntegration(name, modelFlag, profileFlag string, configOnly bool, passArgs []string) error {

@@ -91,7 +91,7 @@ func contentBlockStartEvent(chunk map[string]any) ir.StreamEvent {
 			return ir.StreamEvent{}
 		}
 		args := ""
-		if input := block["input"]; input != nil {
+		if input := mapValue(block["input"]); len(input) > 0 {
 			args = jsonString(input)
 		}
 		return ir.StreamEvent{

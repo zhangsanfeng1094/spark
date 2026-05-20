@@ -89,3 +89,59 @@ func TestRecordFromUsageMap(t *testing.T) {
 		t.Fatalf("unexpected record: %#v", record)
 	}
 }
+
+func TestWindowBreakdownsDailySeriesAndHeavyRequests(t *testing.T) {
+	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	records := []Record{
+		{Timestamp: now.Add(-1 * time.Hour), Client: "codex", Model: "gpt-5", InputTokens: 100, OutputTokens: 50, CachedInputTokens: 20},
+		{Timestamp: now.Add(-2 * time.Hour), Client: "claude", Model: "sonnet", TotalTokens: 300, CachedInputTokens: 30},
+		{Timestamp: now.AddDate(0, 0, -1), Client: "", Model: "", TotalTokens: 40},
+		{Timestamp: now.AddDate(0, 0, -10), Client: "codex", Model: "gpt-5", TotalTokens: 900},
+	}
+
+	summary := SummarizeWindow(records, WindowToday, now)
+	if summary.TotalTokens != 450 || summary.Requests != 2 {
+		t.Fatalf("today summary = %#v, want 450 tokens across 2 requests", summary)
+	}
+
+	breakdowns := BreakdownsForWindow(records, Window7D, now)
+	if len(breakdowns) != 3 {
+		t.Fatalf("breakdown rows = %d, want 3", len(breakdowns))
+	}
+	if breakdowns[0].Client != "claude" || breakdowns[0].Model != "sonnet" || breakdowns[0].TotalTokens != 300 {
+		t.Fatalf("top breakdown = %#v, want claude sonnet 300", breakdowns[0])
+	}
+	if breakdowns[2].Client != "unknown" || breakdowns[2].Model != "unknown model" {
+		t.Fatalf("unknown breakdown = %#v", breakdowns[2])
+	}
+
+	daily := DailySeriesForWindow(records, Window7D, now)
+	if len(daily) != 7 {
+		t.Fatalf("daily points = %d, want 7", len(daily))
+	}
+	if got := daily[len(daily)-1].TotalTokens; got != 450 {
+		t.Fatalf("today daily total = %d, want 450", got)
+	}
+	if got := daily[len(daily)-2].TotalTokens; got != 40 {
+		t.Fatalf("yesterday daily total = %d, want 40", got)
+	}
+
+	hourly := HourlySeriesForToday(records, now)
+	if len(hourly) != 13 {
+		t.Fatalf("hourly points = %d, want 13", len(hourly))
+	}
+	if got := hourly[10].TotalTokens; got != 300 {
+		t.Fatalf("10:00 hourly total = %d, want 300", got)
+	}
+	if got := hourly[11].TotalTokens; got != 150 {
+		t.Fatalf("11:00 hourly total = %d, want 150", got)
+	}
+
+	heavy := HeavyRequestsForWindow(records, WindowAll, now, 2)
+	if len(heavy) != 2 {
+		t.Fatalf("heavy requests = %d, want 2", len(heavy))
+	}
+	if heavy[0].TotalTokens != 900 || heavy[1].TotalTokens != 300 {
+		t.Fatalf("heavy requests sorted = %#v", heavy)
+	}
+}

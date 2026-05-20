@@ -1,10 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +17,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	cfg.DefaultProfile = "work"
 	cfg.Profiles["work"] = &Profile{
 		OpenAIBaseURL: "https://example.com/v1",
-		OpenAIAPIKey:  "token",
+		APIKey:        "token",
 		ModelListURL:  "https://example.com/custom/models",
 		Models:        []string{"gpt-4.1-mini", "gpt-4.1"},
 		DefaultModel:  "gpt-4.1",
@@ -39,7 +41,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.DefaultProfile != "work" {
 		t.Fatalf("DefaultProfile mismatch, got %q", got.DefaultProfile)
 	}
-	if got.Profiles["work"] == nil || got.Profiles["work"].OpenAIAPIKey != "token" {
+	if got.Profiles["work"] == nil || got.Profiles["work"].EffectiveAPIKey() != "token" {
 		t.Fatalf("work profile not persisted correctly: %#v", got.Profiles["work"])
 	}
 	if got.Profiles["work"].DefaultModel != "gpt-4.1" {
@@ -86,6 +88,36 @@ func TestLoadCreatesDefaultConfigWhenMissing(t *testing.T) {
 	}
 	if filepath.Base(path) != "config.json" {
 		t.Fatalf("unexpected config path: %q", path)
+	}
+}
+
+func TestProfileKeyMigratesLegacyFields(t *testing.T) {
+	var p Profile
+	if err := json.Unmarshal([]byte(`{"openai_api_key":"legacy-openai","anthropic_auth_token":"legacy-anthropic"}`), &p); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if p.EffectiveAPIKey() != "legacy-openai" {
+		t.Fatalf("EffectiveAPIKey=%q", p.EffectiveAPIKey())
+	}
+
+	p = Profile{}
+	if err := json.Unmarshal([]byte(`{"anthropic_auth_token":"legacy-anthropic"}`), &p); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if p.EffectiveAPIKey() != "legacy-anthropic" {
+		t.Fatalf("EffectiveAPIKey=%q", p.EffectiveAPIKey())
+	}
+
+	data, err := json.Marshal(Profile{OpenAIAPIKey: "legacy-openai", AnthropicAuthToken: "legacy-anthropic"})
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `"api_key":"legacy-openai"`) {
+		t.Fatalf("expected unified api_key in %s", got)
+	}
+	if strings.Contains(got, "openai_api_key") || strings.Contains(got, "anthropic_auth_token") {
+		t.Fatalf("legacy key fields should not be persisted: %s", got)
 	}
 }
 

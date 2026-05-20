@@ -225,6 +225,34 @@ func TestApplyAnthropicAPITypeSyncsAnthropicBaseURL(t *testing.T) {
 	}
 }
 
+func TestApplyNonAnthropicAPITypeClearsAnthropicBaseURL(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "default",
+		Profiles: map[string]*config.Profile{
+			"default": {
+				OpenAIBaseURL:    "https://api.anthropic.com",
+				OpenAIAPIType:    config.OpenAIAPITypeAnthropicMessages,
+				AnthropicBaseURL: "https://api.anthropic.com",
+			},
+		},
+	})
+	m.fields[pmFieldProviderType].value = "Ollama"
+	m.fields[pmFieldOpenAIBaseURL].value = "http://localhost:3004/proxy/ollama/v1"
+	m.fields[pmFieldOpenAIAPIType].value = config.OpenAIAPITypeChatCompletions
+
+	if err := m.applyFieldsToProfile("default"); err != nil {
+		t.Fatalf("applyFieldsToProfile failed: %v", err)
+	}
+
+	p := m.cfg.Profiles["default"]
+	if p.AnthropicBaseURL != "" {
+		t.Fatalf("expected stale anthropic base url to be cleared: %#v", p)
+	}
+	if got := detectProviderType(p); got != "OpenAI Compatible" {
+		t.Fatalf("provider type mismatch after clearing stale anthropic url: %q", got)
+	}
+}
+
 func TestProfileManagerModelListURLFieldRoundTrip(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "default",

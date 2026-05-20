@@ -47,18 +47,13 @@ func (c *Codex) Run(profile *config.Profile, model string, args []string) error 
 	}
 	apiKey := profileKey(profile)
 	resolvedUpstreamKey, upstreamKeySource := resolveOpenAIAPIKey(apiKey)
-	if config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeAnthropicMessages) &&
-		!config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeResponses) &&
-		!config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeChatCompletions) {
-		resolvedUpstreamKey, upstreamKeySource = resolveAnthropicAPIKey(profile)
-	}
 	quietCompatStderr := shouldQuietCompatStderr()
 
 	envBaseURL := baseURL
 	envKey := resolvedUpstreamKey
 
 	if proxyMode, useProxy := codexProxyModeForAPIType(apiType); useProxy {
-		proxy, err := compatproxy.StartResponsesProxy(baseURL, resolvedUpstreamKey, quietCompatStderr, proxyMode)
+		proxy, err := compatproxy.StartResponsesProxy(baseURL, resolvedUpstreamKey, quietCompatStderr, proxyMode, model)
 		if err != nil {
 			return err
 		}
@@ -93,7 +88,7 @@ func resolveOpenAIAPIKey(profileKey string) (key string, source string) {
 		return k, "env.OPENAI_API_KEY"
 	}
 	if k := strings.TrimSpace(profileKey); k != "" {
-		return k, "profile.openai_api_key"
+		return k, "profile.api_key"
 	}
 	return "", "none"
 }
@@ -102,9 +97,6 @@ func codexProxyModeForAPIType(apiType string) (compatproxy.ResponsesProxyMode, b
 	supportsResponses := config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeResponses)
 	supportsChatCompletions := config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeChatCompletions)
 	supportsAnthropicMessages := config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeAnthropicMessages)
-	if supportsResponses && supportsChatCompletions {
-		return compatproxy.ResponsesProxyModePreferResponses, true
-	}
 	if supportsResponses {
 		return "", false
 	}

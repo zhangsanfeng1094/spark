@@ -24,7 +24,7 @@ const (
 	ResponsesProxyModeAnthropicMessagesOnly ResponsesProxyMode = "anthropic_messages_only"
 )
 
-func StartResponsesProxy(upstreamBase, upstreamKey string, quietStderr bool, mode ResponsesProxyMode) (*ResponsesProxy, error) {
+func StartResponsesProxy(upstreamBase, upstreamKey string, quietStderr bool, mode ResponsesProxyMode, preferredModels ...string) (*ResponsesProxy, error) {
 	if mode == "" {
 		mode = ResponsesProxyModeChatCompletionsOnly
 	}
@@ -32,13 +32,17 @@ func StartResponsesProxy(upstreamBase, upstreamKey string, quietStderr bool, mod
 	if err != nil {
 		return nil, err
 	}
+	preferredModel := ""
+	if len(preferredModels) > 0 {
+		preferredModel = strings.TrimSpace(preferredModels[0])
+	}
 	p := &ResponsesProxy{
 		compatProxyServer: server,
 		upstreamBase:      strings.TrimRight(upstreamBase, "/"),
 		upstreamKey:       upstreamKey,
 		mode:              mode,
 	}
-	p.restore = installUsageRecorder("codex", p.logf)
+	p.restore = installUsageRecorder("codex", preferredModel, p.logf)
 	p.handleFunc("/v1/responses", p.handleResponses)
 	p.start()
 	p.logf("proxy started mode=%s upstream=%s listen=%s", p.mode, p.upstreamBase, p.BaseURL())

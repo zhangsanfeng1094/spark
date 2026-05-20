@@ -130,6 +130,7 @@ func TestProfileManagerRenderRightPaneShowsLastTestSummary(t *testing.T) {
 	})
 	m.lastTestSummary = "Connected · 184ms"
 	m.lastTestOK = true
+	m.statusKind = pmStatusTestSuccess
 
 	right := m.renderRightPane(0)
 	if !strings.Contains(right, "Connected · 184ms") {
@@ -185,9 +186,31 @@ func TestProfileManagerStatusSummaryNormalizesSaveAndFailure(t *testing.T) {
 
 	m.lastTestSummary = "Connection failed"
 	m.lastTestOK = false
+	m.statusKind = pmStatusTestError
 	m.status = "✗ Test failed · 401 Unauthorized"
 	if got := m.statusSummaryText(); got != "✗ 401 Unauthorized" {
 		t.Fatalf("expected preserved failure summary, got %q", got)
+	}
+}
+
+func TestProfileManagerSaveStatusOverridesPreviousTestSummary(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "gptload",
+		Profiles: map[string]*config.Profile{
+			"gptload": {OpenAIBaseURL: "https://api.openai.com/v1"},
+		},
+	})
+	m.lastTestSummary = "Connection failed"
+	m.lastTestOK = false
+	m.statusKind = pmStatusTestError
+
+	m.setUserStatus(pmStatusSuccess, "Saved profile gptload.")
+
+	if got := m.statusSummaryText(); got != "✓ Saved profile" {
+		t.Fatalf("expected save summary to override stale test summary, got %q", got)
+	}
+	if m.lastTestSummary != "" {
+		t.Fatalf("expected previous test summary to be cleared, got %q", m.lastTestSummary)
 	}
 }
 
@@ -252,6 +275,28 @@ func TestProfileManagerRightPaneShowsActionsAndHelpSections(t *testing.T) {
 		if !strings.Contains(right, want) {
 			t.Fatalf("expected %q in right pane, got %q", want, right)
 		}
+	}
+	if strings.Index(right, "Help") > strings.Index(right, "Actions") {
+		t.Fatalf("expected Help above Actions, got %q", right)
+	}
+
+	right = m.renderRightPane(24)
+	lines := strings.Split(right, "\n")
+	helpLine := -1
+	actionLine := -1
+	for i, line := range lines {
+		if helpLine == -1 && strings.Contains(line, "Help") {
+			helpLine = i
+		}
+		if actionLine == -1 && strings.Contains(line, "Actions") {
+			actionLine = i
+		}
+	}
+	if helpLine == -1 || actionLine == -1 || helpLine >= actionLine {
+		t.Fatalf("expected Help to stick directly above Actions, help=%d actions=%d pane=%q", helpLine, actionLine, right)
+	}
+	if actionLine < 2 || strings.TrimSpace(lines[actionLine-1]) != "" || strings.TrimSpace(lines[actionLine-2]) == "" {
+		t.Fatalf("expected exactly one blank line between Help content and Actions, pane=%q", right)
 	}
 }
 

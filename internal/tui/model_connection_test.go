@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"spark/internal/config"
+	"spark/internal/probe"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -244,6 +246,55 @@ func TestProfileManagerTestConnection_SetsStatusWithLogPath(t *testing.T) {
 	}
 	if _, err := os.Stat(logPath); err != nil {
 		t.Fatalf("expected UI trigger log file to exist: %v", err)
+	}
+}
+
+func TestProfileManagerSaveIgnoresPendingTestResult(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {
+				OpenAIBaseURL: "http://127.0.0.1:9999/v1",
+				OpenAIAPIType: config.OpenAIAPITypeChatCompletions,
+			},
+		},
+		Integrations: map[string]*config.IntegrationConfig{},
+	})
+	m.selectByName("p1")
+	m.loadSelectedProfileFields()
+
+	if cmd := m.testConnection(); cmd == nil {
+		t.Fatal("expected connection test command")
+	}
+	pendingSeq := m.runningTestSeq
+	if pendingSeq == 0 {
+		t.Fatal("expected pending test sequence")
+	}
+
+	m.save()
+	if got := m.status; got != "Saved profile p1." {
+		t.Fatalf("expected save status before stale result, got %q", got)
+	}
+
+	m.handleTestResult(testResultMsg{
+		statusSeq: pendingSeq,
+		result: probe.TestResult{
+			Success: true,
+			Message: "OK",
+			Latency: 17 * time.Millisecond,
+		},
+	})
+
+	if got := m.status; got != "Saved profile p1." {
+		t.Fatalf("expected stale test result not to overwrite save status, got %q", got)
+	}
+	if got := m.statusSummaryText(); got != "✓ Saved profile" {
+		t.Fatalf("expected save summary after stale result, got %q", got)
+	}
+	if m.lastTestSummary != "" {
+		t.Fatalf("expected stale test summary to remain cleared, got %q", m.lastTestSummary)
 	}
 }
 
