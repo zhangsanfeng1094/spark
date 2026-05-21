@@ -5,12 +5,14 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"spark/internal/config"
 	"spark/internal/integrations"
 	"spark/internal/skills"
 	"spark/internal/tui"
+	"spark/internal/usage"
 	"spark/internal/version"
 )
 
@@ -130,12 +132,13 @@ func newProfileCmd() *cobra.Command {
 }
 
 func interactiveMenuOptions() []string {
-	return []string{"Launch integration", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
+	return []string{"Launch integration", "Token usage", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
 }
 
 func interactiveMenuDescriptions() map[string]string {
 	return map[string]string{
 		"Launch integration": "Start Spark with the selected coding agent integration using the active profile and model settings.",
+		"Token usage":        "Review recorded compat proxy token usage with fixed time filters.",
 		"Manage profiles":    "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
 		"Manage MCP servers": "Manage MCP server entries, health probes, and transport settings.",
 		"Manage skills":      "Browse installed skills, add new ones, and toggle them on or off.",
@@ -173,6 +176,7 @@ func newDebugSnapshotCmd() *cobra.Command {
 		Short: "Render non-interactive UI snapshots",
 	}
 	cmd.AddCommand(newDebugDashboardSnapshotCmd())
+	cmd.AddCommand(newDebugTokenUsageSnapshotCmd())
 	cmd.AddCommand(newDebugProfileSnapshotCmd())
 	cmd.AddCommand(newDebugMCPSnapshotCmd())
 	cmd.AddCommand(newDebugSkillSnapshotCmd())
@@ -209,6 +213,36 @@ func newDebugDashboardSnapshotCmd() *cobra.Command {
 	cmd.Flags().IntVar(&width, "width", 90, "Snapshot terminal width")
 	cmd.Flags().IntVar(&height, "height", 24, "Snapshot terminal height")
 	cmd.Flags().IntVar(&cursor, "cursor", 0, "Selected dashboard row")
+	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
+	return cmd
+}
+
+func newDebugTokenUsageSnapshotCmd() *cobra.Command {
+	var width int
+	var height int
+	var cursor int
+	var color bool
+
+	cmd := &cobra.Command{
+		Use:   "token-usage",
+		Short: "Render the token usage view without starting the TUI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			snapshot, err := loadTokenUsageSnapshot()
+			if err != nil {
+				return err
+			}
+			view, err := tui.RenderTokenUsageSnapshot(snapshot, width, height, cursor)
+			if err != nil {
+				return err
+			}
+			writeSnapshot(cmd, view, color)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&width, "width", 90, "Snapshot terminal width")
+	cmd.Flags().IntVar(&height, "height", 24, "Snapshot terminal height")
+	cmd.Flags().IntVar(&cursor, "cursor", 0, "Selected time filter")
 	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
 	return cmd
 }
@@ -336,6 +370,14 @@ func runInteractive() error {
 			if err := launchIntegration(name, "", "", false, nil); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
+		case "Token usage":
+			snapshot, err := loadTokenUsageSnapshot()
+			if err != nil {
+				return err
+			}
+			if err := tui.ShowTokenUsage(snapshot, loadTokenUsageSnapshot); err != nil {
+				return err
+			}
 		case "Manage profiles":
 			if err := manageProfiles(); err != nil {
 				return err
@@ -355,6 +397,123 @@ func runInteractive() error {
 			return nil
 		}
 	}
+}
+
+func loadTokenUsageSnapshot() (tui.TokenUsageSnapshot, error) {
+	path, err := usage.DefaultPath()
+	if err != nil {
+		return tui.TokenUsageSnapshot{}, err
+	}
+	now := time.Now()
+	windows, count, err := usage.QueryWindows(path, now)
+	if err != nil {
+		return tui.TokenUsageSnapshot{}, err
+	}
+	snapshot := tui.TokenUsageSnapshot{
+		SourcePath:  path,
+		UpdatedAt:   now,
+		RecordCount: count,
+	}
+	for _, window := range usage.Windows() {
+		data := windows[window]
+		snapshot.Windows = append(snapshot.Windows, tui.TokenUsageWindow{
+			Window:        string(window),
+			Label:         usageWindowLabel(window),
+			TrendLabel:    tokenUsageTrendLabel(window),
+			Summary:       tokenUsageSummary(data.Summary),
+			Breakdowns:    tokenUsageBreakdowns(data.Breakdowns),
+			DailySeries:   tokenUsageSeries(data.Series, window),
+			HeavyRequests: tokenUsageHeavyRequests(data.HeavyRequests),
+		})
+	}
+	return snapshot, nil
+}
+
+func usageWindowLabel(window usage.Window) string {
+	switch window {
+	case usage.WindowToday:
+		return "Today"
+	case usage.Window7D:
+		return "7d"
+	case usage.Window30D:
+		return "30d"
+	case usage.WindowAll:
+		return "All"
+	default:
+		return string(window)
+	}
+}
+
+func tokenUsageTrendLabel(window usage.Window) string {
+	if window == usage.WindowToday {
+		return "Hourly trend"
+	}
+	return "Daily trend"
+}
+
+func tokenUsageSummary(summary usage.Summary) tui.TokenUsageSummary {
+	return tui.TokenUsageSummary{
+		Requests:          summary.Requests,
+		InputTokens:       summary.InputTokens,
+		OutputTokens:      summary.OutputTokens,
+		TotalTokens:       summary.TotalTokens,
+		CachedInputTokens: summary.CachedInputTokens,
+	}
+}
+
+func tokenUsageBreakdowns(rows []usage.Breakdown) []tui.TokenUsageBreakdown {
+	out := make([]tui.TokenUsageBreakdown, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, tui.TokenUsageBreakdown{
+			Client:            row.Client,
+			Model:             row.Model,
+			Requests:          row.Requests,
+			InputTokens:       row.InputTokens,
+			OutputTokens:      row.OutputTokens,
+			TotalTokens:       row.TotalTokens,
+			CachedInputTokens: row.CachedInputTokens,
+		})
+	}
+	return out
+}
+
+func tokenUsageSeries(rows []usage.DailySummary, window usage.Window) []tui.TokenUsageDailyPoint {
+	if window == usage.WindowToday {
+		return tokenUsageDailySeries(rows, "15:00")
+	}
+	return tokenUsageDailySeries(rows, "01-02")
+}
+
+func tokenUsageDailySeries(rows []usage.DailySummary, labelFormat string) []tui.TokenUsageDailyPoint {
+	out := make([]tui.TokenUsageDailyPoint, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, tui.TokenUsageDailyPoint{
+			Label:             row.Day.Format(labelFormat),
+			Requests:          row.Requests,
+			InputTokens:       row.InputTokens,
+			OutputTokens:      row.OutputTokens,
+			TotalTokens:       row.TotalTokens,
+			CachedInputTokens: row.CachedInputTokens,
+		})
+	}
+	return out
+}
+
+func tokenUsageHeavyRequests(rows []usage.HeavyRequest) []tui.TokenUsageRequest {
+	out := make([]tui.TokenUsageRequest, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, tui.TokenUsageRequest{
+			Timestamp:         row.Timestamp.In(time.Local),
+			Client:            row.Client,
+			Model:             row.Model,
+			Stream:            row.Stream,
+			InputTokens:       row.InputTokens,
+			OutputTokens:      row.OutputTokens,
+			TotalTokens:       row.TotalTokens,
+			CachedInputTokens: row.CachedInputTokens,
+		})
+	}
+	return out
 }
 
 func launchIntegration(name, modelFlag, profileFlag string, configOnly bool, passArgs []string) error {

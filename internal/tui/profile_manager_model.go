@@ -215,6 +215,19 @@ const (
 
 const pmModelsModalMaxVisible = 10
 
+type pmStatusKind int
+
+const (
+	pmStatusNeutral pmStatusKind = iota
+	pmStatusInfo
+	pmStatusSuccess
+	pmStatusWarning
+	pmStatusError
+	pmStatusTestRunning
+	pmStatusTestSuccess
+	pmStatusTestError
+)
+
 type pmModel struct {
 	cfg *config.RootConfig
 
@@ -229,11 +242,14 @@ type pmModel struct {
 	focusField  int
 	actionIndex int
 
-	status string
-	dirty  bool
+	status     string
+	statusKind pmStatusKind
+	statusSeq  uint64
+	dirty      bool
 
 	lastTestSummary string
 	lastTestOK      bool
+	runningTestSeq  uint64
 
 	modalOpen   bool
 	modalCursor int
@@ -302,7 +318,6 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 			{name: "Gemini", kind: "gemini"},
 		},
 		apiTypeOptions: []string{
-			config.OpenAIAPITypeAuto,
 			config.OpenAIAPITypeResponses,
 			config.OpenAIAPITypeChatCompletions,
 			config.OpenAIAPITypeGeminiGenerateContent,
@@ -313,6 +328,7 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 		focusField:      0,
 		actionIndex:     pmActSave,
 		status:          "Ready. Use [Tab]/[Shift+Tab] to move focus, [Enter] to activate.",
+		statusKind:      pmStatusNeutral,
 		inputWidth:      pmInputWidth,
 	}
 	m.refreshNames()

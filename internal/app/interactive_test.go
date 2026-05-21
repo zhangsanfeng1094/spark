@@ -4,14 +4,20 @@ import "testing"
 
 func TestInteractiveMenuOptionsIncludeSkills(t *testing.T) {
 	options := interactiveMenuOptions()
-	found := false
+	foundSkills := false
+	foundTokenUsage := false
 	for _, option := range options {
 		if option == "Manage skills" {
-			found = true
-			break
+			foundSkills = true
+		}
+		if option == "Token usage" {
+			foundTokenUsage = true
 		}
 	}
-	if !found {
+	if !foundSkills {
 		t.Fatalf("expected Manage skills option, got %v", options)
+	}
+	if !foundTokenUsage {
+		t.Fatalf("expected Token usage option, got %v", options)
 	}
 }

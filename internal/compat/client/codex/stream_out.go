@@ -32,6 +32,7 @@ type streamToolCallState struct {
 	CallID      string
 	Name        string
 	Arguments   strings.Builder
+	Added       bool
 }
 
 type responsesStreamState struct {
@@ -319,11 +320,10 @@ func (s *responsesStreamState) writeToolCallDelta(block ir.ContentBlock) {
 	if call.Name != "" {
 		st.Name = call.Name
 	}
-	startArgs := st.Arguments.Len() == 0
 	if call.Arguments != "" {
 		st.Arguments.WriteString(call.Arguments)
 	}
-	if startArgs || call.Name != "" || call.ID != "" {
+	if !st.Added {
 		writeSSE(s.writer, map[string]any{
 			"type":         "response.output_item.added",
 			"output_index": st.OutputIndex,
@@ -336,6 +336,7 @@ func (s *responsesStreamState) writeToolCallDelta(block ir.ContentBlock) {
 				"status":    "in_progress",
 			},
 		})
+		st.Added = true
 	}
 	if call.Arguments != "" {
 		writeSSE(s.writer, map[string]any{

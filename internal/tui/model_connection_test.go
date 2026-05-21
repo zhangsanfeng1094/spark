@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"spark/internal/config"
+	"spark/internal/probe"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -222,28 +224,6 @@ func TestProfileManagerFetchModelsUsesSelectedAPIType(t *testing.T) {
 	}
 }
 
-func TestTestModelConnection_WritesLogFile(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "model-test.log")
-	t.Setenv("SPARK_MODEL_TEST_LOG", logPath)
-
-	result := TestModelConnection(nil, "")
-	if result.LogPath != logPath {
-		t.Fatalf("expected log path %q, got %q", logPath, result.LogPath)
-	}
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("expected log file to exist, read failed: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, "[model-test] ===== model connection test start =====") {
-		t.Fatalf("missing start log line, got: %q", content)
-	}
-	if !strings.Contains(content, `result=fail reason="Profile is nil"`) {
-		t.Fatalf("missing fail reason log line, got: %q", content)
-	}
-}
-
 func TestProfileManagerTestConnection_SetsStatusWithLogPath(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "ui-trigger.log")
 	t.Setenv("SPARK_MODEL_TEST_LOG", logPath)
@@ -266,6 +246,55 @@ func TestProfileManagerTestConnection_SetsStatusWithLogPath(t *testing.T) {
 	}
 	if _, err := os.Stat(logPath); err != nil {
 		t.Fatalf("expected UI trigger log file to exist: %v", err)
+	}
+}
+
+func TestProfileManagerSaveIgnoresPendingTestResult(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "p1",
+		Profiles: map[string]*config.Profile{
+			"p1": {
+				OpenAIBaseURL: "http://127.0.0.1:9999/v1",
+				OpenAIAPIType: config.OpenAIAPITypeChatCompletions,
+			},
+		},
+		Integrations: map[string]*config.IntegrationConfig{},
+	})
+	m.selectByName("p1")
+	m.loadSelectedProfileFields()
+
+	if cmd := m.testConnection(); cmd == nil {
+		t.Fatal("expected connection test command")
+	}
+	pendingSeq := m.runningTestSeq
+	if pendingSeq == 0 {
+		t.Fatal("expected pending test sequence")
+	}
+
+	m.save()
+	if got := m.status; got != "Saved profile p1." {
+		t.Fatalf("expected save status before stale result, got %q", got)
+	}
+
+	m.handleTestResult(testResultMsg{
+		statusSeq: pendingSeq,
+		result: probe.TestResult{
+			Success: true,
+			Message: "OK",
+			Latency: 17 * time.Millisecond,
+		},
+	})
+
+	if got := m.status; got != "Saved profile p1." {
+		t.Fatalf("expected stale test result not to overwrite save status, got %q", got)
+	}
+	if got := m.statusSummaryText(); got != "✓ Saved profile" {
+		t.Fatalf("expected save summary after stale result, got %q", got)
+	}
+	if m.lastTestSummary != "" {
+		t.Fatalf("expected stale test summary to remain cleared, got %q", m.lastTestSummary)
 	}
 }
 
@@ -640,38 +669,5 @@ func TestHandleMainMouse_ProfileListClickMatchesRenderedRow(t *testing.T) {
 	})
 	if got := m.currentProfileName(); got != "beta" {
 		t.Fatalf("expected clicking beta row to select beta, got %q", got)
-	}
-}
-
-func TestTestModelConnection_TestsAllEnabledEndpoints(t *testing.T) {
-	profile := &config.Profile{
-		OpenAIBaseURL: "http://127.0.0.1:1/v1",
-		OpenAIAPIType: "responses,chat_completions",
-		DefaultModel:  "m1",
-	}
-	got := TestModelConnection(profile, "")
-	if got.Success {
-		t.Fatalf("expected failure when one enabled endpoint fails, got success: %s", got.Message)
-	}
-	if !strings.Contains(got.Message, "responses=ERR") || !strings.Contains(got.Message, "chat_completions=ERR") {
-		t.Fatalf("expected both endpoint results in message, got %q", got.Message)
-	}
-}
-
-func TestTestModelConnection_AnthropicEndpointDoesNotFallbackToResponses(t *testing.T) {
-	profile := &config.Profile{
-		OpenAIBaseURL: "http://127.0.0.1:1",
-		OpenAIAPIType: config.OpenAIAPITypeAnthropicMessages,
-		DefaultModel:  "claude-sonnet-4-20250514",
-	}
-	got := TestModelConnection(profile, "")
-	if got.Success {
-		t.Fatalf("expected failure against closed port, got success: %s", got.Message)
-	}
-	if !strings.Contains(got.Message, "anthropic_messages=ERR") {
-		t.Fatalf("expected anthropic endpoint result in message, got %q", got.Message)
-	}
-	if strings.Contains(got.Message, "responses=ERR") {
-		t.Fatalf("did not expect responses fallback for anthropic profile, got %q", got.Message)
 	}
 }

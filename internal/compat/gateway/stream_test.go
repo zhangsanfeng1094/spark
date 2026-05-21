@@ -129,6 +129,40 @@ func TestWriteCodexResponsesStreamFromOpenAIChatOrdersCoreEvents(t *testing.T) {
 	}
 }
 
+func TestWriteCodexResponsesStreamFromAnthropicMessagesToolInputDeltas(t *testing.T) {
+	stream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","model":"claude","usage":{"input_tokens":4,"output_tokens":1}}}`,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}}`,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":"}}`,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"pwd\"}"}}`,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}`,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+	}, "\n")
+
+	var output strings.Builder
+	result := WriteCodexResponsesStreamFromAnthropicMessages(&output, strings.NewReader(stream), nil)
+	got := output.String()
+
+	if result.ChunkCount != 6 {
+		t.Fatalf("unexpected stream result: %#v", result)
+	}
+	if strings.Count(got, `"type":"response.output_item.added"`) != 1 {
+		t.Fatalf("expected one function_call added event, got: %s", got)
+	}
+	if strings.Contains(got, `"arguments":"{}{\"cmd\":\"pwd\"}"`) {
+		t.Fatalf("empty Anthropic tool input was incorrectly prefixed to arguments: %s", got)
+	}
+	if !strings.Contains(got, `"arguments":"{\"cmd\":\"pwd\"}"`) {
+		t.Fatalf("tool call arguments were not joined: %s", got)
+	}
+}
+
 func assertOrderedSubstrings(t *testing.T, s string, parts []string) {
 	t.Helper()
 	offset := 0

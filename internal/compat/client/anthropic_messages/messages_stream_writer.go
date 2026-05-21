@@ -43,6 +43,8 @@ type messagesStreamState struct {
 
 	promptTokens        int
 	completionTokens    int
+	cacheCreationTokens int
+	cacheReadTokens     int
 	messageStarted      bool
 	reasoningBlockIndex int
 	reasoningClosed     bool
@@ -192,10 +194,7 @@ func WriteMessagesStream(writer io.Writer, reader io.Reader, requestedModel stri
 			"stop_reason":   state.stopReason,
 			"stop_sequence": nil,
 		},
-		"usage": map[string]any{
-			"input_tokens":  state.promptTokens,
-			"output_tokens": state.completionTokens,
-		},
+		"usage": state.usageMap(state.completionTokens),
 	})
 	writeAnthropicSSE(writer, "message_stop", map[string]any{
 		"type": "message_stop",
@@ -250,10 +249,27 @@ func (s *messagesStreamState) observeUsage(usage ir.Usage) {
 	if usage.OutputTokens > 0 {
 		s.completionTokens = usage.OutputTokens
 	}
-	s.lastUsage = map[string]any{
-		"input_tokens":  s.promptTokens,
-		"output_tokens": s.completionTokens,
+	if usage.CacheCreationInputTokens > 0 {
+		s.cacheCreationTokens = usage.CacheCreationInputTokens
 	}
+	if usage.CacheReadInputTokens > 0 {
+		s.cacheReadTokens = usage.CacheReadInputTokens
+	}
+	s.lastUsage = s.usageMap(s.completionTokens)
+}
+
+func (s *messagesStreamState) usageMap(outputTokens int) map[string]any {
+	out := map[string]any{
+		"input_tokens":  s.promptTokens,
+		"output_tokens": outputTokens,
+	}
+	if s.cacheCreationTokens > 0 {
+		out["cache_creation_input_tokens"] = s.cacheCreationTokens
+	}
+	if s.cacheReadTokens > 0 {
+		out["cache_read_input_tokens"] = s.cacheReadTokens
+	}
+	return out
 }
 
 func (s *messagesStreamState) startMessage() {
@@ -269,10 +285,7 @@ func (s *messagesStreamState) startMessage() {
 			"role":    "assistant",
 			"model":   s.model,
 			"content": []any{},
-			"usage": map[string]any{
-				"input_tokens":  s.promptTokens,
-				"output_tokens": 0,
-			},
+			"usage": s.usageMap(0),
 		},
 	})
 	s.flushNow()
@@ -499,16 +512,23 @@ func responseToolCallIDs(blocks []ir.ContentBlock) []string {
 
 func writeAnthropicStreamFromMessage(writer io.Writer, msg map[string]any, flush func()) {
 	usage := mapValue(msg["usage"])
+	startUsage := map[string]any{
+		"input_tokens":  intFromAny(usage["input_tokens"]),
+		"output_tokens": 0,
+	}
+	if cacheCreation := intFromAny(usage["cache_creation_input_tokens"]); cacheCreation > 0 {
+		startUsage["cache_creation_input_tokens"] = cacheCreation
+	}
+	if cacheRead := intFromAny(usage["cache_read_input_tokens"]); cacheRead > 0 {
+		startUsage["cache_read_input_tokens"] = cacheRead
+	}
 	startMessage := map[string]any{
 		"id":      stringValue(msg["id"]),
 		"type":    "message",
 		"role":    "assistant",
 		"model":   stringValue(msg["model"]),
 		"content": []any{},
-		"usage": map[string]any{
-			"input_tokens":  intFromAny(usage["input_tokens"]),
-			"output_tokens": 0,
-		},
+		"usage":   startUsage,
 	}
 	writeAnthropicSSE(writer, "message_start", map[string]any{
 		"type":    "message_start",

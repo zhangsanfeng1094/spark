@@ -105,7 +105,7 @@ func TestSelectProviderTypeFieldUpdatesCurrentProfileDraft(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "default",
 		Profiles: map[string]*config.Profile{
-			"default": {OpenAIBaseURL: "https://api.openai.com/v1"},
+			"default": {OpenAIBaseURL: "https://gateway.example.com/v1"},
 		},
 	})
 	m.focusArea = pmFocusFields
@@ -125,7 +125,7 @@ func TestSelectProviderTypeFieldUpdatesCurrentProfileDraft(t *testing.T) {
 	if got := m.fields[pmFieldProviderType].value; got != "Gemini" {
 		t.Fatalf("provider field mismatch: %q", got)
 	}
-	if got := m.fields[pmFieldOpenAIBaseURL].value; got != "https://generativelanguage.googleapis.com/v1beta" {
+	if got := m.fields[pmFieldOpenAIBaseURL].value; got != "https://gateway.example.com/v1" {
 		t.Fatalf("base url field mismatch: %q", got)
 	}
 	if got := m.fields[pmFieldOpenAIAPIType].value; got != config.OpenAIAPITypeGeminiGenerateContent {
@@ -148,7 +148,7 @@ func TestProfileManagerAPITypeOptionsFollowProviderType(t *testing.T) {
 		{
 			name:     "openai",
 			profile:  &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1"},
-			expected: []string{config.OpenAIAPITypeAuto, config.OpenAIAPITypeResponses, config.OpenAIAPITypeChatCompletions},
+			expected: []string{config.OpenAIAPITypeResponses, config.OpenAIAPITypeChatCompletions},
 		},
 		{
 			name:     "gemini",
@@ -222,6 +222,34 @@ func TestApplyAnthropicAPITypeSyncsAnthropicBaseURL(t *testing.T) {
 	p := m.cfg.Profiles["default"]
 	if p.AnthropicBaseURL != "https://api.anthropic.com" {
 		t.Fatalf("anthropic base url mismatch: %#v", p)
+	}
+}
+
+func TestApplyNonAnthropicAPITypeClearsAnthropicBaseURL(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "default",
+		Profiles: map[string]*config.Profile{
+			"default": {
+				OpenAIBaseURL:    "https://api.anthropic.com",
+				OpenAIAPIType:    config.OpenAIAPITypeAnthropicMessages,
+				AnthropicBaseURL: "https://api.anthropic.com",
+			},
+		},
+	})
+	m.fields[pmFieldProviderType].value = "Ollama"
+	m.fields[pmFieldOpenAIBaseURL].value = "http://localhost:3004/proxy/ollama/v1"
+	m.fields[pmFieldOpenAIAPIType].value = config.OpenAIAPITypeChatCompletions
+
+	if err := m.applyFieldsToProfile("default"); err != nil {
+		t.Fatalf("applyFieldsToProfile failed: %v", err)
+	}
+
+	p := m.cfg.Profiles["default"]
+	if p.AnthropicBaseURL != "" {
+		t.Fatalf("expected stale anthropic base url to be cleared: %#v", p)
+	}
+	if got := detectProviderType(p); got != "OpenAI Compatible" {
+		t.Fatalf("provider type mismatch after clearing stale anthropic url: %q", got)
 	}
 }
 

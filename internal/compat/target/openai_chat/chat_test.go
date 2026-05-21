@@ -125,6 +125,27 @@ func TestChatOutboundDropsUnsupportedReasoningControls(t *testing.T) {
 	}
 }
 
+func TestChatOutboundIncludesUsageForStreams(t *testing.T) {
+	req := ir.Request{
+		Model:  "gpt-4.1",
+		Stream: true,
+		Messages: []ir.Message{
+			{Role: ir.RoleUser, Content: []ir.ContentBlock{ir.Text("hello")}},
+		},
+		Generation: ir.GenerationConfig{
+			Raw: map[string]any{
+				"stream_options": map[string]any{"include_usage": false},
+			},
+		},
+	}
+
+	out := ChatOutbound{Reasoning: policy.PreserveReasoningContent()}.BuildRequest(req)
+	streamOptions, ok := out["stream_options"].(map[string]any)
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("stream options mismatch: %#v", out["stream_options"])
+	}
+}
+
 func TestChatResponseMapsReasoningToolCallsAndUsage(t *testing.T) {
 	resp := ChatResponse(map[string]any{
 		"id":    "chatcmpl_1",

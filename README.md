@@ -1,300 +1,58 @@
-# spark
+# Spark
 
-[English](#english) | [中文](#中文)
+Spark 是一个面向 AI coding agent 的终端启动器和配置中心。它把不同 agent 的模型、Base URL、API Key、MCP Server、Skills 和兼容协议集中管理，启动时自动把当前 profile 写入对应工具，必要时通过本地兼容代理完成协议转换。
 
----
+本项目已链接并认可 [LINUX DO 社区](https://linux.do/)。
 
-<a name="english"></a>
-## English
+## 项目介绍
 
-A unified launcher for AI coding agents with configurable OpenAI-compatible gateways.
+Spark 适合同时使用 Codex、Claude Code 等 AI coding agent 的开发者。它把原本分散在各个工具里的模型、供应商、API Key、Base URL、MCP Server 和 Skills 配置收拢到一个终端界面中，通过 profile 切换即可复用不同环境。
 
-## Features
+在启动 agent 时，Spark 会按当前 profile 自动写入目标工具所需的配置；当上游 API 与 agent 期望的协议不一致时，也可以通过本地兼容代理在 OpenAI Responses、Chat Completions、Anthropic Messages、Gemini `generateContent` 等接口之间做转换。它的目标不是替代 Codex 或 Claude，而是让这些工具在多模型、多供应商、多协议环境里更容易统一管理和启动。
 
-- 🚀 **Multi-Agent Support**: Launch Claude Code, Codex, Droid, OpenCode, OpenClaw, Pi and more
-- 🔧 **Flexible Configuration**: Multiple profiles with different API endpoints and models
-- 🔄 **Compatibility Layer**: Automatic protocol translation between Anthropic/Responses and OpenAI Chat Completions
-- 💾 **Configuration Persistence**: Save your settings and model history
-- 🎯 **Interactive TUI**: User-friendly terminal interface for selection and configuration
+## 截图
 
-## Installation
+### 模型管理
 
-### Install via npm (Recommended)
+![模型管理](./docs/images/models.png)
 
-```bash
-npm i -g @ngominhbinh708/spark
-spark
-```
+### 主面板
 
-### Build from Source
+> TODO: 将主面板截图保存为 `docs/images/dashboard.png` 后取消下一行注释。
+![主面板](./docs/images/dashboard.png)
 
-```bash
-git clone <repository-url>
-cd spark
-go build -o spark ./cmd/spark
-```
+### Profile 管理
 
-### Install to PATH
+> TODO: 将 Profile 管理截图保存为 `docs/images/profile-manager.png` 后取消下一行注释。
+![Profile 管理](./docs/images/profile-manager.png)
 
-```bash
-go install ./cmd/spark
-```
+### MCP 管理 / Skills（暂不可用）
 
-## Quick Start
+> TODO: 将 MCP 管理截图保存为 `docs/images/mcp-skills.png` 后取消下一行注释。
+<!-- ![MCP 管理](./docs/images/mcp-skills.png) -->
 
-```bash
-# Interactive mode
-spark
+## 功能
 
-# Launch a specific integration
-spark launch claude
-
-# Configure without launching
-spark config codex
-
-# Manage gateway profiles
-spark profile
-```
-
-## Usage
-
-### Interactive Mode
-
-Run without arguments to enter interactive mode:
-
-```bash
-spark
-```
-
-You'll see a menu with options:
-- **Launch integration**: Select and configure an AI coding agent
-- **Manage profiles**: Create/edit/delete gateway profiles
-- **Show config file**: Display the configuration file path
-- **Quit**: Exit the application
-
-### Launch Command
-
-```bash
-# Launch with interactive selection
-spark launch
-
-# Launch a specific integration
-spark launch claude
-spark launch codex
-spark launch droid
-spark launch opencode
-spark launch openclaw
-spark launch pi
-
-# Specify model and profile
-spark launch claude --model claude-sonnet-4-20250514 --profile work
-
-# Configure only (don't launch)
-spark launch codex --config
-
-# Pass arguments to the integration
-spark launch codex -- resume abc123
-spark launch codex --model gpt-4o -- --no-auto-approve
-```
-
-`--` 之前是 spark 自己的参数，`--` 之后的所有内容原样传给集成。
-
-### Config Command
-
-Configure an integration without launching:
-
-```bash
-spark config codex --model gpt-4o --profile default
-```
-
-### Profile Management
-
-```bash
-spark profile
-```
-
-This opens an interactive profile manager where you can:
-- Add new profiles
-- Edit existing profiles
-- Delete profiles
-- Set default profile
-- Test connection
-
-## Configuration
-
-Configuration is stored at `~/.spark/config.json`
-
-### Configuration Structure
-
-```json
-{
-  "version": 1,
-  "default_profile": "default",
-  "profiles": {
-    "default": {
-      "openai_base_url": "https://api.openai.com/v1",
-      "openai_api_key": "sk-...",
-      "models": ["gpt-4o", "gpt-4o-mini"]
-    },
-    "work": {
-      "openai_base_url": "https://api.company.com/v1",
-      "openai_api_key": "...",
-      "openai_org": "org-...",
-      "models": ["custom-model"]
-    },
-    "anthropic": {
-      "anthropic_base_url": "https://api.anthropic.com",
-      "anthropic_auth_token": "...",
-      "models": ["claude-sonnet-4-20250514"]
-    }
-  },
-  "integrations": {
-    "claude": {
-      "profile": "anthropic"
-    }
-  },
-  "history": {
-    "last_selection": "claude",
-    "last_model_input": "gpt-4o",
-    "model_inputs": ["gpt-4o", "claude-sonnet-4-20250514"]
-  }
-}
-```
-
-### Profile Fields
-
-| Field | Description |
-|-------|-------------|
-| `openai_base_url` | OpenAI-compatible API endpoint |
-| `openai_api_key` | API key for authentication |
-| `openai_org` | OpenAI organization ID (optional) |
-| `openai_project` | OpenAI project ID (optional) |
-| `anthropic_base_url` | Anthropic API endpoint (optional) |
-| `anthropic_auth_token` | Anthropic auth token (optional) |
-| `models` | Default models for this profile |
-| `default_model` | Fallback model if models list is empty |
-
-## Supported Integrations
-
-| Integration | Type | Description |
-|-------------|------|-------------|
-| **Claude Code** | Runner | Anthropic's official coding agent |
-| **Codex** | Runner | OpenAI's terminal-based coding agent |
-| **Droid** | Editor | Factory AI's coding assistant |
-| **OpenCode** | Editor | Open-source coding agent |
-| **OpenClaw** | Editor | Alternative coding agent |
-| **Pi** | Editor | Pi coding agent by @mariozechner |
-
-### Integration Types
-
-- **Runner**: Launches directly with environment configuration
-- **Editor**: Modifies configuration files before launching
-
-## Compatibility Adapters
-
-spark includes automatic protocol translation for integrations that use non-OpenAI APIs:
-
-### Codex (Responses API)
-
-When your gateway doesn't support OpenAI's `/v1/responses` endpoint, spark automatically:
-1. Detects gateway capabilities
-2. Spins up a local compatibility proxy
-3. Translates between Responses and Chat Completions formats
-4. Handles streaming events and tool calls
-
-### Claude (Anthropic API)
-
-For Claude Code with non-Anthropic endpoints:
-1. Starts a local Anthropic-to-OpenAI proxy
-2. Translates Anthropic Messages API to OpenAI Chat Completions
-3. Handles streaming with proper event formatting
-
-## Environment Variables
-
-spark respects these environment variables when launching integrations:
-
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_BASE_URL` | Override API base URL |
-| `OPENAI_API_KEY` | Override API key |
-| `ANTHROPIC_BASE_URL` | Anthropic-specific endpoint |
-| `ANTHROPIC_AUTH_TOKEN` | Anthropic auth token |
-
-## Development
-
-### Prerequisites
-
-- Go 1.24+
-
-### Build & Test
-
-```bash
-# Download dependencies
-go mod tidy
-
-# Run tests
-go test ./...
-
-# Build binary
-go build -o spark ./cmd/spark
-
-# Run directly
-go run ./cmd/spark
-
-# Learn and store changed TUI navigation steps
-node scripts/tui-state-navigator.js --target mcp.transfer --learn --trace
-node scripts/tui-state-navigator.js --target mcp.transfer --trace --ansi --show-focus
-node scripts/tui-state-navigator.js --all
-node scripts/tui-state-navigator.js --map path/to/other-tui-map.json --cmd "your-tui-command" --all
-```
-
-### Release Flow
-
-1. Merge changes to `main`.
-2. `Release Please` opens or updates a release PR.
-3. Merge the release PR to create tag `vX.Y.Z`.
-4. `Release` workflow publishes binaries and npm package.
-
-See `docs/deployment-workflow.md` for details.
-
-## Troubleshooting
-
-### Integration not found
-
-Make sure the integration is installed:
-- **Claude Code**: `claude` command or download from https://code.claude.com
-- **Codex**: `npm install -g @openai/codex`
-- **Droid**: Download from https://docs.factory.ai
-- **OpenCode**: Download from https://opencode.ai
-- **Pi**: `npm install -g @mariozechner/pi-coding-agent`
-
-### Connection errors
-
-1. Check your API base URL is correct
-2. Verify your API key is valid
-3. Use `spark profile` to test your connection
-
----
-
-<a name="中文"></a>
-## 中文
-
-一个统一的 AI 编码代理启动器，支持可配置的 OpenAI 兼容网关。
-
-## 特性
-
-- 🚀 **多代理支持**: 启动 Claude Code、Codex、Droid、OpenCode、OpenClaw、Pi 等
-- 🔧 **灵活配置**: 支持多个配置文件，不同的 API 端点和模型
-- 🔄 **兼容层**: 自动在 Anthropic/Responses 和 OpenAI Chat Completions 之间转换协议
-- 💾 **配置持久化**: 保存你的设置和模型历史
-- 🎯 **交互式 TUI**: 用户友好的终端界面用于选择和配置
+- 主要支持的 coding agent：`codex`、`claude`。
+- 其他集成：`droid`、`opencode`、`openclaw`、`pi` 目前暂不可用，仅保留实验性配置入口。
+- 多 profile 管理：为不同供应商、模型列表、默认模型、API Key 和 Base URL 保存独立配置。
+- 兼容代理：支持 OpenAI Responses、OpenAI Chat Completions、Gemini `generateContent`、Anthropic Messages 等接口类型，并在需要时转换给 Codex 或 Claude 使用。
+- 交互式 TUI：启动 Codex / Claude、查看 token usage、管理 profile 和 MCP servers。
+- MCP 管理：添加、启用、禁用、导入、导出、同步 MCP server 到 Codex / Claude。
+- Skills 管理：暂不可用，相关命令和界面入口仍在建设中。
+- Token usage 记录：兼容代理请求会写入本地 `token_usage.jsonl`，可在 TUI 中按 Today / 7D / 30D / All 查看。
 
 ## 安装
 
-### 通过 npm 安装（推荐）
+### npm 安装
 
 ```bash
 npm i -g @ngominhbinh708/spark
+```
+
+安装后直接运行：
+
+```bash
 spark
 ```
 
@@ -306,97 +64,106 @@ cd spark
 go build -o spark ./cmd/spark
 ```
 
-### 安装到 PATH
-
-```bash
-go install ./cmd/spark
-```
+本项目当前使用 Go `1.24.3`。
 
 ## 快速开始
 
-```bash
-# 交互模式
-spark
-
-# 启动特定集成
-spark launch claude
-
-# 仅配置不启动
-spark config codex
-
-# 管理网关配置文件
-spark profile
-```
-
-## 使用方法
-
-### 交互模式
-
-不带参数运行进入交互模式：
+进入交互式主面板：
 
 ```bash
 spark
 ```
 
-你会看到以下选项菜单：
-- **启动集成**: 选择并配置 AI 编码代理
-- **管理配置文件**: 创建/编辑/删除网关配置文件
-- **显示配置文件**: 显示配置文件路径
-- **退出**: 退出应用程序
+常用流程：
 
-### 启动命令
+1. 进入 `Manage profiles`，配置 `openai_base_url`、`api_key`、接口类型和模型。
+2. 在模型列表里选择默认模型，必要时使用 fetch/test 检查连接。
+3. 返回主面板，选择 `Launch integration` 启动 Codex、Claude 或其他 agent。
+
+也可以直接从命令行启动：
 
 ```bash
-# 交互选择启动
-spark launch
-
-# 启动特定集成
-spark launch claude
-spark launch codex
-spark launch droid
-spark launch opencode
-spark launch openclaw
-spark launch pi
-
-# 指定模型和配置文件
-spark launch claude --model claude-sonnet-4-20250514 --profile work
-
-# 仅配置（不启动）
-spark launch codex --config
-
-# 传递参数给集成
-spark launch codex -- resume abc123
 spark launch codex --model gpt-4o -- --no-auto-approve
 ```
 
-`--` 之前是 spark 自己的参数，`--` 之后的所有内容原样传给集成。
+`--` 之后的参数会原样传给目标集成。
 
-### 配置命令
+## 命令速查
 
-不启动直接配置集成：
-
-```bash
-spark config codex --model gpt-4o --profile default
-```
-
-### 配置文件管理
+### 启动和配置集成
 
 ```bash
+spark launch [integration] [--model <model>] [--profile <profile>] [-- [extra args...]]
+spark config [integration] [--model <model>] [--profile <profile>]
 spark profile
+spark --version
+spark version
 ```
 
-打开交互式配置管理器，你可以：
-- 添加新配置文件
-- 编辑现有配置文件
-- 删除配置文件
-- 设置默认配置文件
-- 测试连接
+当前主要支持：
+
+| 名称 | 状态 | 说明 |
+|------|------|------|
+| `codex` | 主要支持 | 配置并启动 Codex，支持 Responses / Chat Completions / Anthropic / Gemini 兼容路由 |
+| `claude` | 主要支持 | 配置并启动 Claude Code，支持 Anthropic 兼容代理 |
+
+暂不可用或实验性入口：
+
+| 名称 | 状态 | 说明 |
+|------|------|------|
+| `droid` | 暂不可用 | 入口保留，暂不作为可用功能维护 |
+| `opencode` | 暂不可用 | 入口保留，暂不作为可用功能维护 |
+| `openclaw` | 暂不可用 | 入口保留，暂不作为可用功能维护 |
+| `pi` | 暂不可用 | 入口保留，暂不作为可用功能维护 |
+
+### MCP servers
+
+```bash
+spark mcp
+spark mcp list
+spark mcp show <name>
+spark mcp add <name> --command <cmd> --args <a,b,c>
+spark mcp add <name> --url <http-url>
+spark mcp enable <name>
+spark mcp disable <name>
+spark mcp remove <name>
+spark mcp import codex --dry-run
+spark mcp import claude
+spark mcp sync codex
+spark mcp export claude
+```
+
+### Skills
+
+> Skills 暂不可用，以下命令仅表示保留中的 CLI 入口，不建议作为当前可用功能使用。
+
+```bash
+spark skill
+spark skill list
+spark skill show <name>
+spark skill search <query>
+spark skill install <name>
+spark skill install <name> --source <path-or-repo> --source-type local
+spark skill install <name> --source <repo-url> --source-type git --ref <ref> --subdir <dir>
+spark skill enable <name>
+spark skill disable <name>
+spark skill remove <name>
+spark skill sync
+spark skill import
+spark skill upgrade
+```
+
+默认会把 skill 投影到 `agents,codex,claude`，可用 `--target` / `--targets` 调整。
 
 ## 配置
 
-配置存储在 `~/.spark/config.json`
+Spark 配置文件位于：
 
-### 配置结构
+```text
+~/.spark/config.json
+```
+
+最小配置示例：
 
 ```json
 {
@@ -405,110 +172,63 @@ spark profile
   "profiles": {
     "default": {
       "openai_base_url": "https://api.openai.com/v1",
-      "openai_api_key": "sk-...",
-      "models": ["gpt-4o", "gpt-4o-mini"]
-    },
-    "work": {
-      "openai_base_url": "https://api.company.com/v1",
-      "openai_api_key": "...",
-      "openai_org": "org-...",
-      "models": ["custom-model"]
-    },
-    "anthropic": {
-      "anthropic_base_url": "https://api.anthropic.com",
-      "anthropic_auth_token": "...",
-      "models": ["claude-sonnet-4-20250514"]
+      "api_key": "sk-...",
+      "openai_api_type": "responses,chat_completions",
+      "models": ["gpt-4o", "gpt-4o-mini"],
+      "default_model": "gpt-4o"
     }
   },
   "integrations": {
-    "claude": {
-      "profile": "anthropic"
+    "codex": {
+      "profile": "default"
     }
   },
-  "history": {
-    "last_selection": "claude",
-    "last_model_input": "gpt-4o",
-    "model_inputs": ["gpt-4o", "claude-sonnet-4-20250514"]
-  }
+  "mcp_servers": {}
 }
 ```
 
-### 配置文件字段
+Profile 字段：
 
-| 字段 | 描述 |
+| 字段 | 说明 |
 |------|------|
-| `openai_base_url` | OpenAI 兼容 API 端点 |
-| `openai_api_key` | 用于认证的 API 密钥 |
-| `openai_org` | OpenAI 组织 ID（可选） |
-| `openai_project` | OpenAI 项目 ID（可选） |
-| `anthropic_base_url` | Anthropic API 端点（可选） |
-| `anthropic_auth_token` | Anthropic 认证令牌（可选） |
-| `models` | 此配置文件的默认模型 |
-| `default_model` | 如果模型列表为空的备用模型 |
-
-## 支持的集成
-
-| 集成 | 类型 | 描述 |
-|------|------|------|
-| **Claude Code** | Runner | Anthropic 官方编码代理 |
-| **Codex** | Runner | OpenAI 的终端编码代理 |
-| **Droid** | Editor | Factory AI 的编码助手 |
-| **OpenCode** | Editor | 开源编码代理 |
-| **OpenClaw** | Editor | 替代编码代理 |
-| **Pi** | Editor | @mariozechner 的 Pi 编码代理 |
-
-### 集成类型
-
-- **Runner**: 使用环境配置直接启动
-- **Editor**: 在启动前修改配置文件
-
-## 兼容性适配器
-
-spark 为使用非 OpenAI API 的集成提供自动协议转换：
-
-### Codex (Responses API)
-
-当你的网关不支持 OpenAI 的 `/v1/responses` 端点时，spark 自动：
-1. 检测网关能力
-2. 启动本地兼容代理
-3. 在 Responses 和 Chat Completions 格式之间转换
-4. 处理流式事件和工具调用
-
-### Claude (Anthropic API)
-
-对于使用非 Anthropic 端点的 Claude Code：
-1. 启动本地 Anthropic 到 OpenAI 的代理
-2. 将 Anthropic Messages API 转换为 OpenAI Chat Completions
-3. 使用正确的事件格式处理流式传输
+| `openai_base_url` | OpenAI-compatible API endpoint |
+| `api_key` | 当前 profile 的 API Key |
+| `openai_api_type` | 接口类型，可用 `responses`、`chat_completions`、`gemini_generate_content`、`anthropic_messages`，也可用逗号组合 |
+| `openai_org` | OpenAI organization ID，可选 |
+| `openai_project` | OpenAI project ID，可选 |
+| `model_list_url` | 自定义模型列表接口，可选 |
+| `anthropic_base_url` | Anthropic endpoint，可选 |
+| `models` | 可选模型列表 |
+| `default_model` | 默认模型 |
 
 ## 环境变量
 
-启动集成时 spark 会识别以下环境变量：
+启动集成时可用环境变量覆盖 profile 中的部分配置：
 
-| 变量 | 描述 |
+| 变量 | 说明 |
 |------|------|
-| `OPENAI_BASE_URL` | 覆盖 API 基础 URL |
-| `OPENAI_API_KEY` | 覆盖 API 密钥 |
-| `ANTHROPIC_BASE_URL` | Anthropic 专用端点 |
-| `ANTHROPIC_AUTH_TOKEN` | Anthropic 认证令牌 |
+| `OPENAI_BASE_URL` | 覆盖 OpenAI-compatible Base URL |
+| `OPENAI_API_KEY` | 覆盖 OpenAI-compatible API Key |
+| `ANTHROPIC_BASE_URL` | 覆盖 Anthropic Base URL |
+| `ANTHROPIC_AUTH_TOKEN` | 覆盖 Anthropic auth token |
 
-## 故障排除
+## 开发
 
-### 找不到集成
+```bash
+go mod tidy
+go test ./...
+go build -o spark ./cmd/spark
+go run ./cmd/spark
+```
 
-确保已安装集成：
-- **Claude Code**: `claude` 命令或从 https://code.claude.com 下载
-- **Codex**: `npm install -g @openai/codex`
-- **Droid**: 从 https://docs.factory.ai 下载
-- **OpenCode**: 从 https://opencode.ai 下载
-- **Pi**: `npm install -g @mariozechner/pi-coding-agent`
+渲染 TUI 快照可使用隐藏 debug 命令：
 
-### 连接错误
+```bash
+spark debug snapshot dashboard --width 90 --height 24
+spark debug snapshot profile --width 120 --height 36
+spark debug snapshot token-usage --width 100 --height 30
+spark debug snapshot mcp --width 120 --height 36
+spark debug snapshot skill --width 120 --height 36
+```
 
-1. 检查你的 API 基础 URL 是否正确
-2. 验证你的 API 密钥是否有效
-3. 使用 `spark profile` 测试你的连接
-
-## License
-
-MIT
+这些命令适合生成 README 中预留位置的截图。

@@ -1,10 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +17,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	cfg.DefaultProfile = "work"
 	cfg.Profiles["work"] = &Profile{
 		OpenAIBaseURL: "https://example.com/v1",
-		OpenAIAPIKey:  "token",
+		APIKey:        "token",
 		ModelListURL:  "https://example.com/custom/models",
 		Models:        []string{"gpt-4.1-mini", "gpt-4.1"},
 		DefaultModel:  "gpt-4.1",
@@ -39,7 +41,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.DefaultProfile != "work" {
 		t.Fatalf("DefaultProfile mismatch, got %q", got.DefaultProfile)
 	}
-	if got.Profiles["work"] == nil || got.Profiles["work"].OpenAIAPIKey != "token" {
+	if got.Profiles["work"] == nil || got.Profiles["work"].EffectiveAPIKey() != "token" {
 		t.Fatalf("work profile not persisted correctly: %#v", got.Profiles["work"])
 	}
 	if got.Profiles["work"].DefaultModel != "gpt-4.1" {
@@ -86,6 +88,36 @@ func TestLoadCreatesDefaultConfigWhenMissing(t *testing.T) {
 	}
 	if filepath.Base(path) != "config.json" {
 		t.Fatalf("unexpected config path: %q", path)
+	}
+}
+
+func TestProfileKeyMigratesLegacyFields(t *testing.T) {
+	var p Profile
+	if err := json.Unmarshal([]byte(`{"openai_api_key":"legacy-openai","anthropic_auth_token":"legacy-anthropic"}`), &p); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if p.EffectiveAPIKey() != "legacy-openai" {
+		t.Fatalf("EffectiveAPIKey=%q", p.EffectiveAPIKey())
+	}
+
+	p = Profile{}
+	if err := json.Unmarshal([]byte(`{"anthropic_auth_token":"legacy-anthropic"}`), &p); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if p.EffectiveAPIKey() != "legacy-anthropic" {
+		t.Fatalf("EffectiveAPIKey=%q", p.EffectiveAPIKey())
+	}
+
+	data, err := json.Marshal(Profile{OpenAIAPIKey: "legacy-openai", AnthropicAuthToken: "legacy-anthropic"})
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `"api_key":"legacy-openai"`) {
+		t.Fatalf("expected unified api_key in %s", got)
+	}
+	if strings.Contains(got, "openai_api_key") || strings.Contains(got, "anthropic_auth_token") {
+		t.Fatalf("legacy key fields should not be persisted: %s", got)
 	}
 }
 
@@ -158,8 +190,8 @@ func TestNormalizeOpenAIAPIType(t *testing.T) {
 		{in: "responses", want: OpenAIAPITypeResponses},
 		{in: "response", want: OpenAIAPITypeResponses},
 		{in: "openai-responses", want: OpenAIAPITypeResponses},
-		{in: "auto", want: OpenAIAPITypeAuto},
-		{in: "prefer_responses", want: OpenAIAPITypeAuto},
+		{in: "auto", want: ""},
+		{in: "prefer_responses", want: ""},
 		{in: "chat_completions", want: OpenAIAPITypeChatCompletions},
 		{in: "chat/completions", want: OpenAIAPITypeChatCompletions},
 		{in: "openai-completions", want: OpenAIAPITypeChatCompletions},
@@ -186,7 +218,8 @@ func TestParseOpenAIAPITypes(t *testing.T) {
 		{in: "responses", want: []string{OpenAIAPITypeResponses}},
 		{in: "chat_completions", want: []string{OpenAIAPITypeChatCompletions}},
 		{in: "gemini_generate_content", want: []string{OpenAIAPITypeGeminiGenerateContent}},
-		{in: "auto", want: []string{OpenAIAPITypeAuto}},
+		{in: "auto", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
+		{in: "prefer_responses", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
 		{in: "responses,chat_completions", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
 		{in: "responses,gemini_generate_content", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeGeminiGenerateContent}},
 		{in: "chat_completions,responses", want: []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}},
@@ -214,7 +247,7 @@ func TestCanonicalizeOpenAIAPITypes(t *testing.T) {
 		{in: "gemini_generate_content,responses", want: "responses,gemini_generate_content"},
 		{in: "responses|chat_completions", want: "responses,chat_completions"},
 		{in: "anthropic,chat_completions", want: "chat_completions,anthropic_messages"},
-		{in: "auto,responses", want: OpenAIAPITypeAuto},
+		{in: "auto,responses", want: DefaultOpenAIAPIType},
 	}
 	for _, tt := range tests {
 		if got := CanonicalizeOpenAIAPITypes(tt.in); got != tt.want {

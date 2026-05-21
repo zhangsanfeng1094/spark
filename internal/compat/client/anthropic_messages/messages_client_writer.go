@@ -30,11 +30,22 @@ func MessagesClientResponse(resp ir.Response, requestedModel string) map[string]
 		"content":       content,
 		"stop_reason":   anthropicStopReason(resp.StopReason, len(toolCalls) > 0),
 		"stop_sequence": nil,
-		"usage": map[string]any{
-			"input_tokens":  resp.Usage.InputTokens,
-			"output_tokens": resp.Usage.OutputTokens,
-		},
+		"usage":         anthropicUsageMap(resp.Usage),
 	}
+}
+
+func anthropicUsageMap(usage ir.Usage) map[string]any {
+	out := map[string]any{
+		"input_tokens":  usage.InputTokens,
+		"output_tokens": usage.OutputTokens,
+	}
+	if usage.CacheCreationInputTokens > 0 {
+		out["cache_creation_input_tokens"] = usage.CacheCreationInputTokens
+	}
+	if usage.CacheReadInputTokens > 0 {
+		out["cache_read_input_tokens"] = usage.CacheReadInputTokens
+	}
+	return out
 }
 
 func responseText(blocks []ir.ContentBlock) string {

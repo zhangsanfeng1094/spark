@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	anthropicadapter "spark/internal/compat/client/anthropic_messages"
 	"spark/internal/compat/ir"
+	"spark/internal/compat/policy"
 	openai_chat_target "spark/internal/compat/target/openai_chat"
+	"spark/internal/usage"
 )
 
 type AnthropicMessagesHandler struct {
@@ -31,17 +34,18 @@ func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		WriteAnthropicError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	callLogf(h.Logf, "incoming request structure=%s", structureJSONForLog(req))
+	logCompatStage(h.Logf, "anthropic.request", req)
 
-	reqTranslator := AnthropicMessagesTranslator{}
-	chatReq, err := reqTranslator.ToChat(req)
-	if err != nil {
-		callLogf(h.Logf, "request translate failed: %v", err)
-		WriteAnthropicError(w, http.StatusBadRequest, "invalid request")
-		return
-	}
+	irReq := anthropicadapter.MessagesInbound(req)
+	logCompatStage(h.Logf, "ir.request", irReq)
+	chatReq := openai_chat_target.ChatOutbound{
+		Reasoning: policy.PreserveReasoningContent(),
+	}.BuildRequest(irReq)
 	stream := boolValue(req["stream"])
 	chatReq["stream"] = stream
+	if stream {
+		ensureChatStreamUsageOption(chatReq)
+	}
 	if h.PreferredModel != "" {
 		incomingModel := stringValue(chatReq["model"])
 		if incomingModel != h.PreferredModel {
@@ -52,7 +56,7 @@ func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	if h.ApplyReasoningContent != nil {
 		h.ApplyReasoningContent(chatReq)
 	}
-	callLogf(h.Logf, "mapped chat request structure=%s", structureJSONForLog(chatReq))
+	logCompatStage(h.Logf, "openai_chat.request", chatReq)
 
 	if h.PostChatCompletions == nil {
 		WriteAnthropicError(w, http.StatusBadGateway, "upstream request failed")
@@ -79,6 +83,15 @@ func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	ForwardAnthropicMessagesNonStream(w, resp, requestedModel, h.RememberReasoning, h.Logf)
 }
 
+func ensureChatStreamUsageOption(chatReq map[string]any) {
+	streamOptions, _ := chatReq["stream_options"].(map[string]any)
+	if streamOptions == nil {
+		streamOptions = map[string]any{}
+		chatReq["stream_options"] = streamOptions
+	}
+	streamOptions["include_usage"] = true
+}
+
 func ForwardAnthropicMessagesStream(
 	w http.ResponseWriter,
 	upBody io.Reader,
@@ -98,6 +111,11 @@ func ForwardAnthropicMessagesStream(
 	result := anthropicadapter.WriteMessagesStream(w, upBody, requestedModel, flusher.Flush)
 	callLogf(logf, "stream parse flags chunks=%d saw_done=%t message_started=%t reasoning_len=%d tool_call_ids=%d first_chunk_bytes=%d last_chunk_bytes=%d",
 		result.ChunkCount, result.SawDone, result.MessageStarted, len(result.ReasoningText), len(result.ToolCallIDs), len(result.FirstValidChunk), len(result.LastValidChunk))
+	if len(result.Usage) > 0 {
+		callLogf(logf, "middleware stage=anthropic.stream %s raw_usage=%s", formatUsageForLog(result.Usage), structureJSONForLog(result.Usage))
+	} else {
+		callLogf(logf, "middleware stage=anthropic.stream usage missing")
+	}
 	if result.EmptyStream {
 		WriteAnthropicError(w, http.StatusBadGateway, "empty upstream stream")
 		return
@@ -125,12 +143,16 @@ func ForwardAnthropicMessagesNonStream(
 		WriteAnthropicError(w, http.StatusBadGateway, "invalid upstream response")
 		return
 	}
-	callLogf(logf, "upstream response structure=%s", structureJSONForLog(chatResp))
+	logCompatStage(logf, "openai_chat.response", chatResp)
 	irResp := openai_chat_target.ChatResponse(chatResp)
+	logCompatStage(logf, "ir.response", irResp)
+	logCompatUsage(logf, "ir.response", irResp.Usage)
+	usage.RecordIR(irResp.Usage, irResp.Model, false, time.Now().UTC())
 	if remember != nil {
 		remember(toolCallIDsFromBlocks(irResp.Output), reasoningTextFromBlocks(irResp.Output))
 	}
 	msg := anthropicadapter.MessagesClientResponse(irResp, requestedModel)
+	logCompatStage(logf, "anthropic.response", msg)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(msg)
 }

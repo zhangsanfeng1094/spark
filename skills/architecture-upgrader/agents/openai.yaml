@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architecture Upgrader"
+  short_description: "Plan and execute architecture-level codebase upgrades."
+  default_prompt: "Use this skill to analyze package boundaries, identify responsibility drift, and implement an incremental architecture upgrade with verification."

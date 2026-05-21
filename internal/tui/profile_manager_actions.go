@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"spark/internal/config"
+	"spark/internal/probe"
 )
 
 func (m *pmModel) runAction(action int) tea.Cmd {
@@ -35,16 +36,16 @@ func (m *pmModel) setCurrentProfileDefault() {
 	wasDirty := m.dirty
 	name := m.currentProfileName()
 	if err := m.cfg.SetDefaultProfile(name); err != nil {
-		m.status = "Default failed: " + err.Error()
+		m.setUserStatus(pmStatusError, "Default failed: "+err.Error())
 		return
 	}
 	if err := config.Save(m.cfg); err != nil {
 		m.dirty = true
-		m.status = "Default save failed: " + err.Error()
+		m.setUserStatus(pmStatusError, "Default save failed: "+err.Error())
 		return
 	}
 	m.dirty = wasDirty
-	m.status = "Set '" + name + "' as default."
+	m.setUserStatus(pmStatusSuccess, "Set '"+name+"' as default.")
 }
 
 func (m *pmModel) openAddModal() {
@@ -86,9 +87,6 @@ func (m *pmModel) openAPITypeModal() {
 	}
 	if len(m.apiTypeSelected) == 0 && len(options) > 0 {
 		m.apiTypeSelected[options[0]] = true
-	}
-	if len(m.apiTypeSelected) == 0 {
-		m.apiTypeSelected[config.OpenAIAPITypeAuto] = true
 	}
 	for i, opt := range options {
 		if m.apiTypeSelected[opt] {
@@ -132,7 +130,7 @@ func (m *pmModel) createProfileFromModal() {
 	m.modalOpen = false
 	m.modalKind = pmModalKindNone
 	m.dirty = true
-	m.status = fmt.Sprintf("Created '%s'. Edit fields, then save.", name)
+	m.setUserStatus(pmStatusInfo, fmt.Sprintf("Created '%s'. Edit fields, then save.", name))
 }
 
 func (m *pmModel) confirmProviderTypeSelection() {
@@ -147,8 +145,6 @@ func (m *pmModel) confirmProviderTypeSelection() {
 	}
 	m.fields[pmFieldProviderType].value = opt.name
 	m.fields[pmFieldProviderType].cursor = len([]rune(opt.name))
-	m.fields[pmFieldOpenAIBaseURL].value = template.OpenAIBaseURL
-	m.fields[pmFieldOpenAIBaseURL].cursor = len([]rune(template.OpenAIBaseURL))
 	m.fields[pmFieldOpenAIAPIKey].value = apiKey
 	m.fields[pmFieldOpenAIAPIKey].cursor = len([]rune(apiKey))
 	apiType := displayOpenAIAPIType(template.OpenAIAPIType)
@@ -163,7 +159,7 @@ func (m *pmModel) confirmProviderTypeSelection() {
 	m.modalOpen = false
 	m.modalKind = pmModalKindNone
 	m.dirty = true
-	m.status = "Provider type updated. Save to persist."
+	m.setUserStatus(pmStatusInfo, "Provider type updated. Save to persist.")
 }
 
 func (m *pmModel) toggleAPITypeOptionAtCursor() {
@@ -172,13 +168,6 @@ func (m *pmModel) toggleAPITypeOptionAtCursor() {
 		return
 	}
 	selected := options[m.modalCursor]
-	if selected == config.OpenAIAPITypeAuto {
-		m.apiTypeSelected = map[string]bool{
-			config.OpenAIAPITypeAuto: true,
-		}
-		return
-	}
-	delete(m.apiTypeSelected, config.OpenAIAPITypeAuto)
 	if m.apiTypeSelected[selected] {
 		delete(m.apiTypeSelected, selected)
 	} else {
@@ -287,7 +276,7 @@ func (m *pmModel) confirmModelsSelection() {
 	m.modelEditBuffer = ""
 	m.modelModalNote = ""
 	m.dirty = true
-	m.status = "Models updated. Save to persist."
+	m.setUserStatus(pmStatusInfo, "Models updated. Save to persist.")
 }
 
 // fetchModelsResultMsg is sent when model list fetching completes
@@ -300,7 +289,7 @@ func (m *pmModel) fetchModelsFromAPI() tea.Cmd {
 	m.modelModalNote = "Fetching models from API..."
 	profileCopy := &config.Profile{
 		OpenAIBaseURL: strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
-		OpenAIAPIKey:  strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
+		APIKey:        strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
 		OpenAIAPIType: config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value),
 		ModelListURL:  strings.TrimSpace(m.fields[pmFieldModelListURL].value),
 		OpenAIOrg:     "",
@@ -313,7 +302,6 @@ func (m *pmModel) fetchModelsFromAPI() tea.Cmd {
 	if p := m.cfg.Profiles[name]; p != nil {
 		profileCopy.OpenAIOrg = strings.TrimSpace(p.OpenAIOrg)
 		profileCopy.OpenAIProject = strings.TrimSpace(p.OpenAIProject)
-		profileCopy.AnthropicAuthToken = strings.TrimSpace(p.AnthropicAuthToken)
 	}
 	return func() tea.Msg {
 		models, err := FetchOpenAIModels(profileCopy)
@@ -350,14 +338,11 @@ func (m *pmModel) confirmAPITypeSelection() {
 	options := m.visibleAPITypeOptions()
 	selected := make([]string, 0, len(options))
 	for _, opt := range options {
-		if opt == config.OpenAIAPITypeAuto {
-			continue
-		}
 		if m.apiTypeSelected[opt] {
 			selected = append(selected, opt)
 		}
 	}
-	value := config.OpenAIAPITypeAuto
+	value := config.DefaultOpenAIAPIType
 	if len(selected) > 0 {
 		value = config.CanonicalizeOpenAIAPITypes(strings.Join(selected, ","))
 	}
@@ -366,12 +351,12 @@ func (m *pmModel) confirmAPITypeSelection() {
 	m.modalOpen = false
 	m.modalKind = pmModalKindNone
 	m.dirty = true
-	m.status = "API type updated. Save to persist."
+	m.setUserStatus(pmStatusInfo, "API type updated. Save to persist.")
 }
 
 func (m *pmModel) deleteSelectedProfile() {
 	if len(m.profileNames) <= 1 {
-		m.status = "Cannot delete the last profile."
+		m.setUserStatus(pmStatusWarning, "Cannot delete the last profile.")
 		return
 	}
 	name := m.currentProfileName()
@@ -395,14 +380,14 @@ func (m *pmModel) deleteSelectedProfile() {
 	}
 	m.loadSelectedProfileFields()
 	m.dirty = true
-	m.status = fmt.Sprintf("Deleted '%s'.", name)
+	m.setUserStatus(pmStatusInfo, fmt.Sprintf("Deleted '%s'.", name))
 }
 
 func (m *pmModel) copySelectedProfile() {
 	name := m.currentProfileName()
 	profile, ok := m.cfg.Profiles[name]
 	if !ok {
-		m.status = "Profile not found."
+		m.setUserStatus(pmStatusError, "Profile not found.")
 		return
 	}
 
@@ -411,16 +396,15 @@ func (m *pmModel) copySelectedProfile() {
 
 	// Deep copy the profile
 	newProfile := &config.Profile{
-		OpenAIBaseURL:      profile.OpenAIBaseURL,
-		OpenAIAPIKey:       profile.OpenAIAPIKey,
-		OpenAIAPIType:      profile.OpenAIAPIType,
-		OpenAIOrg:          profile.OpenAIOrg,
-		OpenAIProject:      profile.OpenAIProject,
-		ModelListURL:       profile.ModelListURL,
-		AnthropicBaseURL:   profile.AnthropicBaseURL,
-		AnthropicAuthToken: profile.AnthropicAuthToken,
-		Models:             append([]string{}, profile.Models...),
-		DefaultModel:       profile.DefaultModel,
+		OpenAIBaseURL:    profile.OpenAIBaseURL,
+		APIKey:           profile.EffectiveAPIKey(),
+		OpenAIAPIType:    profile.OpenAIAPIType,
+		OpenAIOrg:        profile.OpenAIOrg,
+		OpenAIProject:    profile.OpenAIProject,
+		ModelListURL:     profile.ModelListURL,
+		AnthropicBaseURL: profile.AnthropicBaseURL,
+		Models:           append([]string{}, profile.Models...),
+		DefaultModel:     profile.DefaultModel,
 	}
 
 	m.cfg.Profiles[newName] = newProfile
@@ -428,33 +412,23 @@ func (m *pmModel) copySelectedProfile() {
 	m.selectByName(newName)
 	m.loadSelectedProfileFields()
 	m.dirty = true
-	m.status = fmt.Sprintf("Copied '%s' to '%s'.", name, newName)
+	m.setUserStatus(pmStatusInfo, fmt.Sprintf("Copied '%s' to '%s'.", name, newName))
 }
 
 func (m *pmModel) save() {
 	oldName := m.currentProfileName()
 	if err := m.applyFieldsToProfile(oldName); err != nil {
-		m.status = "Error: " + err.Error()
+		m.setUserStatus(pmStatusError, "Error: "+err.Error())
 		return
-	}
-	detectedAPIType := ""
-	if p := m.cfg.Profiles[oldName]; p != nil && config.CanonicalizeOpenAIAPITypes(p.OpenAIAPIType) == config.OpenAIAPITypeAuto {
-		detected, err := DetectOpenAIAPIType(p, strings.TrimSpace(m.defaultModel))
-		if err == nil && detected != "" {
-			p.OpenAIAPIType = detected
-			detectedAPIType = detected
-			m.fields[pmFieldOpenAIAPIType].value = detected
-			m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(detected))
-		}
 	}
 	newName := strings.TrimSpace(m.fields[pmFieldProfileName].value)
 	if newName == "" {
-		m.status = "Profile Name cannot be empty."
+		m.setUserStatus(pmStatusWarning, "Profile Name cannot be empty.")
 		return
 	}
 	if newName != oldName {
 		if _, exists := m.cfg.Profiles[newName]; exists {
-			m.status = "Profile name already exists."
+			m.setUserStatus(pmStatusWarning, "Profile name already exists.")
 			return
 		}
 		m.cfg.Profiles[newName] = m.cfg.Profiles[oldName]
@@ -469,18 +443,14 @@ func (m *pmModel) save() {
 		}
 	}
 	if err := config.Save(m.cfg); err != nil {
-		m.status = "Save failed: " + err.Error()
+		m.setUserStatus(pmStatusError, "Save failed: "+err.Error())
 		return
 	}
 	m.refreshNames()
 	m.selectByName(newName)
 	m.loadSelectedProfileFields()
 	m.dirty = false
-	if detectedAPIType != "" {
-		m.status = fmt.Sprintf("Saved. Detected API type: %s.", detectedAPIType)
-		return
-	}
-	m.status = "Saved profile " + newName + "."
+	m.setUserStatus(pmStatusSuccess, "Saved profile "+newName+".")
 }
 func (m *pmModel) applyFieldsToProfile(name string) error {
 	p := m.cfg.Profiles[name]
@@ -488,11 +458,15 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 		return fmt.Errorf("profile not found")
 	}
 	p.OpenAIBaseURL = strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value)
-	p.OpenAIAPIKey = strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value)
+	p.APIKey = strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value)
+	p.OpenAIAPIKey = p.APIKey
+	p.AnthropicAuthToken = ""
 	p.OpenAIAPIType = config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value)
 	p.ModelListURL = strings.TrimSpace(m.fields[pmFieldModelListURL].value)
 	if config.SupportsOpenAIAPIType(p.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
 		p.AnthropicBaseURL = p.OpenAIBaseURL
+	} else {
+		p.AnthropicBaseURL = ""
 	}
 	p.Models = append([]string{}, m.modelsDraft...)
 	p.DefaultModel = strings.TrimSpace(m.defaultModel)
@@ -501,12 +475,14 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 
 // testResultMsg is sent when a connection test completes
 type testResultMsg struct {
-	result TestResult
+	statusSeq uint64
+	result    probe.TestResult
 }
 
 func (m *pmModel) testConnection() tea.Cmd {
 	m.lastTestSummary = ""
-	logPath := appendModelConnectionTestLogf(
+	m.lastTestOK = false
+	logPath := probe.AppendModelConnectionTestLogf(
 		"ui trigger profile=%q base_url=%q api_type=%q default_model=%q models=%q",
 		m.currentProfileName(),
 		strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
@@ -514,13 +490,15 @@ func (m *pmModel) testConnection() tea.Cmd {
 		strings.TrimSpace(m.defaultModel),
 		strings.Join(m.modelsDraft, ","),
 	)
-	m.status = "Testing connection..."
+	status := "Testing connection..."
 	if strings.TrimSpace(logPath) != "" {
-		m.status = fmt.Sprintf("Testing connection... (log: %s)", logPath)
+		status = fmt.Sprintf("Testing connection... (log: %s)", logPath)
 	}
+	statusSeq := m.setStatus(pmStatusTestRunning, status)
+	m.runningTestSeq = statusSeq
 	name := m.currentProfileName()
 	if _, ok := m.cfg.Profiles[name]; !ok {
-		m.status = "Profile not found"
+		m.setUserStatus(pmStatusError, "Profile not found")
 		return nil
 	}
 	model := strings.TrimSpace(m.defaultModel)
@@ -531,30 +509,37 @@ func (m *pmModel) testConnection() tea.Cmd {
 	}
 	profileCopy := &config.Profile{
 		OpenAIBaseURL: strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value),
-		OpenAIAPIKey:  strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
+		APIKey:        strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value),
 		OpenAIAPIType: config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value),
 		ModelListURL:  strings.TrimSpace(m.fields[pmFieldModelListURL].value),
 		Models:        append([]string{}, m.modelsDraft...),
 		DefaultModel:  model,
 	}
 	return func() tea.Msg {
-		result := TestModelConnection(profileCopy, model)
-		return testResultMsg{result: result}
+		result := probe.TestModelConnection(profileCopy, model)
+		return testResultMsg{statusSeq: statusSeq, result: result}
 	}
 }
 func (m *pmModel) handleTestResult(msg testResultMsg) {
+	if msg.statusSeq == 0 || msg.statusSeq != m.runningTestSeq {
+		return
+	}
+	m.runningTestSeq = 0
 	r := msg.result
 	logPath := strings.TrimSpace(r.LogPath)
+	statusKind := pmStatusTestError
+	status := fmt.Sprintf("✗ Test failed · %s", r.Message)
 	if r.Success {
-		m.status = fmt.Sprintf("✓ Connected · %s · %dms", r.Message, r.Latency.Milliseconds())
+		statusKind = pmStatusTestSuccess
+		status = fmt.Sprintf("✓ Connected · %s · %dms", r.Message, r.Latency.Milliseconds())
 		m.lastTestSummary = fmt.Sprintf("Connected · %dms", r.Latency.Milliseconds())
 		m.lastTestOK = true
 	} else {
-		m.status = fmt.Sprintf("✗ Test failed · %s", r.Message)
 		m.lastTestSummary = "Connection failed"
 		m.lastTestOK = false
 	}
 	if logPath != "" {
-		m.status += "\nlog: " + logPath
+		status += "\nlog: " + logPath
 	}
+	m.setStatus(statusKind, status)
 }

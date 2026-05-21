@@ -1,0 +1,7 @@
+interface:
+  display_name: "AI-Native Project Skeleton"
+  short_description: "Project-specific architecture intelligence"
+  default_prompt: "Use $ai-native-project-skeleton to derive project-specific architecture abstractions and progressive AI context for this repository."
+
+policy:
+  allow_implicit_invocation: true

@@ -54,5 +54,13 @@ func SelectRoute(route Route) (RouteSelection, error) {
 			NonStream:  CodexResponsesFromOpenAIChatResponse,
 		}, nil
 	}
+	if route.Client == ClientCodexResponses && route.Target == TargetAnthropicMessages {
+		return RouteSelection{
+			Route:      route,
+			Translator: CodexResponsesToAnthropicMessagesTranslator{},
+			Stream:     WriteCodexResponsesStreamFromAnthropicMessages,
+			NonStream:  CodexResponsesFromAnthropicMessagesResponse,
+		}, nil
+	}
 	return RouteSelection{}, UnsupportedRouteError{Route: route}
 }

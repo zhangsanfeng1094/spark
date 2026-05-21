@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "mcp__deepwiki__ask_question"
+      "mcp__deepwiki__ask_question",
+      "mcp__augment-context-engine__codebase-retrieval"
     ]
   }
 }

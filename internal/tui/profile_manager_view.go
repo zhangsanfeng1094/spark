@@ -35,7 +35,7 @@ func (m *pmModel) View() string {
 	)
 	availableOuterH := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
 	if availableOuterH > 2 {
-		paneInnerH = max(paneInnerH, availableOuterH-2)
+		paneInnerH = availableOuterH - 2
 	}
 
 	leftPane := m.renderLeftPane(paneInnerH)
@@ -264,15 +264,16 @@ func (m *pmModel) renderRightPane(height int) string {
 			saveBtn,
 		),
 	)
-	bottomLines := []string{actionTitle, btnRow, ""}
-	statusTitle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Status")
-	statusSummary, statusSummaryStyle := m.renderStatusSummaryLine()
-	bottomLines = append(bottomLines, statusTitle, statusSummaryStyle.Render(statusSummary))
+	var bottomLines []string
 	if help := m.contextHintText(); help != "" {
 		helpTitle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Help")
 		helpText := lipgloss.NewStyle().Foreground(colorMuted).Width(contentWidth).Render(help)
-		bottomLines = append(bottomLines, "", helpTitle, helpText)
+		bottomLines = append(bottomLines, helpTitle, helpText, "")
 	}
+	bottomLines = append(bottomLines, actionTitle, btnRow, "")
+	statusTitle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Status")
+	statusSummary, statusSummaryStyle := m.renderStatusSummaryLine()
+	bottomLines = append(bottomLines, statusTitle, statusSummaryStyle.Render(statusSummary))
 
 	content := joinTopAndBottom(topLines, bottomLines, height)
 	joinedTop := lipgloss.JoinVertical(lipgloss.Left, topLines...)
@@ -513,8 +514,9 @@ func (m *pmModel) decorateFieldValue(fieldIdx int, value string) string {
 }
 
 func (m *pmModel) statusSummaryText() string {
-	if m.lastTestSummary != "" {
-		if m.lastTestOK {
+	switch m.statusKind {
+	case pmStatusTestSuccess, pmStatusTestError:
+		if m.lastTestSummary != "" && m.lastTestOK {
 			modelInfo := ""
 			if len(m.modelsDraft) > 0 {
 				modelInfo = fmt.Sprintf(" · %d models", len(m.modelsDraft))
@@ -525,12 +527,16 @@ func (m *pmModel) statusSummaryText() string {
 		if summary := summarizeActivityStatus(main); summary != "" {
 			return summary
 		}
-		return m.lastTestSummary
+		if m.lastTestSummary != "" {
+			return m.lastTestSummary
+		}
+	case pmStatusNeutral:
+		main, _ := splitStatusText(m.status)
+		if strings.EqualFold(strings.TrimSpace(main), "ready") || strings.HasPrefix(strings.TrimSpace(main), "Ready.") {
+			return ""
+		}
 	}
 	main, log := splitStatusText(m.status)
-	if strings.EqualFold(strings.TrimSpace(main), "ready") || strings.HasPrefix(strings.TrimSpace(main), "Ready.") {
-		return ""
-	}
 	if summary := summarizeActivityStatus(main); summary != "" {
 		return summary
 	}
@@ -562,12 +568,13 @@ func (m *pmModel) leftSummaryLines(width int) []string {
 func (m *pmModel) renderStatusSummaryLine() (string, lipgloss.Style) {
 	statusSummary := strings.TrimSpace(m.statusSummaryText())
 	statusSummaryStyle := lipgloss.NewStyle().Foreground(colorMuted)
-	if m.lastTestSummary != "" {
-		if m.lastTestOK {
-			statusSummaryStyle = statusSummaryStyle.Foreground(colorSuccess)
-		} else {
-			statusSummaryStyle = statusSummaryStyle.Foreground(colorError)
-		}
+	switch m.statusKind {
+	case pmStatusSuccess, pmStatusTestSuccess:
+		statusSummaryStyle = statusSummaryStyle.Foreground(colorSuccess)
+	case pmStatusError, pmStatusTestError:
+		statusSummaryStyle = statusSummaryStyle.Foreground(colorError)
+	case pmStatusWarning:
+		statusSummaryStyle = statusSummaryStyle.Foreground(colorWarning)
 	}
 	if statusSummary == "" {
 		statusSummary = "No recent activity"
@@ -585,8 +592,6 @@ func summarizeActivityStatus(main string) string {
 	case strings.HasPrefix(trimmed, "✗ Test failed · "):
 		return "✗ " + strings.TrimPrefix(trimmed, "✗ Test failed · ")
 	case strings.HasPrefix(trimmed, "Saved profile "):
-		return "✓ Saved profile"
-	case strings.HasPrefix(trimmed, "Saved. Detected API type:"):
 		return "✓ Saved profile"
 	case strings.HasPrefix(trimmed, "Saved "):
 		return "✓ " + trimmed

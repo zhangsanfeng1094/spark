@@ -8,13 +8,27 @@ import (
 	"spark/internal/config"
 )
 
+func (m *pmModel) setStatus(kind pmStatusKind, status string) uint64 {
+	m.statusSeq++
+	m.statusKind = kind
+	m.status = status
+	return m.statusSeq
+}
+
+func (m *pmModel) setUserStatus(kind pmStatusKind, status string) {
+	m.runningTestSeq = 0
+	m.lastTestSummary = ""
+	m.lastTestOK = false
+	m.setStatus(kind, status)
+}
+
 func (m *pmModel) switchProfile(next int) {
 	if next < 0 || next >= len(m.profileNames) {
 		return
 	}
 	cur := m.currentProfileName()
 	if err := m.applyFieldsToProfile(cur); err != nil {
-		m.status = "Warning: failed to apply current fields: " + err.Error()
+		m.setUserStatus(pmStatusWarning, "Warning: failed to apply current fields: "+err.Error())
 	}
 	m.selected = next
 	m.loadSelectedProfileFields()
@@ -82,7 +96,7 @@ func (m *pmModel) loadSelectedProfileFields() {
 		{label: "Profile Name", value: name, required: true},
 		{label: "Provider Type", value: detectProviderType(p), readOnly: true},
 		{label: "Base URL", value: p.OpenAIBaseURL, required: true},
-		{label: "API Key", value: p.OpenAIAPIKey, masked: true},
+		{label: "API Key", value: p.EffectiveAPIKey(), masked: true},
 		{label: "API Type", value: displayOpenAIAPIType(p.OpenAIAPIType), readOnly: true},
 		{label: "Models URL", value: p.ModelListURL},
 		{label: "Models", value: formatModelsSummary(m.modelsDraft, m.defaultModel), readOnly: true},
@@ -115,7 +129,7 @@ func (m *pmModel) syncModelFieldViews() {
 func displayOpenAIAPIType(v string) string {
 	canonical := config.CanonicalizeOpenAIAPITypes(v)
 	if canonical == "" {
-		return config.OpenAIAPITypeAuto
+		return config.DefaultOpenAIAPIType
 	}
 	return canonical
 }
@@ -132,7 +146,6 @@ func (m *pmModel) visibleAPITypeOptions() []string {
 		return []string{config.OpenAIAPITypeGeminiGenerateContent}
 	default:
 		return []string{
-			config.OpenAIAPITypeAuto,
 			config.OpenAIAPITypeResponses,
 			config.OpenAIAPITypeChatCompletions,
 		}
@@ -176,7 +189,7 @@ func (m *pmModel) profileTemplate(kind string) *config.Profile {
 			DefaultModel:  "gemini-2.5-flash",
 		}
 	default:
-		return &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1"}
+		return &config.Profile{OpenAIBaseURL: "https://api.openai.com/v1", OpenAIAPIType: config.DefaultOpenAIAPIType}
 	}
 }
 

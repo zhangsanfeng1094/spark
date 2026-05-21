@@ -16,28 +16,110 @@ const (
 	OpenAIAPITypeChatCompletions       = "chat_completions"
 	OpenAIAPITypeGeminiGenerateContent = "gemini_generate_content"
 	OpenAIAPITypeAnthropicMessages     = "anthropic_messages"
-	OpenAIAPITypeAuto                  = "auto"
+	DefaultOpenAIAPIType               = OpenAIAPITypeResponses + "," + OpenAIAPITypeChatCompletions
 )
 
 type Profile struct {
 	OpenAIBaseURL      string   `json:"openai_base_url"`
-	OpenAIAPIKey       string   `json:"openai_api_key"`
+	APIKey             string   `json:"api_key,omitempty"`
+	OpenAIAPIKey       string   `json:"-"`
 	OpenAIAPIType      string   `json:"openai_api_type,omitempty"`
 	OpenAIOrg          string   `json:"openai_org,omitempty"`
 	OpenAIProject      string   `json:"openai_project,omitempty"`
 	ModelListURL       string   `json:"model_list_url,omitempty"`
 	AnthropicBaseURL   string   `json:"anthropic_base_url,omitempty"`
-	AnthropicAuthToken string   `json:"anthropic_auth_token,omitempty"`
+	AnthropicAuthToken string   `json:"-"`
 	Models             []string `json:"models,omitempty"`
 	DefaultModel       string   `json:"default_model,omitempty"`
+}
+
+func (p *Profile) EffectiveAPIKey() string {
+	if p == nil {
+		return ""
+	}
+	if k := strings.TrimSpace(p.APIKey); k != "" {
+		return k
+	}
+	if k := strings.TrimSpace(p.OpenAIAPIKey); k != "" {
+		return k
+	}
+	return strings.TrimSpace(p.AnthropicAuthToken)
+}
+
+func (p *Profile) NormalizeAPIKey() {
+	if p == nil {
+		return
+	}
+	key := p.EffectiveAPIKey()
+	p.APIKey = key
+	p.OpenAIAPIKey = key
+	p.AnthropicAuthToken = ""
+}
+
+func (p *Profile) UnmarshalJSON(data []byte) error {
+	type profileJSON struct {
+		OpenAIBaseURL      string   `json:"openai_base_url"`
+		APIKey             string   `json:"api_key,omitempty"`
+		OpenAIAPIKey       string   `json:"openai_api_key,omitempty"`
+		OpenAIAPIType      string   `json:"openai_api_type,omitempty"`
+		OpenAIOrg          string   `json:"openai_org,omitempty"`
+		OpenAIProject      string   `json:"openai_project,omitempty"`
+		ModelListURL       string   `json:"model_list_url,omitempty"`
+		AnthropicBaseURL   string   `json:"anthropic_base_url,omitempty"`
+		AnthropicAuthToken string   `json:"anthropic_auth_token,omitempty"`
+		Models             []string `json:"models,omitempty"`
+		DefaultModel       string   `json:"default_model,omitempty"`
+	}
+	var raw profileJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*p = Profile{
+		OpenAIBaseURL:      raw.OpenAIBaseURL,
+		APIKey:             raw.APIKey,
+		OpenAIAPIKey:       raw.OpenAIAPIKey,
+		OpenAIAPIType:      raw.OpenAIAPIType,
+		OpenAIOrg:          raw.OpenAIOrg,
+		OpenAIProject:      raw.OpenAIProject,
+		ModelListURL:       raw.ModelListURL,
+		AnthropicBaseURL:   raw.AnthropicBaseURL,
+		AnthropicAuthToken: raw.AnthropicAuthToken,
+		Models:             raw.Models,
+		DefaultModel:       raw.DefaultModel,
+	}
+	p.NormalizeAPIKey()
+	return nil
+}
+
+func (p Profile) MarshalJSON() ([]byte, error) {
+	type profileJSON struct {
+		OpenAIBaseURL    string   `json:"openai_base_url"`
+		APIKey           string   `json:"api_key,omitempty"`
+		OpenAIAPIType    string   `json:"openai_api_type,omitempty"`
+		OpenAIOrg        string   `json:"openai_org,omitempty"`
+		OpenAIProject    string   `json:"openai_project,omitempty"`
+		ModelListURL     string   `json:"model_list_url,omitempty"`
+		AnthropicBaseURL string   `json:"anthropic_base_url,omitempty"`
+		Models           []string `json:"models,omitempty"`
+		DefaultModel     string   `json:"default_model,omitempty"`
+	}
+	return json.Marshal(profileJSON{
+		OpenAIBaseURL:    p.OpenAIBaseURL,
+		APIKey:           p.EffectiveAPIKey(),
+		OpenAIAPIType:    p.OpenAIAPIType,
+		OpenAIOrg:        p.OpenAIOrg,
+		OpenAIProject:    p.OpenAIProject,
+		ModelListURL:     p.ModelListURL,
+		AnthropicBaseURL: p.AnthropicBaseURL,
+		Models:           p.Models,
+		DefaultModel:     p.DefaultModel,
+	})
 }
 
 func NormalizeOpenAIAPIType(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case OpenAIAPITypeResponses, "response", "openai-responses", "openai_response":
 		return OpenAIAPITypeResponses
-	case OpenAIAPITypeAuto, "prefer_responses", "responses_or_chat_completions":
-		return OpenAIAPITypeAuto
 	case OpenAIAPITypeChatCompletions, "chat-completions", "chat/completions", "openai-completions", "openai_chat_completions":
 		return OpenAIAPITypeChatCompletions
 	case OpenAIAPITypeGeminiGenerateContent, "gemini", "generatecontent", "generate_content", "gemini-generate-content":
@@ -53,6 +135,9 @@ func ParseOpenAIAPITypes(v string) []string {
 	trimmed := strings.TrimSpace(v)
 	if trimmed == "" {
 		return nil
+	}
+	if legacy := legacyOpenAIAPITypes(trimmed); len(legacy) > 0 {
+		return legacy
 	}
 	if normalized := NormalizeOpenAIAPIType(trimmed); normalized != "" {
 		return []string{normalized}
@@ -70,20 +155,21 @@ func ParseOpenAIAPITypes(v string) []string {
 		return nil
 	}
 	seen := map[string]struct{}{}
-	out := make([]string, 0, 2)
 	for _, part := range parts {
+		if legacy := legacyOpenAIAPITypes(part); len(legacy) > 0 {
+			for _, apiType := range legacy {
+				seen[apiType] = struct{}{}
+			}
+			continue
+		}
 		normalized := NormalizeOpenAIAPIType(part)
 		if normalized == "" {
 			continue
-		}
-		if normalized == OpenAIAPITypeAuto {
-			return []string{OpenAIAPITypeAuto}
 		}
 		if _, ok := seen[normalized]; ok {
 			continue
 		}
 		seen[normalized] = struct{}{}
-		out = append(out, normalized)
 	}
 
 	canonical := make([]string, 0, 2)
@@ -103,6 +189,15 @@ func ParseOpenAIAPITypes(v string) []string {
 		return canonical
 	}
 	return nil
+}
+
+func legacyOpenAIAPITypes(v string) []string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "auto", "prefer_responses", "responses_or_chat_completions":
+		return []string{OpenAIAPITypeResponses, OpenAIAPITypeChatCompletions}
+	default:
+		return nil
+	}
 }
 
 func CanonicalizeOpenAIAPITypes(v string) string {
@@ -215,6 +310,9 @@ func Normalize(cfg *RootConfig) {
 	}
 	if _, ok := cfg.Profiles[cfg.DefaultProfile]; !ok {
 		cfg.Profiles[cfg.DefaultProfile] = &Profile{OpenAIBaseURL: "https://api.openai.com/v1"}
+	}
+	for _, profile := range cfg.Profiles {
+		profile.NormalizeAPIKey()
 	}
 	if cfg.Integrations == nil {
 		cfg.Integrations = map[string]*IntegrationConfig{}

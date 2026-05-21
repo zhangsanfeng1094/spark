@@ -58,11 +58,34 @@ func listValue(v any) []any {
 
 func usageFromChat(raw any) ir.Usage {
 	usage := mapValue(raw)
+	input := intValue(usage["prompt_tokens"])
+	if input == 0 {
+		input = intValue(usage["input_tokens"])
+	}
+	output := intValue(usage["completion_tokens"])
+	if output == 0 {
+		output = intValue(usage["output_tokens"])
+	}
+	total := intValue(usage["total_tokens"])
+	if total == 0 && (input > 0 || output > 0) {
+		total = input + output
+	}
+	cached := intValue(usage["cached_input_tokens"])
+	if cached == 0 {
+		cached = intValue(usage["cached_tokens"])
+	}
+	if cached == 0 {
+		cached = intValue(mapValue(usage["prompt_tokens_details"])["cached_tokens"])
+	}
+	if cached == 0 {
+		cached = intValue(mapValue(usage["input_tokens_details"])["cached_tokens"])
+	}
 	return ir.Usage{
-		InputTokens:  intValue(usage["prompt_tokens"]),
-		OutputTokens: intValue(usage["completion_tokens"]),
-		TotalTokens:  intValue(usage["total_tokens"]),
-		Raw:          usage,
+		InputTokens:          input,
+		OutputTokens:         output,
+		TotalTokens:          total,
+		CacheReadInputTokens: cached,
+		Raw:                  usage,
 	}
 }
 
