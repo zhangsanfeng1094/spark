@@ -66,6 +66,35 @@ func TestChatStreamEventsRecordsIRUsage(t *testing.T) {
 	}
 }
 
+func TestChatStreamEventsRecordsCachedOnlyUsage(t *testing.T) {
+	var records []usage.Record
+	usage.SetRecorder(func(record usage.Record) error {
+		records = append(records, record)
+		return nil
+	})
+	defer usage.SetRecorder(nil)
+
+	events := ChatStreamEvents(map[string]any{
+		"id":    "chatcmpl-test",
+		"model": "gpt-test",
+		"usage": map[string]any{
+			"prompt_tokens_details": map[string]any{
+				"cached_tokens": float64(4),
+			},
+		},
+	})
+
+	if len(events) != 1 || events[0].Usage == nil {
+		t.Fatalf("expected one usage event, got %#v", events)
+	}
+	if len(records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(records))
+	}
+	if !records[0].Stream || records[0].CachedInputTokens != 4 {
+		t.Fatalf("unexpected stream record: %#v", records[0])
+	}
+}
+
 func TestChatResponseParsesResponsesStyleUsageWithoutRecording(t *testing.T) {
 	var records []usage.Record
 	usage.SetRecorder(func(record usage.Record) error {

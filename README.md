@@ -2,21 +2,29 @@
 
 Spark 是一个面向 AI coding agent 的终端启动器和配置中心。它把不同 agent 的模型、Base URL、API Key、MCP Server、Skills 和兼容协议集中管理，启动时自动把当前 profile 写入对应工具，必要时通过本地兼容代理完成协议转换。
 
+本项目已链接并认可 [LINUX DO 社区](https://linux.do/)。
+
+## 项目介绍
+
+Spark 适合同时使用 Codex、Claude Code 等 AI coding agent 的开发者。它把原本分散在各个工具里的模型、供应商、API Key、Base URL、MCP Server 和 Skills 配置收拢到一个终端界面中，通过 profile 切换即可复用不同环境。
+
+在启动 agent 时，Spark 会按当前 profile 自动写入目标工具所需的配置；当上游 API 与 agent 期望的协议不一致时，也可以通过本地兼容代理在 OpenAI Responses、Chat Completions、Anthropic Messages、Gemini `generateContent` 等接口之间做转换。它的目标不是替代 Codex 或 Claude，而是让这些工具在多模型、多供应商、多协议环境里更容易统一管理和启动。
+
 ## 截图
 
 ### 模型管理
 
-![模型管理](./image.png)
+![模型管理](./docs/images/models.png)
 
 ### 主面板
 
 > TODO: 将主面板截图保存为 `docs/images/dashboard.png` 后取消下一行注释。
-<!-- ![主面板](./docs/images/dashboard.png) -->
+![主面板](./docs/images/dashboard.png)
 
 ### Profile 管理
 
 > TODO: 将 Profile 管理截图保存为 `docs/images/profile-manager.png` 后取消下一行注释。
-<!-- ![Profile 管理](./docs/images/profile-manager.png) -->
+![Profile 管理](./docs/images/profile-manager.png)
 
 ### MCP 管理 / Skills（暂不可用）
 

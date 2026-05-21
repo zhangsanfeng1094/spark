@@ -9,7 +9,7 @@ import (
 
 func ChatStreamEvents(chunk map[string]any) []ir.StreamEvent {
 	events := make([]ir.StreamEvent, 0, 4)
-	if irUsage := usageFromChat(chunk["usage"]); irUsage.InputTokens != 0 || irUsage.OutputTokens != 0 || irUsage.TotalTokens != 0 {
+	if irUsage := usageFromChat(chunk["usage"]); irUsage.InputTokens != 0 || irUsage.OutputTokens != 0 || irUsage.TotalTokens != 0 || irUsage.CacheReadInputTokens != 0 {
 		usage.RecordIR(irUsage, stringValue(chunk["model"]), true, time.Now().UTC())
 		events = append(events, ir.StreamEvent{
 			Type:  ir.StreamEventUsage,

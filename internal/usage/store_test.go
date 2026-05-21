@@ -1,14 +1,13 @@
 package usage
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestAppendReadAndSummaries(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	path := filepath.Join(t.TempDir(), "usage.db")
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 
 	if err := Append(path, Record{Timestamp: now, Client: "codex", InputTokens: 10, OutputTokens: 5, CachedInputTokens: 3}); err != nil {
@@ -17,14 +16,6 @@ func TestAppendReadAndSummaries(t *testing.T) {
 	if err := Append(path, Record{Timestamp: now.AddDate(0, 0, -10), Client: "claude", TotalTokens: 8, CachedInputTokens: 1}); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
-	if err != nil {
-		t.Fatalf("open failed: %v", err)
-	}
-	if _, err := f.WriteString("{bad json\n"); err != nil {
-		t.Fatalf("write bad line failed: %v", err)
-	}
-	_ = f.Close()
 
 	summaries, err := Summaries(path, now)
 	if err != nil {
@@ -45,6 +36,42 @@ func TestAppendReadAndSummaries(t *testing.T) {
 	}
 	if got := byWindow[WindowAll].CachedInputTokens; got != 4 {
 		t.Fatalf("all cached = %d, want 4", got)
+	}
+}
+
+func TestQueryWindowsUsesSQLiteAggregates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.db")
+	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	records := []Record{
+		{Timestamp: now.Add(-2 * time.Hour), Client: "codex", Model: "gpt-5", InputTokens: 100, OutputTokens: 50, CachedInputTokens: 20},
+		{Timestamp: now.Add(-1 * time.Hour), Client: "claude", Model: "sonnet", TotalTokens: 300},
+		{Timestamp: now.AddDate(0, 0, -1), Client: "", Model: "", TotalTokens: 40},
+		{Timestamp: now.AddDate(0, 0, -10), Client: "codex", Model: "gpt-5", TotalTokens: 900},
+	}
+	for _, record := range records {
+		if err := Append(path, record); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	windows, count, err := QueryWindows(path, now)
+	if err != nil {
+		t.Fatalf("QueryWindows failed: %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("count = %d, want 4", count)
+	}
+	if got := windows[WindowToday].Summary.TotalTokens; got != 450 {
+		t.Fatalf("today total = %d, want 450", got)
+	}
+	if got := windows[Window7D].Breakdowns[0].TotalTokens; got != 300 {
+		t.Fatalf("top 7d breakdown total = %d, want 300", got)
+	}
+	if got := windows[WindowToday].Series[11].TotalTokens; got != 300 {
+		t.Fatalf("11:00 hourly total = %d, want 300", got)
+	}
+	if got := windows[WindowAll].HeavyRequests[0].TotalTokens; got != 900 {
+		t.Fatalf("top heavy total = %d, want 900", got)
 	}
 }
 
@@ -86,6 +113,22 @@ func TestRecordFromUsageMap(t *testing.T) {
 		t.Fatal("expected usage record")
 	}
 	if record.TotalTokens != 15 || record.CachedInputTokens != 4 || !record.Stream || record.Model != "gpt-4.1" {
+		t.Fatalf("unexpected record: %#v", record)
+	}
+}
+
+func TestRecordFromUsageMapIncludesAnthropicCacheTokens(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	record, ok := RecordFromUsageMap(map[string]any{
+		"input_tokens":                float64(21),
+		"cache_creation_input_tokens": float64(1000),
+		"cache_read_input_tokens":     float64(200),
+		"output_tokens":               float64(393),
+	}, "claude-test", false, now)
+	if !ok {
+		t.Fatal("expected usage record")
+	}
+	if record.InputTokens != 1221 || record.OutputTokens != 393 || record.TotalTokens != 1614 || record.CachedInputTokens != 200 {
 		t.Fatalf("unexpected record: %#v", record)
 	}
 }

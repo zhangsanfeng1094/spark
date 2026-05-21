@@ -404,26 +404,26 @@ func loadTokenUsageSnapshot() (tui.TokenUsageSnapshot, error) {
 	if err != nil {
 		return tui.TokenUsageSnapshot{}, err
 	}
-	records, err := usage.Read(path)
+	now := time.Now()
+	windows, count, err := usage.QueryWindows(path, now)
 	if err != nil {
 		return tui.TokenUsageSnapshot{}, err
 	}
-	now := time.Now()
 	snapshot := tui.TokenUsageSnapshot{
 		SourcePath:  path,
 		UpdatedAt:   now,
-		RecordCount: len(records),
+		RecordCount: count,
 	}
 	for _, window := range usage.Windows() {
-		summary := usage.SummarizeWindow(records, window, now)
+		data := windows[window]
 		snapshot.Windows = append(snapshot.Windows, tui.TokenUsageWindow{
 			Window:        string(window),
 			Label:         usageWindowLabel(window),
 			TrendLabel:    tokenUsageTrendLabel(window),
-			Summary:       tokenUsageSummary(summary),
-			Breakdowns:    tokenUsageBreakdowns(usage.BreakdownsForWindow(records, window, now)),
-			DailySeries:   tokenUsageSeries(records, window, now),
-			HeavyRequests: tokenUsageHeavyRequests(usage.HeavyRequestsForWindow(records, window, now, 5)),
+			Summary:       tokenUsageSummary(data.Summary),
+			Breakdowns:    tokenUsageBreakdowns(data.Breakdowns),
+			DailySeries:   tokenUsageSeries(data.Series, window),
+			HeavyRequests: tokenUsageHeavyRequests(data.HeavyRequests),
 		})
 	}
 	return snapshot, nil
@@ -477,11 +477,11 @@ func tokenUsageBreakdowns(rows []usage.Breakdown) []tui.TokenUsageBreakdown {
 	return out
 }
 
-func tokenUsageSeries(records []usage.Record, window usage.Window, now time.Time) []tui.TokenUsageDailyPoint {
+func tokenUsageSeries(rows []usage.DailySummary, window usage.Window) []tui.TokenUsageDailyPoint {
 	if window == usage.WindowToday {
-		return tokenUsageDailySeries(usage.HourlySeriesForToday(records, now), "15:00")
+		return tokenUsageDailySeries(rows, "15:00")
 	}
-	return tokenUsageDailySeries(usage.DailySeriesForWindow(records, window, now), "01-02")
+	return tokenUsageDailySeries(rows, "01-02")
 }
 
 func tokenUsageDailySeries(rows []usage.DailySummary, labelFormat string) []tui.TokenUsageDailyPoint {
@@ -503,7 +503,7 @@ func tokenUsageHeavyRequests(rows []usage.HeavyRequest) []tui.TokenUsageRequest 
 	out := make([]tui.TokenUsageRequest, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, tui.TokenUsageRequest{
-			Timestamp:         row.Timestamp,
+			Timestamp:         row.Timestamp.In(time.Local),
 			Client:            row.Client,
 			Model:             row.Model,
 			Stream:            row.Stream,

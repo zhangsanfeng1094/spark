@@ -1,7 +1,7 @@
 package usage
 
 import (
-	"bufio"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -13,6 +13,8 @@ import (
 
 	"spark/internal/compat/ir"
 	"spark/internal/config"
+
+	_ "modernc.org/sqlite"
 )
 
 type Record struct {
@@ -90,7 +92,7 @@ func DefaultPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(configPath), "token_usage.jsonl"), nil
+	return filepath.Join(filepath.Dir(configPath), "token_usage.db"), nil
 }
 
 func AppendDefault(record Record) error {
@@ -152,58 +154,456 @@ func Append(path string, record Record) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	db, err := openStore(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	data, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	return nil
+	defer db.Close()
+	_, err = db.Exec(`
+		INSERT INTO usage_records (
+			timestamp_ms, client, model, stream,
+			input_tokens, output_tokens, total_tokens, cached_input_tokens
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.Timestamp.UnixMilli(),
+		record.Client,
+		record.Model,
+		boolInt(record.Stream),
+		record.InputTokens,
+		record.OutputTokens,
+		record.TotalTokens,
+		record.CachedInputTokens,
+	)
+	return err
 }
 
 func Read(path string) ([]Record, error) {
-	f, err := os.Open(path)
+	db, err := openStore(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	defer f.Close()
-
+	defer db.Close()
+	rows, err := db.Query(`
+		SELECT timestamp_ms, client, model, stream,
+			input_tokens, output_tokens, total_tokens, cached_input_tokens
+		FROM usage_records
+		ORDER BY timestamp_ms ASC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	var records []Record
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
+	for rows.Next() {
 		var record Record
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			continue
+		var timestampMs int64
+		var stream int
+		if err := rows.Scan(
+			&timestampMs,
+			&record.Client,
+			&record.Model,
+			&stream,
+			&record.InputTokens,
+			&record.OutputTokens,
+			&record.TotalTokens,
+			&record.CachedInputTokens,
+		); err != nil {
+			return nil, err
 		}
-		if record.Timestamp.IsZero() {
-			continue
-		}
+		record.Timestamp = time.UnixMilli(timestampMs).UTC()
+		record.Stream = stream != 0
 		if record.TotalTokens == 0 && (record.InputTokens > 0 || record.OutputTokens > 0) {
 			record.TotalTokens = record.InputTokens + record.OutputTokens
 		}
 		records = append(records, record)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return records, nil
+	return records, rows.Err()
 }
 
-func Summaries(path string, now time.Time) ([]Summary, error) {
-	records, err := Read(path)
+func Count(path string) (int, error) {
+	db, err := openStore(path)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM usage_records`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func QuerySummary(path string, window Window, now time.Time) (Summary, error) {
+	db, err := openStore(path)
+	if err != nil {
+		return Summary{}, err
+	}
+	defer db.Close()
+	return querySummary(db, window, now)
+}
+
+func QueryBreakdowns(path string, window Window, now time.Time) ([]Breakdown, error) {
+	db, err := openStore(path)
 	if err != nil {
 		return nil, err
 	}
-	return Summarize(records, now), nil
+	defer db.Close()
+	return queryBreakdowns(db, window, now)
+}
+
+func QueryDailySeries(path string, window Window, now time.Time) ([]DailySummary, error) {
+	db, err := openStore(path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	return queryDailySeries(db, window, now)
+}
+
+func QueryHourlySeriesForToday(path string, now time.Time) ([]DailySummary, error) {
+	db, err := openStore(path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	return queryHourlySeriesForToday(db, now)
+}
+
+func QueryHeavyRequests(path string, window Window, now time.Time, limit int) ([]HeavyRequest, error) {
+	db, err := openStore(path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	return queryHeavyRequests(db, window, now, limit)
+}
+
+func QueryWindows(path string, now time.Time) (map[Window]WindowData, int, error) {
+	db, err := openStore(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM usage_records`).Scan(&count); err != nil {
+		return nil, 0, err
+	}
+	out := make(map[Window]WindowData, len(Windows()))
+	for _, window := range Windows() {
+		summary, err := querySummary(db, window, now)
+		if err != nil {
+			return nil, 0, err
+		}
+		breakdowns, err := queryBreakdowns(db, window, now)
+		if err != nil {
+			return nil, 0, err
+		}
+		var series []DailySummary
+		if window == WindowToday {
+			series, err = queryHourlySeriesForToday(db, now)
+		} else {
+			series, err = queryDailySeries(db, window, now)
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		heavy, err := queryHeavyRequests(db, window, now, 5)
+		if err != nil {
+			return nil, 0, err
+		}
+		out[window] = WindowData{
+			Summary:       summary,
+			Breakdowns:    breakdowns,
+			Series:        series,
+			HeavyRequests: heavy,
+		}
+	}
+	return out, count, nil
+}
+
+type WindowData struct {
+	Summary       Summary
+	Breakdowns    []Breakdown
+	Series        []DailySummary
+	HeavyRequests []HeavyRequest
+}
+
+func openStore(path string) (*sql.DB, error) {
+	if path == "" {
+		return nil, errors.New("usage path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`PRAGMA journal_mode = WAL`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := initStore(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	_ = os.Chmod(path, 0o600)
+	return db, nil
+}
+
+func initStore(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS usage_records (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp_ms INTEGER NOT NULL,
+			client TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			stream INTEGER NOT NULL DEFAULT 0,
+			input_tokens INTEGER NOT NULL DEFAULT 0,
+			output_tokens INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			cached_input_tokens INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE INDEX IF NOT EXISTS idx_usage_records_timestamp
+			ON usage_records(timestamp_ms);
+		CREATE INDEX IF NOT EXISTS idx_usage_records_client_model_timestamp
+			ON usage_records(client, model, timestamp_ms);
+		CREATE INDEX IF NOT EXISTS idx_usage_records_total_timestamp
+			ON usage_records(total_tokens DESC, timestamp_ms DESC);
+	`)
+	return err
+}
+
+func querySummary(db *sql.DB, window Window, now time.Time) (Summary, error) {
+	where, args := windowWhere(window, now)
+	summary := Summary{Window: window, Client: ClientAll()}
+	err := db.QueryRow(`
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(output_tokens), 0),
+			COALESCE(SUM(total_tokens), 0),
+			COALESCE(SUM(cached_input_tokens), 0)
+		FROM usage_records`+where, args...).Scan(
+		&summary.Requests,
+		&summary.InputTokens,
+		&summary.OutputTokens,
+		&summary.TotalTokens,
+		&summary.CachedInputTokens,
+	)
+	return summary, err
+}
+
+func queryBreakdowns(db *sql.DB, window Window, now time.Time) ([]Breakdown, error) {
+	where, args := windowWhere(window, now)
+	rows, err := db.Query(`
+		SELECT
+			CASE WHEN trim(client) = '' THEN 'unknown' ELSE lower(trim(client)) END AS client_display,
+			CASE WHEN trim(model) = '' THEN 'unknown model' ELSE trim(model) END AS model_display,
+			COUNT(*) AS requests,
+			COALESCE(SUM(input_tokens), 0) AS input_tokens,
+			COALESCE(SUM(output_tokens), 0) AS output_tokens,
+			COALESCE(SUM(total_tokens), 0) AS total_tokens,
+			COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens
+		FROM usage_records`+where+`
+		GROUP BY client_display, model_display
+		ORDER BY total_tokens DESC, requests DESC, client_display ASC, model_display ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Breakdown{}
+	for rows.Next() {
+		var row Breakdown
+		if err := rows.Scan(
+			&row.Client,
+			&row.Model,
+			&row.Requests,
+			&row.InputTokens,
+			&row.OutputTokens,
+			&row.TotalTokens,
+			&row.CachedInputTokens,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func queryDailySeries(db *sql.DB, window Window, now time.Time) ([]DailySummary, error) {
+	days := dailySeriesDays(window, now)
+	if len(days) == 0 {
+		return days, nil
+	}
+	start := days[0].Day
+	end := days[len(days)-1].Day.AddDate(0, 0, 1)
+	rows, err := db.Query(`
+		SELECT timestamp_ms, input_tokens, output_tokens, total_tokens, cached_input_tokens
+		FROM usage_records
+		WHERE timestamp_ms >= ? AND timestamp_ms < ?`,
+		start.UnixMilli(), end.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byDay := make(map[string]*DailySummary, len(days))
+	for i := range days {
+		byDay[dayKey(days[i].Day)] = &days[i]
+	}
+	for rows.Next() {
+		record, err := scanSeriesRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		day := byDay[dayKey(record.Timestamp.In(now.Location()))]
+		if day != nil {
+			addRecordToDaily(day, record)
+		}
+	}
+	return days, rows.Err()
+}
+
+func queryHourlySeriesForToday(db *sql.DB, now time.Time) ([]DailySummary, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.In(now.Location())
+	start := startOfDay(now)
+	hours := now.Hour() + 1
+	out := make([]DailySummary, 0, hours)
+	byHour := make(map[string]*DailySummary, hours)
+	for i := 0; i < hours; i++ {
+		point := DailySummary{Day: start.Add(time.Duration(i) * time.Hour)}
+		out = append(out, point)
+		byHour[hourKey(point.Day)] = &out[len(out)-1]
+	}
+	rows, err := db.Query(`
+		SELECT timestamp_ms, input_tokens, output_tokens, total_tokens, cached_input_tokens
+		FROM usage_records
+		WHERE timestamp_ms >= ? AND timestamp_ms < ?`,
+		start.UnixMilli(), start.AddDate(0, 0, 1).UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		record, err := scanSeriesRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		hour := byHour[hourKey(record.Timestamp.In(now.Location()))]
+		if hour != nil {
+			addRecordToDaily(hour, record)
+		}
+	}
+	return out, rows.Err()
+}
+
+func queryHeavyRequests(db *sql.DB, window Window, now time.Time, limit int) ([]HeavyRequest, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	where, args := windowWhere(window, now)
+	args = append(args, limit)
+	rows, err := db.Query(`
+		SELECT
+			timestamp_ms,
+			CASE WHEN trim(client) = '' THEN 'unknown' ELSE lower(trim(client)) END AS client_display,
+			CASE WHEN trim(model) = '' THEN 'unknown model' ELSE trim(model) END AS model_display,
+			stream, input_tokens, output_tokens, total_tokens, cached_input_tokens
+		FROM usage_records`+where+`
+		ORDER BY total_tokens DESC, timestamp_ms DESC
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []HeavyRequest{}
+	for rows.Next() {
+		var row HeavyRequest
+		var timestampMs int64
+		var stream int
+		if err := rows.Scan(
+			&timestampMs,
+			&row.Client,
+			&row.Model,
+			&stream,
+			&row.InputTokens,
+			&row.OutputTokens,
+			&row.TotalTokens,
+			&row.CachedInputTokens,
+		); err != nil {
+			return nil, err
+		}
+		row.Timestamp = time.UnixMilli(timestampMs).UTC()
+		row.Stream = stream != 0
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+type seriesScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSeriesRecord(row seriesScanner) (Record, error) {
+	var record Record
+	var timestampMs int64
+	err := row.Scan(
+		&timestampMs,
+		&record.InputTokens,
+		&record.OutputTokens,
+		&record.TotalTokens,
+		&record.CachedInputTokens,
+	)
+	record.Timestamp = time.UnixMilli(timestampMs).UTC()
+	return record, err
+}
+
+func windowWhere(window Window, now time.Time) (string, []any) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	switch window {
+	case WindowToday:
+		start := startOfDay(now.In(now.Location()))
+		return " WHERE timestamp_ms >= ? AND timestamp_ms < ?", []any{start.UnixMilli(), start.AddDate(0, 0, 1).UnixMilli()}
+	case Window7D:
+		return " WHERE timestamp_ms >= ?", []any{now.AddDate(0, 0, -7).UnixMilli()}
+	case Window30D:
+		return " WHERE timestamp_ms >= ?", []any{now.AddDate(0, 0, -30).UnixMilli()}
+	case WindowAll:
+		return "", nil
+	default:
+		return " WHERE 0", nil
+	}
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func Summaries(path string, now time.Time) ([]Summary, error) {
+	db, err := openStore(path)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	out := make([]Summary, 0, len(Windows()))
+	for _, window := range Windows() {
+		summary, err := querySummary(db, window, now)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, summary)
+	}
+	return out, nil
 }
 
 func DefaultSummaries(now time.Time) ([]Summary, error) {
@@ -417,11 +817,19 @@ func RecordFromUsageMap(usage map[string]any, model string, stream bool, now tim
 	if output == 0 {
 		output = intFromAny(usage["completion_tokens"])
 	}
+	cacheCreation := intFromAny(usage["cache_creation_input_tokens"])
+	cacheRead := intFromAny(usage["cache_read_input_tokens"])
+	if cacheCreation != 0 || cacheRead != 0 {
+		input += cacheCreation + cacheRead
+	}
 	total := intFromAny(usage["total_tokens"])
 	if total == 0 && (input > 0 || output > 0) {
 		total = input + output
 	}
 	cached := intFromAny(usage["cached_input_tokens"])
+	if cached == 0 {
+		cached = cacheRead
+	}
 	if cached == 0 {
 		cached = intFromAny(usage["cached_tokens"])
 	}
@@ -450,7 +858,7 @@ func RecordFromUsageMap(usage map[string]any, model string, stream bool, now tim
 }
 
 func RecordFromIRUsage(usage ir.Usage, model string, stream bool, now time.Time) (Record, bool) {
-	record, ok := RecordFromUsageMap(usage.Raw, model, stream, now)
+	record, _ := RecordFromUsageMap(usage.Raw, model, stream, now)
 	if usage.InputTokens != 0 {
 		record.InputTokens = usage.InputTokens
 	}
@@ -477,7 +885,7 @@ func RecordFromIRUsage(usage ir.Usage, model string, stream bool, now time.Time)
 	if record.InputTokens == 0 && record.OutputTokens == 0 && record.TotalTokens == 0 && record.CachedInputTokens == 0 {
 		return Record{}, false
 	}
-	return record, ok || true
+	return record, true
 }
 
 func normalizeClient(client string) string {

@@ -155,6 +155,10 @@ func TestAnthropicMessagesStreamE2ETranslatesRequestAndWritesMessagesSSE(t *test
 	if captured["stream"] != true || captured["model"] != "mimo-v2.5-pro" {
 		t.Fatalf("unexpected chat request stream/model: %#v", captured)
 	}
+	streamOptions, ok := captured["stream_options"].(map[string]any)
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage missing: %#v", captured["stream_options"])
+	}
 	msgs, ok := captured["messages"].([]map[string]any)
 	if !ok || len(msgs) != 4 {
 		t.Fatalf("expected system/user/assistant/tool messages, got %#v", captured["messages"])
@@ -245,6 +249,10 @@ func assertTranslatedChatRequestPreservesAnthropicContext(t *testing.T, captured
 	}
 	if captured["model"] != "mimo-v2.5-pro" || captured["stream"] != true || captured["max_tokens"] != 512 {
 		t.Fatalf("unexpected translated request controls: %#v", captured)
+	}
+	streamOptions, ok := captured["stream_options"].(map[string]any)
+	if !ok || streamOptions["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage missing: %#v", captured["stream_options"])
 	}
 	thinking, ok := captured["thinking"].(map[string]any)
 	if !ok || thinking["type"] != "enabled" || thinking["budget_tokens"] != 128 {

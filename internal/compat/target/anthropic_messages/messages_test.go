@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"spark/internal/compat/ir"
+	"spark/internal/usage"
 )
 
 func TestMessagesOutboundBuildsAnthropicRequest(t *testing.T) {
@@ -102,6 +103,25 @@ func TestMessageResponseMapsContentToolUseAndUsage(t *testing.T) {
 	}
 }
 
+func TestMessageResponseIncludesCacheTokensInUsage(t *testing.T) {
+	resp := MessageResponse(map[string]any{
+		"model": "claude-test",
+		"usage": map[string]any{
+			"input_tokens":                float64(21),
+			"cache_creation_input_tokens": float64(1000),
+			"cache_read_input_tokens":     float64(200),
+			"output_tokens":               float64(393),
+		},
+	})
+
+	if resp.Usage.InputTokens != 1221 || resp.Usage.OutputTokens != 393 || resp.Usage.TotalTokens != 1614 {
+		t.Fatalf("usage mismatch: %#v", resp.Usage)
+	}
+	if resp.Usage.CacheCreationInputTokens != 1000 || resp.Usage.CacheReadInputTokens != 200 {
+		t.Fatalf("cache usage mismatch: %#v", resp.Usage)
+	}
+}
+
 func TestMessageStreamEventsMapDeltas(t *testing.T) {
 	events := MessageStreamEvents(map[string]any{
 		"type":  "content_block_start",
@@ -133,5 +153,37 @@ func TestMessageStreamEventsMapDeltas(t *testing.T) {
 	})
 	if len(events) != 2 || events[0].Usage == nil || events[1].StopReason != ir.StopReasonEndTurn {
 		t.Fatalf("message delta mismatch: %#v", events)
+	}
+}
+
+func TestMessageStreamEventsRecordsCachedUsage(t *testing.T) {
+	var records []usage.Record
+	usage.SetRecorder(func(record usage.Record) error {
+		records = append(records, record)
+		return nil
+	})
+	defer usage.SetRecorder(nil)
+
+	events := MessageStreamEvents(map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"model": "claude-test",
+			"usage": map[string]any{
+				"input_tokens":                float64(21),
+				"cache_creation_input_tokens": float64(1000),
+				"cache_read_input_tokens":     float64(200),
+				"output_tokens":               float64(3),
+			},
+		},
+	})
+
+	if len(events) != 1 || events[0].Usage == nil {
+		t.Fatalf("expected usage event, got %#v", events)
+	}
+	if len(records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(records))
+	}
+	if records[0].InputTokens != 1221 || records[0].OutputTokens != 3 || records[0].TotalTokens != 1224 || records[0].CachedInputTokens != 200 {
+		t.Fatalf("unexpected usage record: %#v", records[0])
 	}
 }

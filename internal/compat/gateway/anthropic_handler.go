@@ -43,6 +43,9 @@ func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}.BuildRequest(irReq)
 	stream := boolValue(req["stream"])
 	chatReq["stream"] = stream
+	if stream {
+		ensureChatStreamUsageOption(chatReq)
+	}
 	if h.PreferredModel != "" {
 		incomingModel := stringValue(chatReq["model"])
 		if incomingModel != h.PreferredModel {
@@ -78,6 +81,15 @@ func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ForwardAnthropicMessagesNonStream(w, resp, requestedModel, h.RememberReasoning, h.Logf)
+}
+
+func ensureChatStreamUsageOption(chatReq map[string]any) {
+	streamOptions, _ := chatReq["stream_options"].(map[string]any)
+	if streamOptions == nil {
+		streamOptions = map[string]any{}
+		chatReq["stream_options"] = streamOptions
+	}
+	streamOptions["include_usage"] = true
 }
 
 func ForwardAnthropicMessagesStream(

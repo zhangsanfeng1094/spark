@@ -61,11 +61,12 @@ func usageFromAnthropic(raw any) ir.Usage {
 	usage := mapValue(raw)
 	input := intValue(usage["input_tokens"])
 	output := intValue(usage["output_tokens"])
-	total := input + output
 	cacheCreation := intValue(usage["cache_creation_input_tokens"])
 	cacheRead := intValue(usage["cache_read_input_tokens"])
+	totalInput := input + cacheCreation + cacheRead
+	total := totalInput + output
 	return ir.Usage{
-		InputTokens:              input,
+		InputTokens:              totalInput,
 		OutputTokens:             output,
 		TotalTokens:              total,
 		CacheCreationInputTokens: cacheCreation,

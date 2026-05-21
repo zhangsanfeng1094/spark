@@ -47,21 +47,21 @@
     {
       "from": "dashboard",
       "to": "profile",
-      "keys": ["Down", "Enter"],
+      "keys": ["Down", "Down", "Enter"],
       "markers": ["Manage profiles"],
       "selectedText": "Launch integration"
     },
     {
       "from": "dashboard",
       "to": "mcp.overview",
-      "keys": ["Down", "Down", "Enter"],
+      "keys": ["Down", "Down", "Down", "Enter"],
       "markers": ["Manage MCP servers"],
       "selectedText": "Launch integration"
     },
     {
       "from": "dashboard",
       "to": "skills.overview",
-      "keys": ["Down", "Down", "Down", "Enter"],
+      "keys": ["Down", "Down", "Down", "Down", "Enter"],
       "markers": ["Manage skills"],
       "selectedText": "Launch integration"
     },
