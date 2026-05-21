@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/zhangsanfeng1094/spark/compare/v0.10.0...v0.11.0) (2026-05-21)
+
+
+### Features
+
+* enhance token usage tracking and reporting ([c359a20](https://github.com/zhangsanfeng1094/spark/commit/c359a2043b8a27ce91fa65ac7c10b9ca234c74e5))
+
 ## [0.10.0](https://github.com/zhangsanfeng1094/spark/compare/v0.9.0...v0.10.0) (2026-05-18)
 
 
