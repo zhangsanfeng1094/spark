@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.12.0](https://github.com/zhangsanfeng1094/spark/compare/v0.11.0...v0.12.0) (2026-06-03)
+
+
+### Features
+
+* implement streaming events for OpenAI responses ([42b905e](https://github.com/zhangsanfeng1094/spark/commit/42b905efbe19bd673cafe0b8a570821345530753))
+* implement streaming events for OpenAI responses ([9cca8c8](https://github.com/zhangsanfeng1094/spark/commit/9cca8c8244331278926111f86967b67cf3928931))
+
+
+### Bug Fixes
+
+* improve profile manager view for narrow widths ([9cca8c8](https://github.com/zhangsanfeng1094/spark/commit/9cca8c8244331278926111f86967b67cf3928931))
+
 ## [0.11.0](https://github.com/zhangsanfeng1094/spark/compare/v0.10.0...v0.11.0) (2026-05-21)
 
 
