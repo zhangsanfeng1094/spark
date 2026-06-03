@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"spark/internal/config"
 )
 
-func TestProfileManagerLeftPaneUsesDefaultBadge(t *testing.T) {
+func TestProfileManagerLeftPaneUsesDefaultStar(t *testing.T) {
 	cfg := &config.RootConfig{
 		DefaultProfile: "gptload",
 		Profiles: map[string]*config.Profile{
@@ -19,11 +20,11 @@ func TestProfileManagerLeftPaneUsesDefaultBadge(t *testing.T) {
 
 	m := newPMModel(cfg)
 	left := m.renderLeftPane(0)
-	if !strings.Contains(left, "default") {
-		t.Fatalf("expected default badge in left pane, got %q", left)
+	if !strings.Contains(left, "★") {
+		t.Fatalf("expected default star in left pane, got %q", left)
 	}
-	if strings.Contains(left, "★") {
-		t.Fatalf("expected star marker to be removed, got %q", left)
+	if strings.Contains(left, "default") {
+		t.Fatalf("expected default text badge to be removed, got %q", left)
 	}
 }
 
@@ -257,6 +258,35 @@ func TestProfileManagerViewScrollsLongProfileList(t *testing.T) {
 	}
 	if strings.Contains(view, "p00") {
 		t.Fatalf("expected early profiles to be scrolled out, got %q", view)
+	}
+}
+
+func TestProfileManagerViewFitsNarrowWidthWithLongSecrets(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "hub.linuxdo-0.02-static",
+		Profiles: map[string]*config.Profile{
+			"hub.linuxdo-0.02-static": {
+				OpenAIBaseURL: "https://hub.linux.do/v1",
+				APIKey:        strings.Repeat("k", 80),
+				Models:        []string{"gpt-5.5"},
+				DefaultModel:  "gpt-5.5",
+			},
+		},
+	})
+	m.width = 100
+	m.height = 32
+
+	view := m.View()
+	for _, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > m.width {
+			t.Fatalf("expected line to fit width %d, got %d: %q", m.width, got, line)
+		}
+	}
+	if !strings.Contains(view, "★") {
+		t.Fatalf("expected default profile star in view, got %q", view)
+	}
+	if strings.Contains(view, "default") {
+		t.Fatalf("expected compact default marker without text badge, got %q", view)
 	}
 }
 

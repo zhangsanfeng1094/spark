@@ -26,6 +26,116 @@ func TestProfileNamesSorted(t *testing.T) {
 	}
 }
 
+func TestResolveLaunchProfileUsesDefaultProfile(t *testing.T) {
+	cfg := testProfileConfig()
+
+	name, profile, err := resolveLaunchProfile(cfg, "", false, func(title string, options []string) (string, error) {
+		t.Fatalf("picker should not be called")
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("resolveLaunchProfile failed: %v", err)
+	}
+	if name != "default" || profile != cfg.Profiles["default"] {
+		t.Fatalf("expected default profile, got name=%q profile=%p", name, profile)
+	}
+}
+
+func TestResolveLaunchProfileUsesProfileFlag(t *testing.T) {
+	cfg := testProfileConfig()
+
+	name, profile, err := resolveLaunchProfile(cfg, " foo ", false, func(title string, options []string) (string, error) {
+		t.Fatalf("picker should not be called")
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("resolveLaunchProfile failed: %v", err)
+	}
+	if name != "foo" || profile != cfg.Profiles["foo"] {
+		t.Fatalf("expected foo profile, got name=%q profile=%p", name, profile)
+	}
+}
+
+func TestResolveLaunchProfileSelectProfileUsesPicker(t *testing.T) {
+	cfg := testProfileConfig()
+	called := false
+
+	name, profile, err := resolveLaunchProfile(cfg, "", true, func(title string, options []string) (string, error) {
+		called = true
+		if title != "Select profile:" {
+			t.Fatalf("unexpected picker title: %q", title)
+		}
+		want := []string{"default", "foo", "zeta"}
+		if !reflect.DeepEqual(options, want) {
+			t.Fatalf("picker options mismatch, got %v want %v", options, want)
+		}
+		return "zeta", nil
+	})
+	if err != nil {
+		t.Fatalf("resolveLaunchProfile failed: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected picker to be called")
+	}
+	if name != "zeta" || profile != cfg.Profiles["zeta"] {
+		t.Fatalf("expected zeta profile, got name=%q profile=%p", name, profile)
+	}
+}
+
+func TestResolveLaunchProfileRejectsProfileAndSelectProfile(t *testing.T) {
+	cfg := testProfileConfig()
+
+	_, _, err := resolveLaunchProfile(cfg, "foo", true, func(title string, options []string) (string, error) {
+		t.Fatalf("picker should not be called")
+		return "", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "--profile and --select-profile cannot be used together") {
+		t.Fatalf("expected conflicting flags error, got %v", err)
+	}
+}
+
+func TestResolveLaunchProfileFallsBackWhenDefaultMissing(t *testing.T) {
+	cfg := testProfileConfig()
+	cfg.DefaultProfile = "missing"
+
+	name, profile, err := resolveLaunchProfile(cfg, "", false, func(title string, options []string) (string, error) {
+		want := []string{"default", "foo", "zeta"}
+		if !reflect.DeepEqual(options, want) {
+			t.Fatalf("picker options mismatch, got %v want %v", options, want)
+		}
+		return "foo", nil
+	})
+	if err != nil {
+		t.Fatalf("resolveLaunchProfile failed: %v", err)
+	}
+	if name != "foo" || profile != cfg.Profiles["foo"] {
+		t.Fatalf("expected foo profile, got name=%q profile=%p", name, profile)
+	}
+}
+
+func TestResolveLaunchProfileProfileFlagDoesNotFallback(t *testing.T) {
+	cfg := testProfileConfig()
+
+	_, _, err := resolveLaunchProfile(cfg, "missing", false, func(title string, options []string) (string, error) {
+		t.Fatalf("picker should not be called")
+		return "", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "profile not found: missing") {
+		t.Fatalf("expected missing profile error, got %v", err)
+	}
+}
+
+func testProfileConfig() *config.RootConfig {
+	return &config.RootConfig{
+		DefaultProfile: "default",
+		Profiles: map[string]*config.Profile{
+			"zeta":    {DefaultModel: "model-z"},
+			"default": {DefaultModel: "model-default"},
+			"foo":     {DefaultModel: "model-foo"},
+		},
+	}
+}
+
 func TestResolveModelsPrecedence(t *testing.T) {
 	profile := &config.Profile{
 		Models:       []string{"profile-model-a", "profile-model-b"},
@@ -100,6 +210,24 @@ func TestRootCmdIncludesSkillCommand(t *testing.T) {
 	}
 }
 
+func TestProfileSelectionFlagsConflictBeforePrompt(t *testing.T) {
+	for _, args := range [][]string{
+		{"launch", "--profile", "foo", "--select-profile"},
+		{"config", "--profile", "foo", "--select-profile"},
+	} {
+		root := NewRootCmd()
+		buf := &bytes.Buffer{}
+		root.SetOut(buf)
+		root.SetErr(buf)
+		root.SetArgs(args)
+
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "--profile and --select-profile cannot be used together") {
+			t.Fatalf("expected conflicting flags error for %v, got %v", args, err)
+		}
+	}
+}
+
 func TestDebugDashboardSnapshotRendersCurrentDashboard(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -114,7 +242,7 @@ func TestDebugDashboardSnapshotRendersCurrentDashboard(t *testing.T) {
 	}
 
 	got := buf.String()
-	for _, want := range []string{"Spark", "Launch integration", "Current profile: default", "Config file:"} {
+	for _, want := range []string{"Spark", "Launch integration", "Launch with profile", "Current profile: default", "Config file:"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected dashboard snapshot to contain %q, got %q", want, got)
 		}

@@ -6,7 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"spark/internal/compat/gateway"
+	"spark/internal/compat/gateway/bridge"
+	"spark/internal/compat/gateway/core"
 )
 
 func TestWriteResponsesStream_GoldenSequence(t *testing.T) {
@@ -19,7 +20,11 @@ func TestWriteResponsesStream_GoldenSequence(t *testing.T) {
 	}, "\n")
 
 	var out strings.Builder
-	gateway.WriteCodexResponsesStreamFromOpenAIChat(&out, strings.NewReader(stream), nil)
+	selection, err := bridge.SelectRoute(core.Route{Client: core.ClientCodexResponses, Target: core.TargetOpenAIChat})
+	if err != nil {
+		t.Fatalf("select route: %v", err)
+	}
+	selection.Stream(&out, strings.NewReader(stream), nil)
 
 	got := normalizeResponsesStreamGolden(out.String())
 	wantBytes, err := os.ReadFile("testdata/responses_stream_golden.txt")

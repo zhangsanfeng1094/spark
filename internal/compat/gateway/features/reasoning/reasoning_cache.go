@@ -1,11 +1,12 @@
-package gateway
+package reasoning
 
 import (
-	"strings"
 	"sync"
+
+	"spark/internal/compat/policy"
 )
 
-type ChatReasoningStats struct {
+type chatReasoningStats struct {
 	MessageCount               int
 	AssistantReasoningMessages int
 	AssistantReasoningChars    int
@@ -39,18 +40,18 @@ func (a ChatReasoningAdapter) RememberForToolCallIDs(ids []string, reasoning str
 	a.Cache.RememberForToolCallIDs(ids, reasoning)
 }
 
-func ChatReasoningSummary(chatReq map[string]any) ChatReasoningStats {
-	stats := ChatReasoningStats{}
+func chatReasoningSummary(chatReq map[string]any) chatReasoningStats {
+	stats := chatReasoningStats{}
 	if chatReq == nil {
 		return stats
 	}
 	_, stats.TopLevelThinking = chatReq["thinking"]
-	for _, msg := range ChatMessages(chatReq["messages"]) {
+	for _, msg := range chatMessages(chatReq["messages"]) {
 		stats.MessageCount++
 		if stringValue(msg["role"]) != "assistant" {
 			continue
 		}
-		if len(ToolCallIDsFromChatMessage(msg)) > 0 {
+		if len(toolCallIDsFromChatMessage(msg)) > 0 {
 			stats.AssistantToolMessages++
 		}
 		if reasoning := stringValue(msg["reasoning_content"]); reasoning != "" {
@@ -65,12 +66,12 @@ func (c *ReasoningCache) ApplyToChatRequest(upstreamBase string, chatReq map[str
 	if chatReq == nil {
 		return
 	}
-	passReasoningContent := ShouldPassReasoningContentForTarget(upstreamBase, stringValue(chatReq["model"]))
-	for _, msg := range ChatMessages(chatReq["messages"]) {
+	passReasoningContent := policy.RequiresOpenAIChatReasoningEcho(upstreamBase, stringValue(chatReq["model"]))
+	for _, msg := range chatMessages(chatReq["messages"]) {
 		if stringValue(msg["role"]) != "assistant" {
 			continue
 		}
-		ids := ToolCallIDsFromChatMessage(msg)
+		ids := toolCallIDsFromChatMessage(msg)
 		if len(ids) == 0 {
 			continue
 		}
@@ -86,23 +87,6 @@ func (c *ReasoningCache) ApplyToChatRequest(upstreamBase string, chatReq map[str
 			msg["reasoning_content"] = ""
 		}
 	}
-}
-
-func (c *ReasoningCache) RememberForToolCalls(calls []ChatToolCall, reasoning string) {
-	if len(calls) == 0 {
-		return
-	}
-	ids := make([]string, 0, len(calls))
-	for _, call := range calls {
-		id := call.CallID
-		if id == "" {
-			id = call.ID
-		}
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	c.RememberForToolCallIDs(ids, reasoning)
 }
 
 func (c *ReasoningCache) RememberForToolCallIDs(ids []string, reasoning string) {
@@ -135,14 +119,7 @@ func (c *ReasoningCache) ReasoningForToolCallIDs(ids []string) (string, bool) {
 	return "", false
 }
 
-func ShouldPassReasoningContentForTarget(upstreamBase, modelName string) bool {
-	target := strings.ToLower(upstreamBase + " " + modelName)
-	return strings.Contains(target, "xiaomimimo") ||
-		strings.Contains(target, "mimo") ||
-		strings.Contains(target, "deepseek")
-}
-
-func ChatMessages(raw any) []map[string]any {
+func chatMessages(raw any) []map[string]any {
 	switch items := raw.(type) {
 	case []map[string]any:
 		return items
@@ -159,12 +136,12 @@ func ChatMessages(raw any) []map[string]any {
 	}
 }
 
-func ToolCallIDsFromChatMessage(msg map[string]any) []string {
+func toolCallIDsFromChatMessage(msg map[string]any) []string {
 	switch items := msg["tool_calls"].(type) {
 	case []map[string]any:
 		ids := make([]string, 0, len(items))
 		for _, item := range items {
-			if id := ToolCallIDFromMap(item); id != "" {
+			if id := toolCallIDFromMap(item); id != "" {
 				ids = append(ids, id)
 			}
 		}
@@ -173,7 +150,7 @@ func ToolCallIDsFromChatMessage(msg map[string]any) []string {
 		ids := make([]string, 0, len(items))
 		for _, item := range items {
 			if m, ok := item.(map[string]any); ok {
-				if id := ToolCallIDFromMap(m); id != "" {
+				if id := toolCallIDFromMap(m); id != "" {
 					ids = append(ids, id)
 				}
 			}
@@ -184,9 +161,14 @@ func ToolCallIDsFromChatMessage(msg map[string]any) []string {
 	}
 }
 
-func ToolCallIDFromMap(m map[string]any) string {
+func toolCallIDFromMap(m map[string]any) string {
 	if id := stringValue(m["id"]); id != "" {
 		return id
 	}
 	return stringValue(m["call_id"])
+}
+
+func stringValue(v any) string {
+	s, _ := v.(string)
+	return s
 }

@@ -9,78 +9,120 @@ import (
 	"time"
 
 	anthropicadapter "spark/internal/compat/client/anthropic_messages"
+	reasoningfeature "spark/internal/compat/gateway/features/reasoning"
+	"spark/internal/compat/httpjson"
 	"spark/internal/compat/ir"
 	"spark/internal/compat/policy"
 	openai_chat_target "spark/internal/compat/target/openai_chat"
 	"spark/internal/usage"
 )
 
-type AnthropicMessagesHandler struct {
-	PreferredModel        string
-	Logf                  func(format string, args ...any)
-	PostChatCompletions   func(ctx context.Context, chatReq map[string]any) (*http.Response, error)
-	ApplyReasoningContent func(chatReq map[string]any)
-	RememberReasoning     func(ids []string, reasoning string)
+type anthropicMessagesHandler struct {
+	preferredModel      string
+	upstreamBase        string
+	reasoningCache      *reasoningfeature.ReasoningCache
+	logf                func(format string, args ...any)
+	postChatCompletions func(ctx context.Context, chatReq map[string]any) (*http.Response, error)
 }
 
-func (h AnthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+type AnthropicMessagesOptions struct {
+	PreferredModel      string
+	UpstreamBase        string
+	ReasoningCache      *reasoningfeature.ReasoningCache
+	Logf                func(format string, args ...any)
+	PostChatCompletions func(ctx context.Context, chatReq map[string]any) (*http.Response, error)
+}
+
+func NewAnthropicMessagesToOpenAIChatHandler(opts AnthropicMessagesOptions) anthropicMessagesHandler {
+	return anthropicMessagesHandler{
+		preferredModel:      opts.PreferredModel,
+		upstreamBase:        opts.UpstreamBase,
+		reasoningCache:      opts.ReasoningCache,
+		logf:                opts.Logf,
+		postChatCompletions: opts.PostChatCompletions,
+	}
+}
+
+func (h anthropicMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		WriteAnthropicError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeAnthropicError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	req, rawBody, err := DecodeJSONRequest(r)
+	req, rawBody, err := httpjson.DecodeRequest(r)
 	if err != nil {
-		callLogf(h.Logf, "decode request failed: %v raw_bytes=%d", err, len(rawBody))
-		WriteAnthropicError(w, http.StatusBadRequest, "invalid json body")
+		callLogf(h.logf, "decode request failed: %v raw_bytes=%d", err, len(rawBody))
+		writeAnthropicError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	logCompatStage(h.Logf, "anthropic.request", req)
+	logCompatStage(h.logf, "anthropic.request", req)
 
 	irReq := anthropicadapter.MessagesInbound(req)
-	logCompatStage(h.Logf, "ir.request", irReq)
+	logCompatStage(h.logf, "ir.request", irReq)
+	targetModel := irReq.Model
+	if h.preferredModel != "" {
+		targetModel = h.preferredModel
+	}
 	chatReq := openai_chat_target.ChatOutbound{
-		Reasoning: policy.PreserveReasoningContent(),
+		Reasoning: h.reasoningPolicy(targetModel),
 	}.BuildRequest(irReq)
 	stream := boolValue(req["stream"])
 	chatReq["stream"] = stream
 	if stream {
 		ensureChatStreamUsageOption(chatReq)
 	}
-	if h.PreferredModel != "" {
+	if h.preferredModel != "" {
 		incomingModel := stringValue(chatReq["model"])
-		if incomingModel != h.PreferredModel {
-			callLogf(h.Logf, "override chat model incoming=%q preferred=%q", incomingModel, h.PreferredModel)
+		if incomingModel != h.preferredModel {
+			callLogf(h.logf, "override chat model incoming=%q preferred=%q", incomingModel, h.preferredModel)
 		}
-		chatReq["model"] = h.PreferredModel
+		chatReq["model"] = h.preferredModel
 	}
-	if h.ApplyReasoningContent != nil {
-		h.ApplyReasoningContent(chatReq)
-	}
-	logCompatStage(h.Logf, "openai_chat.request", chatReq)
+	h.applyReasoningContent(chatReq)
+	logCompatStage(h.logf, "openai_chat.request", chatReq)
 
-	if h.PostChatCompletions == nil {
-		WriteAnthropicError(w, http.StatusBadGateway, "upstream request failed")
+	if h.postChatCompletions == nil {
+		writeAnthropicError(w, http.StatusBadGateway, "upstream request failed")
 		return
 	}
-	resp, err := h.PostChatCompletions(r.Context(), chatReq)
+	resp, err := h.postChatCompletions(r.Context(), chatReq)
 	if err != nil {
-		callLogf(h.Logf, "upstream request failed: %v", err)
-		WriteAnthropicError(w, http.StatusBadGateway, "upstream request failed")
+		callLogf(h.logf, "upstream request failed: %v", err)
+		writeAnthropicError(w, http.StatusBadGateway, "upstream request failed")
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(resp.Body)
-		callLogf(h.Logf, "upstream status=%d body_bytes=%d", resp.StatusCode, len(data))
-		WriteAnthropicError(w, resp.StatusCode, string(bytes.TrimSpace(data)))
+		callLogf(h.logf, "upstream status=%d body_bytes=%d", resp.StatusCode, len(data))
+		writeAnthropicError(w, resp.StatusCode, string(bytes.TrimSpace(data)))
 		return
 	}
 	requestedModel := stringValue(chatReq["model"])
 	if stream {
-		ForwardAnthropicMessagesStream(w, resp.Body, requestedModel, h.RememberReasoning, h.Logf)
+		ForwardAnthropicMessagesStream(w, resp.Body, requestedModel, h.rememberReasoning, h.logf)
 		return
 	}
-	ForwardAnthropicMessagesNonStream(w, resp, requestedModel, h.RememberReasoning, h.Logf)
+	forwardAnthropicMessagesNonStream(w, resp, requestedModel, h.rememberReasoning, h.logf)
+}
+
+func (h anthropicMessagesHandler) reasoningPolicy(model string) policy.ReasoningPolicy {
+	if h.upstreamBase != "" {
+		return policy.OpenAIChatReasoningPolicy(h.upstreamBase, model)
+	}
+	return policy.PreserveReasoningContent()
+}
+
+func (h anthropicMessagesHandler) applyReasoningContent(chatReq map[string]any) {
+	reasoningfeature.ChatReasoningAdapter{
+		UpstreamBase: h.upstreamBase,
+		Cache:        h.reasoningCache,
+	}.ApplyToChatRequest(chatReq)
+}
+
+func (h anthropicMessagesHandler) rememberReasoning(ids []string, reasoning string) {
+	reasoningfeature.ChatReasoningAdapter{
+		Cache: h.reasoningCache,
+	}.RememberForToolCallIDs(ids, reasoning)
 }
 
 func ensureChatStreamUsageOption(chatReq map[string]any) {
@@ -101,7 +143,7 @@ func ForwardAnthropicMessagesStream(
 ) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		WriteAnthropicError(w, http.StatusInternalServerError, "stream not supported")
+		writeAnthropicError(w, http.StatusInternalServerError, "stream not supported")
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -117,7 +159,7 @@ func ForwardAnthropicMessagesStream(
 		callLogf(logf, "middleware stage=anthropic.stream usage missing")
 	}
 	if result.EmptyStream {
-		WriteAnthropicError(w, http.StatusBadGateway, "empty upstream stream")
+		writeAnthropicError(w, http.StatusBadGateway, "empty upstream stream")
 		return
 	}
 	if result.ReasoningText != "" && len(result.ToolCallIDs) > 0 && remember != nil {
@@ -125,7 +167,7 @@ func ForwardAnthropicMessagesStream(
 	}
 }
 
-func ForwardAnthropicMessagesNonStream(
+func forwardAnthropicMessagesNonStream(
 	w http.ResponseWriter,
 	upResp *http.Response,
 	requestedModel string,
@@ -134,13 +176,13 @@ func ForwardAnthropicMessagesNonStream(
 ) {
 	data, err := io.ReadAll(upResp.Body)
 	if err != nil {
-		WriteAnthropicError(w, http.StatusBadGateway, "invalid upstream response")
+		writeAnthropicError(w, http.StatusBadGateway, "invalid upstream response")
 		return
 	}
 	var chatResp map[string]any
 	if err := json.Unmarshal(data, &chatResp); err != nil {
 		callLogf(logf, "upstream invalid json bytes=%d", len(data))
-		WriteAnthropicError(w, http.StatusBadGateway, "invalid upstream response")
+		writeAnthropicError(w, http.StatusBadGateway, "invalid upstream response")
 		return
 	}
 	logCompatStage(logf, "openai_chat.response", chatResp)
@@ -157,7 +199,7 @@ func ForwardAnthropicMessagesNonStream(
 	_ = json.NewEncoder(w).Encode(msg)
 }
 
-func WriteAnthropicError(w http.ResponseWriter, status int, msg string) {
+func writeAnthropicError(w http.ResponseWriter, status int, msg string) {
 	if msg == "" {
 		msg = http.StatusText(status)
 	}
@@ -171,11 +213,6 @@ func WriteAnthropicError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
-}
-
-func boolValue(v any) bool {
-	b, _ := v.(bool)
-	return b
 }
 
 func toolCallIDsFromBlocks(blocks []ir.ContentBlock) []string {

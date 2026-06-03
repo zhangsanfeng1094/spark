@@ -93,12 +93,18 @@ spark launch codex --model gpt-4o -- --no-auto-approve
 ### 启动和配置集成
 
 ```bash
-spark launch [integration] [--model <model>] [--profile <profile>] [-- [extra args...]]
-spark config [integration] [--model <model>] [--profile <profile>]
+spark launch [integration] [--model <model>] [--profile <profile> | --select-profile] [-- [extra args...]]
+spark config [integration] [--model <model>] [--profile <profile> | --select-profile]
 spark profile
 spark --version
 spark version
 ```
+
+Profile 选择方式：
+
+- 固定默认 profile：不传 `--profile` 或 `--select-profile`，使用配置里的 `default_profile`。
+- 命令行指定 profile：传 `--profile <profile>`，适合脚本和固定渠道启动。
+- 启动时选择 profile：传 `--select-profile`，或在主面板选择 `Launch with profile` 后从列表中选择一次性 profile。
 
 当前主要支持：
 

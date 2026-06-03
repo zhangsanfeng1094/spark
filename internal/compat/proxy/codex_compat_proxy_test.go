@@ -14,7 +14,10 @@ import (
 
 	codexadapter "spark/internal/compat/client/codex"
 	"spark/internal/compat/gateway"
+	"spark/internal/compat/gateway/bridge"
+	"spark/internal/compat/policy"
 	"spark/internal/compat/proxyutil"
+	openai_chat_target "spark/internal/compat/target/openai_chat"
 )
 
 func TestResponsesRequestTranslator_StringInput(t *testing.T) {
@@ -24,7 +27,7 @@ func TestResponsesRequestTranslator_StringInput(t *testing.T) {
 		"stream":            true,
 		"max_output_tokens": float64(32),
 	}
-	out, err := gateway.CodexResponsesTranslator{}.ToChat(req)
+	out, err := bridge.OpenAIChatRequestBridge(bridge.CodexResponsesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -73,7 +76,7 @@ func TestResponsesRequestTranslator_ToolsMappedAndFiltered(t *testing.T) {
 			"name": "sum",
 		},
 	}
-	out, err := gateway.CodexResponsesTranslator{}.ToChat(req)
+	out, err := bridge.OpenAIChatRequestBridge(bridge.CodexResponsesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -111,7 +114,7 @@ func TestResponsesRequestTranslator_ArrayInput(t *testing.T) {
 		},
 	}
 
-	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := bridge.OpenAIChatRequestBridge(bridge.CodexResponsesClientCodec(), policy.PreserveReasoningContent()).Translate(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -134,7 +137,7 @@ func TestResponsesRequestTranslator_DeveloperRoleMappedToSystem(t *testing.T) {
 			"content": "be concise",
 		},
 	}
-	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := bridge.OpenAIChatRequestBridge(bridge.CodexResponsesClientCodec(), policy.PreserveReasoningContent()).Translate(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -161,7 +164,7 @@ func TestResponsesRequestTranslator_FunctionCallOutputMapped(t *testing.T) {
 			"output":  `{"result":3}`,
 		},
 	}
-	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := bridge.OpenAIChatRequestBridge(bridge.CodexResponsesClientCodec(), policy.PreserveReasoningContent()).Translate(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -197,7 +200,7 @@ func TestResponsesRequestTranslator_ReasoningOutputMappedToSyntheticToolCall(t *
 			"output":  `{"result":3}`,
 		},
 	}
-	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := bridge.OpenAIChatRequestBridge(bridge.CodexResponsesClientCodec(), policy.PreserveReasoningContent()).Translate(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -213,64 +216,6 @@ func TestResponsesRequestTranslator_ReasoningOutputMappedToSyntheticToolCall(t *
 	}
 }
 
-func TestResponsesCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testing.T) {
-	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://gateway.example/v1"}
-	chatReq := map[string]any{
-		"model": "mimo-v2.5-pro",
-		"messages": []map[string]any{
-			{
-				"role":    "assistant",
-				"content": "",
-				"tool_calls": []map[string]any{
-					{
-						"id":   "call_1",
-						"type": "function",
-						"function": map[string]any{
-							"name":      "sum",
-							"arguments": `{"a":1}`,
-						},
-					},
-				},
-			},
-		},
-	}
-	reasoning.ApplyToChatRequest(chatReq)
-	msgs := chatReq["messages"].([]map[string]any)
-	got, ok := msgs[0]["reasoning_content"]
-	if !ok || got != "" {
-		t.Fatalf("expected empty reasoning_content for MiMo cache miss, got %#v", msgs[0])
-	}
-}
-
-func TestResponsesCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *testing.T) {
-	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://api.openai.com/v1"}
-	chatReq := map[string]any{
-		"model": "gpt-4.1",
-		"messages": []map[string]any{
-			{
-				"role":              "assistant",
-				"content":           "",
-				"reasoning_content": "think first",
-				"tool_calls": []map[string]any{
-					{
-						"id":   "call_1",
-						"type": "function",
-						"function": map[string]any{
-							"name":      "sum",
-							"arguments": `{"a":1}`,
-						},
-					},
-				},
-			},
-		},
-	}
-	reasoning.ApplyToChatRequest(chatReq)
-	msgs := chatReq["messages"].([]map[string]any)
-	if _, ok := msgs[0]["reasoning_content"]; ok {
-		t.Fatalf("did not expect reasoning_content for generic gateway, got %#v", msgs[0])
-	}
-}
-
 func TestResponsesRequestTranslator_ToolRolePreservesToolCallID(t *testing.T) {
 	input := []any{
 		map[string]any{
@@ -279,7 +224,7 @@ func TestResponsesRequestTranslator_ToolRolePreservesToolCallID(t *testing.T) {
 			"content":      "ok",
 		},
 	}
-	out, err := gateway.CodexResponsesTranslator{}.ToChat(map[string]any{"model": "gpt-4.1", "input": input})
+	out, err := bridge.OpenAIChatRequestBridge(bridge.CodexResponsesClientCodec(), policy.PreserveReasoningContent()).Translate(map[string]any{"model": "gpt-4.1", "input": input})
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -374,8 +319,7 @@ func TestForwardNonStream_MapsToolCallsToFunctionCallOutputItems(t *testing.T) {
 		)),
 	}
 	rec := &responseRecorder{header: make(http.Header)}
-	p := &ResponsesProxy{}
-	p.forwardNonStream(rec, upResp)
+	gateway.ForwardCodexNonStream(rec, upResp, nil, nil)
 
 	if rec.status != 0 && rec.status != 200 {
 		t.Fatalf("unexpected status: %d", rec.status)
@@ -397,8 +341,7 @@ func TestForwardNonStream_MapsUsageDetails(t *testing.T) {
 		)),
 	}
 	rec := &responseRecorder{header: make(http.Header)}
-	p := &ResponsesProxy{}
-	p.forwardNonStream(rec, upResp)
+	gateway.ForwardCodexNonStream(rec, upResp, nil, nil)
 
 	body := rec.body.String()
 	if !strings.Contains(body, `"usage"`) {
@@ -423,8 +366,7 @@ func TestForwardNonStream_MapsReasoningContentSeparately(t *testing.T) {
 		)),
 	}
 	rec := &responseRecorder{header: make(http.Header)}
-	p := &ResponsesProxy{}
-	p.forwardNonStream(rec, upResp)
+	gateway.ForwardCodexNonStream(rec, upResp, nil, nil)
 
 	var got map[string]any
 	if err := json.Unmarshal([]byte(rec.body.String()), &got); err != nil {
@@ -505,31 +447,12 @@ func TestDecodeResponsesRequest_ZstdJSON(t *testing.T) {
 	}
 }
 
-func TestWriteUpstreamErrorAsJSON_WrapsPlainText(t *testing.T) {
-	upResp := &http.Response{
-		StatusCode: 400,
-		Body:       io.NopCloser(strings.NewReader("invalid json")),
-	}
-	rec := &responseRecorder{header: make(http.Header)}
-	writeUpstreamErrorAsJSON(rec, upResp)
-
-	if rec.status != 400 {
-		t.Fatalf("status mismatch: %d", rec.status)
-	}
-	if !strings.Contains(rec.body.String(), `"error"`) {
-		t.Fatalf("expected json error body, got %q", rec.body.String())
-	}
-	if !strings.Contains(rec.body.String(), "invalid json") {
-		t.Fatalf("expected original error message, got %q", rec.body.String())
-	}
-}
-
 func TestNormalizeMessageContent_MapText(t *testing.T) {
 	raw := map[string]any{
 		"type": "text",
 		"text": "你好",
 	}
-	got := gateway.NormalizeMessageContent(raw)
+	got := openai_chat_target.NormalizeMessageContent(raw)
 	if got != "你好" {
 		t.Fatalf("expected map text content, got %q", got)
 	}
@@ -543,7 +466,7 @@ func TestExtractChatText_FallbackChoiceText(t *testing.T) {
 			},
 		},
 	}
-	got := gateway.ExtractChatText(resp)
+	got := openai_chat_target.ExtractText(resp)
 	if got != "hello" {
 		t.Fatalf("expected fallback choice text, got %q", got)
 	}
@@ -559,7 +482,7 @@ func TestExtractChatDelta_DeltaTextString(t *testing.T) {
 			},
 		},
 	}
-	got := gateway.ExtractChatDelta(chunk)
+	got := openai_chat_target.ExtractDelta(chunk)
 	if got != "你好" {
 		t.Fatalf("expected delta text, got %q", got)
 	}
@@ -575,7 +498,7 @@ func TestExtractChatReasoningDelta_ReasoningContent(t *testing.T) {
 			},
 		},
 	}
-	got := gateway.ExtractChatReasoningDelta(chunk)
+	got := openai_chat_target.ExtractReasoningDelta(chunk)
 	if got != "先想一下" {
 		t.Fatalf("expected reasoning_content delta, got %q", got)
 	}
@@ -589,8 +512,7 @@ func TestForwardStream_FallbackForSingleJSONLine(t *testing.T) {
 		)),
 	}
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p := &ResponsesProxy{}
-	p.forwardStream(rec, upResp)
+	gateway.ForwardCodexStream(rec, upResp, nil, nil)
 
 	body := rec.body.String()
 	if !strings.Contains(body, `"response.output_text.done"`) {
@@ -612,8 +534,7 @@ func TestForwardStream_EmitsFunctionCallEventsFromToolCallDeltas(t *testing.T) {
 		}, "\n"))),
 	}
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p := &ResponsesProxy{}
-	p.forwardStream(rec, upResp)
+	gateway.ForwardCodexStream(rec, upResp, nil, nil)
 
 	body := rec.body.String()
 	if !strings.Contains(body, `"response.function_call_arguments.delta"`) {
@@ -638,8 +559,7 @@ func TestForwardStream_ReasoningContentDoesNotPolluteOutputText(t *testing.T) {
 		}, "\n"))),
 	}
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p := &ResponsesProxy{}
-	p.forwardStream(rec, upResp)
+	gateway.ForwardCodexStream(rec, upResp, nil, nil)
 
 	events := decodeSSEJSONEvents(t, rec.body.String())
 	var outputTextDeltas []string
@@ -687,8 +607,7 @@ func TestForwardStream_ResponseCompletedIncludesUsageDetails(t *testing.T) {
 		}, "\n"))),
 	}
 	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	p := &ResponsesProxy{}
-	p.forwardStream(rec, upResp)
+	gateway.ForwardCodexStream(rec, upResp, nil, nil)
 
 	body := rec.body.String()
 	if !strings.Contains(body, `"type":"response.completed"`) {

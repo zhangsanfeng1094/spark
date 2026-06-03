@@ -1,30 +1,13 @@
-package gateway
+package logutil
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"spark/internal/compat/ir"
 )
 
-func mustJSONForLog(v any) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("<json error: %v>", err)
-	}
-	return string(data)
-}
-
-func truncateForLog(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	return s[:max] + "...(truncated)"
-}
-
-func structureJSONForLog(v any) string {
+func StructureJSONForLog(v any) string {
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
 	encoder.SetEscapeHTML(false)
@@ -32,10 +15,6 @@ func structureJSONForLog(v any) string {
 		return fmt.Sprintf("<json error: %v>", err)
 	}
 	return strings.TrimSpace(buf.String())
-}
-
-func StructureJSONForLog(v any) string {
-	return structureJSONForLog(v)
 }
 
 func normalizeLogValue(v any) any {
@@ -140,43 +119,4 @@ func logCompositePlaceholder(key string, count int) string {
 
 func normalizeLogKey(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
-}
-
-func stringValue(v any) string {
-	s, _ := v.(string)
-	return s
-}
-
-func mapValue(v any) map[string]any {
-	m, _ := v.(map[string]any)
-	return m
-}
-
-func intFromAny(v any) int {
-	switch x := v.(type) {
-	case int:
-		return x
-	case int64:
-		return int(x)
-	case float64:
-		return int(x)
-	case json.Number:
-		i, _ := x.Int64()
-		return int(i)
-	default:
-		return 0
-	}
-}
-
-func logCompatStage(logf func(string, ...any), stage string, v any) {
-	callLogf(logf, "middleware stage=%s structure=%s", stage, structureJSONForLog(v))
-}
-
-func logCompatUsage(logf func(string, ...any), stage string, u ir.Usage) {
-	callLogf(logf, "middleware stage=%s %s raw_usage=%s", stage, formatIRUsageForLog(u), structureJSONForLog(u.Raw))
-}
-
-func formatIRUsageForLog(u ir.Usage) string {
-	return fmt.Sprintf("usage input=%d output=%d total=%d cache_creation=%d cache_read=%d",
-		u.InputTokens, u.OutputTokens, u.TotalTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens)
 }

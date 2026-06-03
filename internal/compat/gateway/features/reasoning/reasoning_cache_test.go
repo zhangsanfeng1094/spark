@@ -1,4 +1,4 @@
-package gateway
+package reasoning
 
 import "testing"
 
@@ -30,6 +30,37 @@ func TestChatReasoningAdapterAppliesStatelessTargetRules(t *testing.T) {
 	got, ok := msgs[0]["reasoning_content"]
 	if !ok || got != "" {
 		t.Fatalf("expected empty reasoning_content for stateless MiMo target, got %#v", msgs[0])
+	}
+}
+
+func TestChatReasoningAdapterStripsReasoningForGenericGateway(t *testing.T) {
+	adapter := ChatReasoningAdapter{UpstreamBase: "https://api.openai.com/v1"}
+	chatReq := map[string]any{
+		"model": "gpt-4.1",
+		"messages": []map[string]any{
+			{
+				"role":              "assistant",
+				"content":           "",
+				"reasoning_content": "think first",
+				"tool_calls": []map[string]any{
+					{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]any{
+							"name":      "sum",
+							"arguments": `{"a":1}`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	adapter.ApplyToChatRequest(chatReq)
+
+	msgs := chatReq["messages"].([]map[string]any)
+	if _, ok := msgs[0]["reasoning_content"]; ok {
+		t.Fatalf("did not expect reasoning_content for generic gateway, got %#v", msgs[0])
 	}
 }
 

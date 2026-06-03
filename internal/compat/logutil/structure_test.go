@@ -1,4 +1,4 @@
-package gateway
+package logutil
 
 import (
 	"strings"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestStructureJSONForLogRedactsConversationContent(t *testing.T) {
-	got := structureJSONForLog(map[string]any{
+	got := StructureJSONForLog(map[string]any{
 		"model": "mimo-v2.5-pro",
 		"messages": []any{
 			map[string]any{
@@ -79,7 +79,7 @@ func TestStructureJSONForLogRedactsConversationContent(t *testing.T) {
 }
 
 func TestStructureJSONForLogPreservesNonTextFields(t *testing.T) {
-	got := structureJSONForLog(map[string]any{
+	got := StructureJSONForLog(map[string]any{
 		"model":             "deepseek-v4-flash",
 		"stream":            true,
 		"temperature":       0.2,
@@ -120,7 +120,7 @@ func TestStructureJSONForLogPreservesNonTextFields(t *testing.T) {
 }
 
 func TestStructureJSONForLogRedactsIRStructsAndPreservesUsage(t *testing.T) {
-	got := structureJSONForLog(ir.Response{
+	got := StructureJSONForLog(ir.Response{
 		ID:    "chatcmpl_1",
 		Model: "mimo-v2.5-pro",
 		Output: []ir.ContentBlock{
@@ -176,7 +176,7 @@ func TestStructureJSONForLogRedactsIRStructsAndPreservesUsage(t *testing.T) {
 }
 
 func TestStructureJSONForLogRedactsToolDescriptionsAndToolInputs(t *testing.T) {
-	got := structureJSONForLog(map[string]any{
+	got := StructureJSONForLog(map[string]any{
 		"system": "private system prompt",
 		"tools": []any{
 			map[string]any{
