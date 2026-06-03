@@ -48,6 +48,7 @@ func NewRootCmd() *cobra.Command {
 func newLaunchCmd() *cobra.Command {
 	var modelFlag string
 	var profileFlag string
+	var selectProfileFlag bool
 	var configOnly bool
 
 	cmd := &cobra.Command{
@@ -64,6 +65,9 @@ Examples:
 Rule: Arguments before -- are for spark, arguments after -- are passed to the integration.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateProfileSelectionFlags(profileFlag, selectProfileFlag); err != nil {
+				return err
+			}
 			var name string
 			var passArgs []string
 			dash := cmd.ArgsLenAtDash()
@@ -85,22 +89,33 @@ Rule: Arguments before -- are for spark, arguments after -- are passed to the in
 				}
 				name = selected
 			}
-			return launchIntegration(name, modelFlag, profileFlag, configOnly, passArgs)
+			return launchIntegration(name, LaunchOptions{
+				Model:         modelFlag,
+				Profile:       profileFlag,
+				SelectProfile: selectProfileFlag,
+				ConfigOnly:    configOnly,
+				PassArgs:      passArgs,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model name")
 	cmd.Flags().StringVar(&profileFlag, "profile", "", "Profile name")
+	cmd.Flags().BoolVar(&selectProfileFlag, "select-profile", false, "Select profile before launching")
 	cmd.Flags().BoolVar(&configOnly, "config", false, "Configure without launching")
 	return cmd
 }
 func newConfigCmd() *cobra.Command {
 	var profileFlag string
+	var selectProfileFlag bool
 	var modelFlag string
 	cmd := &cobra.Command{
 		Use:   "config [integration]",
 		Short: "Configure integration only",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateProfileSelectionFlags(profileFlag, selectProfileFlag); err != nil {
+				return err
+			}
 			name := ""
 			if len(args) == 1 {
 				name = args[0]
@@ -112,11 +127,17 @@ func newConfigCmd() *cobra.Command {
 				}
 				name = selected
 			}
-			return launchIntegration(name, modelFlag, profileFlag, true, nil)
+			return launchIntegration(name, LaunchOptions{
+				Model:         modelFlag,
+				Profile:       profileFlag,
+				SelectProfile: selectProfileFlag,
+				ConfigOnly:    true,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model name")
 	cmd.Flags().StringVar(&profileFlag, "profile", "", "Profile name")
+	cmd.Flags().BoolVar(&selectProfileFlag, "select-profile", false, "Select profile before configuring")
 	return cmd
 }
 
@@ -132,18 +153,19 @@ func newProfileCmd() *cobra.Command {
 }
 
 func interactiveMenuOptions() []string {
-	return []string{"Launch integration", "Token usage", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
+	return []string{"Launch integration", "Launch with profile", "Token usage", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
 }
 
 func interactiveMenuDescriptions() map[string]string {
 	return map[string]string{
-		"Launch integration": "Start Spark with the selected coding agent integration using the active profile and model settings.",
-		"Token usage":        "Review recorded compat proxy token usage with fixed time filters.",
-		"Manage profiles":    "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
-		"Manage MCP servers": "Manage MCP server entries, health probes, and transport settings.",
-		"Manage skills":      "Browse installed skills, add new ones, and toggle them on or off.",
-		"Show config file":   "Print the active Spark config path after leaving the dashboard.",
-		"Quit":               "Exit Spark without making additional changes.",
+		"Launch integration":  "Start Spark with the selected coding agent integration using the default profile and model settings.",
+		"Launch with profile": "Start Spark with the selected coding agent integration after choosing a profile for this launch.",
+		"Token usage":         "Review recorded compat proxy token usage with fixed time filters.",
+		"Manage profiles":     "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
+		"Manage MCP servers":  "Manage MCP server entries, health probes, and transport settings.",
+		"Manage skills":       "Browse installed skills, add new ones, and toggle them on or off.",
+		"Show config file":    "Print the active Spark config path after leaving the dashboard.",
+		"Quit":                "Exit Spark without making additional changes.",
 	}
 }
 
@@ -367,7 +389,15 @@ func runInteractive() error {
 			if err != nil {
 				return err
 			}
-			if err := launchIntegration(name, "", "", false, nil); err != nil {
+			if err := launchIntegration(name, LaunchOptions{}); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+		case "Launch with profile":
+			name, err := tui.SelectOne("Select integration:", integrations.Names())
+			if err != nil {
+				return err
+			}
+			if err := launchIntegration(name, LaunchOptions{SelectProfile: true}); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
 		case "Token usage":
@@ -516,7 +546,20 @@ func tokenUsageHeavyRequests(rows []usage.HeavyRequest) []tui.TokenUsageRequest 
 	return out
 }
 
-func launchIntegration(name, modelFlag, profileFlag string, configOnly bool, passArgs []string) error {
+type LaunchOptions struct {
+	Model         string
+	Profile       string
+	SelectProfile bool
+	ConfigOnly    bool
+	PassArgs      []string
+}
+
+type profilePicker func(title string, options []string) (string, error)
+
+func launchIntegration(name string, opts LaunchOptions) error {
+	if err := validateProfileSelectionFlags(opts.Profile, opts.SelectProfile); err != nil {
+		return err
+	}
 	r, ok := integrations.Get(name)
 	if !ok {
 		return fmt.Errorf("unknown integration: %s", name)
@@ -526,25 +569,12 @@ func launchIntegration(name, modelFlag, profileFlag string, configOnly bool, pas
 		return err
 	}
 
-	profileName := cfg.DefaultProfile
-	if strings.TrimSpace(profileFlag) != "" {
-		profileName = strings.TrimSpace(profileFlag)
-	}
-	profile, err := cfg.ProfileByName(profileName)
+	profileName, profile, err := resolveLaunchProfile(cfg, opts.Profile, opts.SelectProfile, tui.SelectOne)
 	if err != nil {
-		names := profileNames(cfg)
-		chosen, pickErr := tui.SelectOne("Select profile:", names)
-		if pickErr != nil {
-			return pickErr
-		}
-		profileName = chosen
-		profile, err = cfg.ProfileByName(chosen)
-		if err != nil {
-			return err
-		}
+		return err
 	}
 
-	models := resolveModels(modelFlag, profile)
+	models := resolveModels(opts.Model, profile)
 
 	if ed, isEditor := r.(integrations.Editor); isEditor {
 		if len(models) == 0 {
@@ -599,7 +629,7 @@ func launchIntegration(name, modelFlag, profileFlag string, configOnly bool, pas
 		return err
 	}
 
-	if configOnly {
+	if opts.ConfigOnly {
 		launchNow, err := tui.Confirm("Launch now", false)
 		if err != nil {
 			return err
@@ -610,7 +640,7 @@ func launchIntegration(name, modelFlag, profileFlag string, configOnly bool, pas
 	}
 
 	fmt.Printf("Launching %s with %s using profile %s\n", r.String(), models[0], profileName)
-	return r.Run(profile, models[0], passArgs)
+	return r.Run(profile, models[0], opts.PassArgs)
 }
 
 func manageProfiles() error {
@@ -652,6 +682,47 @@ func resolveModels(modelFlag string, profile *config.Profile) []string {
 		return models
 	}
 	return nil
+}
+
+func validateProfileSelectionFlags(profileFlag string, selectProfile bool) error {
+	if strings.TrimSpace(profileFlag) != "" && selectProfile {
+		return fmt.Errorf("--profile and --select-profile cannot be used together")
+	}
+	return nil
+}
+
+func resolveLaunchProfile(cfg *config.RootConfig, profileFlag string, selectProfile bool, picker profilePicker) (string, *config.Profile, error) {
+	if err := validateProfileSelectionFlags(profileFlag, selectProfile); err != nil {
+		return "", nil, err
+	}
+
+	if profileName := strings.TrimSpace(profileFlag); profileName != "" {
+		profile, err := cfg.ProfileByName(profileName)
+		return profileName, profile, err
+	}
+
+	if selectProfile {
+		return pickLaunchProfile(cfg, picker)
+	}
+
+	profileName := cfg.DefaultProfile
+	profile, err := cfg.ProfileByName(profileName)
+	if err == nil {
+		return profileName, profile, nil
+	}
+	return pickLaunchProfile(cfg, picker)
+}
+
+func pickLaunchProfile(cfg *config.RootConfig, picker profilePicker) (string, *config.Profile, error) {
+	chosen, err := picker("Select profile:", profileNames(cfg))
+	if err != nil {
+		return "", nil, err
+	}
+	profile, err := cfg.ProfileByName(chosen)
+	if err != nil {
+		return "", nil, err
+	}
+	return chosen, profile, nil
 }
 
 func profileNames(cfg *config.RootConfig) []string {

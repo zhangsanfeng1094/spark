@@ -54,8 +54,13 @@ flowchart TD
 | `internal/compat/client/codex` | OpenAI Responses caller 协议适配。把 Responses 请求转 IR，或把 IR/Chat 结果写回 Responses 客户端格式和 SSE。 | `request_in.go`, `response_out.go`, `stream_out.go` |
 | `internal/compat/client/anthropic_messages` | Anthropic Messages caller 协议适配。把 Messages 请求转 IR，或把结果写回 Anthropic Messages 响应和 SSE。 | `messages_inbound.go`, `messages_client_writer.go`, `messages_stream_writer.go` |
 | `internal/compat/client/gemini_generate_content` | Gemini GenerateContent caller 协议适配。当前覆盖请求入站和客户端响应写出。 | `generate_content_inbound.go`, `generate_content_client_writer.go` |
-| `internal/compat/target/openai_chat` | OpenAI Chat Completions target 协议适配。把 IR 转 Chat 请求，并把 Chat 响应/流转换回 IR 事件。 | `request_out.go`, `response_in.go`, `stream_in.go` |
-| `internal/compat/gateway` | 兼容网关编排层。负责 route selection、HTTP handler、上游执行、stream/non-stream 转发和 gateway-level errors。 | `route.go`, `pipeline.go`, `codex_handler.go`, `stream.go`, `nonstream.go` |
+| `internal/compat/target/openai_chat` | OpenAI Chat Completions target 协议适配。把 IR 转 Chat 请求，并把 Chat 响应/流转换回 IR 事件；保存 Chat target 专属 fallback extraction helper。 | `request_out.go`, `response_in.go`, `stream_in.go`, `extractors.go` |
+| `internal/compat/gateway/core` | 兼容网关核心类型。负责 route key、route 默认值、unsupported-route error 和 translated-chat 执行管道。 | `route.go`, `pipeline.go` |
+| `internal/compat/gateway/features/reasoning` | gateway reasoning 特性。负责 assistant tool-call reasoning echo/cache 和 request adapter。 | `reasoning_cache.go` |
+| `internal/compat/gateway/bridge` | gateway 协议桥接层。负责 route selection，并用 `ClientCodec` + `TargetCodec` 组合 `client/* -> ir -> target/*` 和 `target/* -> ir -> client/*`，避免按每个 client-target 组合复制字段映射。 | `registry.go`, `types.go`, `translators.go`, `stream.go`, `nonstream.go` |
+| `internal/compat/gateway` | 兼容网关编排层。负责 HTTP handler、上游执行、stream/non-stream HTTP 转发和 gateway-level HTTP support。 | `codex_responses_handler.go`, `anthropic_messages_handler.go`, `codex_responses_forward.go` |
+| `internal/compat/httpjson` | compat HTTP JSON 工具。负责普通 JSON 请求解码和 OpenAI-compatible JSON error envelope 写回。 | `json.go` |
+| `internal/compat/logutil` | compat 协议日志工具。负责对 request/response/IR 结构做字段级脱敏和结构化摘要，供 gateway/proxy 共享。 | `structure.go` |
 | `internal/compat/policy` | 协议转换策略。处理 reasoning 可见性/归一化、tool call/tool result 兼容规则。 | `reasoning.go`, `tools.go` |
 | `internal/skills` | 本地技能系统。管理技能根目录、registry、manifest、安装、同伴 agent 技能导入/导出。 | `types.go`, `roots.go`, `registry.go`, `manifest.go`, `install.go`, `catalog.go`, `peer.go`, `files.go` |
 | `internal/tui` | 终端交互 UI。提供选择、输入、确认、dashboard、profile/MCP/skill 管理界面和模型连通性测试 UI。 | `prompt.go`, `dashboard_*`, `profile_manager_*`, `mcp_manager_*`, `skill_manager_model.go`, `model_connection.go` |
@@ -162,7 +167,7 @@ sequenceDiagram
 `internal/integrations` 根包只保留 agent 启动和配置接线；兼容代理运行时外壳在 `internal/compat/proxy`：
 
 - `internal/compat/proxy/codex_compat_proxy.go` / `internal/compat/proxy/claude_compat_proxy.go`: 负责本地 HTTP server、上游 URL/key、日志、重试和本地代理状态。
-- `internal/compat/proxy/compat_executors.go`: `codexChatExecutor` 负责 Codex fallback 路径的上游请求和 provider-specific retry；Anthropic Messages 兼容路径由 `gateway.AnthropicMessagesHandler` 直接调用 `postChatCompletions`。
+- `internal/compat/proxy/compat_executors.go`: `codexChatExecutor` 负责 Codex fallback 路径的上游请求和 provider-specific retry；Anthropic Messages 兼容路径由 `gateway.NewAnthropicMessagesToOpenAIChatHandler` 返回的 handler 直接调用 `postChatCompletions`。
 - `internal/compat/proxyutil/compatio.go`: 保留 integration runtime 需要的日志截断、请求 body 解码、rolling log 和 streaming HTTP client 工具。
 
 协议字段转换、route selection、stream/non-stream 写回已经落在 `internal/compat/ir`、`internal/compat/client/*`、`internal/compat/target/*` 和 `internal/compat/gateway`。

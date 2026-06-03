@@ -1,27 +1,20 @@
-package gateway
+package core
 
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-
-	"spark/internal/compat/client/codex"
 )
 
 type RequestTranslator interface {
-	ToChat(req map[string]any) (map[string]any, error)
+	Translate(req map[string]any) (map[string]any, error)
 }
 
-type ChatExecutor interface {
-	Do(ctx context.Context, chatReq map[string]any) (*http.Response, error)
+type Executor interface {
+	Do(ctx context.Context, req map[string]any) (*http.Response, error)
 }
 
-type ChatRequestPreparer func(chatReq map[string]any)
-
-type StreamWriter func(writer io.Writer, reader io.Reader, flush func()) codex.ResponsesStreamResult
-
-type NonStreamWriter func(resp map[string]any) map[string]any
+type RequestPreparer func(req map[string]any)
 
 type PipelineStage string
 
@@ -41,25 +34,25 @@ func (e PipelineError) Error() string {
 
 func (e PipelineError) Unwrap() error { return e.Err }
 
-func ExecuteTranslatedChat(
+func ExecuteTranslated(
 	ctx context.Context,
 	req map[string]any,
 	translator RequestTranslator,
-	executor ChatExecutor,
-	preparers ...ChatRequestPreparer,
+	executor Executor,
+	preparers ...RequestPreparer,
 ) (map[string]any, *http.Response, error) {
-	chatReq, err := translator.ToChat(req)
+	upstreamReq, err := translator.Translate(req)
 	if err != nil {
 		return nil, nil, PipelineError{Stage: PipelineStageTranslate, Err: err}
 	}
 	for _, prepare := range preparers {
 		if prepare != nil {
-			prepare(chatReq)
+			prepare(upstreamReq)
 		}
 	}
-	resp, err := executor.Do(ctx, chatReq)
+	resp, err := executor.Do(ctx, upstreamReq)
 	if err != nil {
 		return nil, nil, PipelineError{Stage: PipelineStageExecute, Err: err}
 	}
-	return chatReq, resp, nil
+	return upstreamReq, resp, nil
 }

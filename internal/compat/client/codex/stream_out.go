@@ -104,11 +104,13 @@ func (w *ResponsesStreamWriter) WriteEvent(event ir.StreamEvent) bool {
 				return false
 			}
 			w.state.writeReasoningDelta(event.Delta.Reasoning.Text)
+			return true
 		case ir.BlockToolCall:
 			if event.Delta.ToolCall == nil {
 				return false
 			}
 			w.state.writeToolCallDelta(event.Delta)
+			return true
 		case ir.BlockText:
 			if event.Delta.Text == "" {
 				return false

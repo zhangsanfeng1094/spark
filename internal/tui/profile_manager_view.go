@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -14,13 +15,13 @@ func (m *pmModel) View() string {
 
 	header := dashboardHeaderStyle.Width(m.width - 6).Render("Spark Profiles")
 	leftPanelW := 30
-	rightPanelW := m.width - 34
+	rightPanelW := m.width - leftPanelW - 10
 	if rightPanelW < 54 {
 		rightPanelW = 54
 	}
-	inputW := rightPanelW - pmLabelWidth - 8
-	if inputW < pmInputWidth {
-		inputW = pmInputWidth
+	inputW := rightPanelW - pmLabelWidth - 5
+	if inputW < 24 {
+		inputW = 24
 	}
 	m.inputWidth = inputW
 
@@ -96,13 +97,16 @@ func (m *pmModel) renderLeftPane(height int) string {
 	}
 	for i := start; i < end; i++ {
 		name := m.profileNames[i]
-		displayName := "  " + name
+		prefix := "  "
 		if i == m.selected {
-			displayName = "> " + name
+			prefix = "> "
 		}
+		marker := ""
 		if m.cfg.DefaultProfile == name {
-			displayName += " " + pmBadgeStyle.Render("default")
+			marker = " " + pmBadgeStyle.Render("★")
 		}
+		nameW := max(1, listWidth-lipgloss.Width(prefix)-lipgloss.Width(marker)-1)
+		displayName := prefix + truncateDisplay(name, nameW) + marker
 
 		if i == m.selected {
 			if m.focusArea == pmFocusProfiles {
@@ -202,13 +206,13 @@ func (m *pmModel) renderRightPane(height int) string {
 			val = strings.Repeat("*", len(val))
 		}
 
-		displayVal := m.decorateFieldValue(i, val)
+		displayVal := truncateDisplay(m.decorateFieldValue(i, val), m.inputWidth-2)
 		if m.focusArea == pmFocusFields && i == m.focusField && !f.readOnly {
 			if f.cursor >= len(val) {
-				displayVal += "█"
+				displayVal = truncateDisplay(displayVal+"█", m.inputWidth-2)
 			} else {
 				r := []rune(val)
-				displayVal = string(r[:f.cursor]) + "█" + string(r[f.cursor:])
+				displayVal = truncateDisplay(string(r[:f.cursor])+"█"+string(r[f.cursor:]), m.inputWidth-2)
 			}
 		}
 
@@ -554,15 +558,46 @@ func (m *pmModel) leftSummaryLines(width int) []string {
 
 	lines := []string{
 		lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Current"),
-		lipgloss.NewStyle().Foreground(colorText).Width(width).Render(m.currentProfileName()),
+		lipgloss.NewStyle().Foreground(colorText).Width(width).Render(truncateDisplay(m.currentProfileName(), width)),
 	}
 	if provider := strings.TrimSpace(m.fields[pmFieldProviderType].value); provider != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(provider))
+		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(truncateDisplay(provider, width)))
 	}
 	if summary := strings.TrimSpace(formatModelsSummary(m.modelsDraft, m.defaultModel)); summary != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(summary))
+		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(truncateDisplay(summary, width)))
 	}
 	return lines
+}
+
+func truncateDisplay(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	if width <= 3 {
+		return strings.Repeat(".", width)
+	}
+
+	limit := width - 3
+	out := strings.Builder{}
+	used := 0
+	for len(value) > 0 {
+		r, size := utf8.DecodeRuneInString(value)
+		if r == utf8.RuneError && size == 0 {
+			break
+		}
+		part := value[:size]
+		partW := lipgloss.Width(part)
+		if used+partW > limit {
+			break
+		}
+		out.WriteString(part)
+		used += partW
+		value = value[size:]
+	}
+	return out.String() + "..."
 }
 
 func (m *pmModel) renderStatusSummaryLine() (string, lipgloss.Style) {

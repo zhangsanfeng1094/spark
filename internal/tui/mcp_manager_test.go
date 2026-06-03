@@ -66,7 +66,7 @@ func TestMCPManagerProbeResultUpdatesSelectionStatus(t *testing.T) {
 	}
 }
 
-func TestMCPManagerBrowseFocusStartsInQuickAdd(t *testing.T) {
+func TestMCPManagerBrowseFocusStartsInQuickAddWhenEmpty(t *testing.T) {
 	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
 	if m.browseFocus != mcpBrowseFocusQuickAdd {
 		t.Fatalf("expected quick add focus, got %v", m.browseFocus)
@@ -82,24 +82,33 @@ func TestMCPManagerBrowseFocusStartsInQuickAdd(t *testing.T) {
 	}
 }
 
+func TestMCPManagerBrowseFocusStartsInServersWhenConfigured(t *testing.T) {
+	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
+		"docs": {Command: "npx", Enabled: true},
+	}})
+	if m.browseFocus != mcpBrowseFocusServers {
+		t.Fatalf("expected server list focus, got %v", m.browseFocus)
+	}
+}
+
 func TestMCPManagerBrowseFocusCyclesWithTab(t *testing.T) {
 	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
 		"docs": {Command: "npx", Enabled: true},
 	}})
 
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.browseFocus != mcpBrowseFocusServers {
-		t.Fatalf("expected server list focus after tab, got %v", m.browseFocus)
+	if m.browseFocus != mcpBrowseFocusActions {
+		t.Fatalf("expected actions focus after tab, got %v", m.browseFocus)
 	}
 
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if m.browseFocus != mcpBrowseFocusQuickAdd {
-		t.Fatalf("expected actions focus after second tab, got %v", m.browseFocus)
+		t.Fatalf("expected quick-add focus after second tab, got %v", m.browseFocus)
 	}
 
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if m.browseFocus != mcpBrowseFocusServers {
-		t.Fatalf("expected server list focus after shift+tab, got %v", m.browseFocus)
+	if m.browseFocus != mcpBrowseFocusActions {
+		t.Fatalf("expected actions focus after shift+tab, got %v", m.browseFocus)
 	}
 }
 
@@ -119,14 +128,14 @@ func TestMCPManagerQuickAddEnterStartsEditor(t *testing.T) {
 func TestMCPManagerRenderQuickAddSection(t *testing.T) {
 	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
 
-	left := m.renderServerList()
+	left := m.renderServerList(0)
 
-	for _, want := range []string{"Actions", "Add", "Transfer", "Your Servers"} {
+	for _, want := range []string{"MCP Servers", "Add", "Transfer", "Current"} {
 		if !strings.Contains(left, want) {
 			t.Fatalf("expected left pane to contain %q, got %q", want, left)
 		}
 	}
-	for _, unwanted := range []string{"Quick Add", "Create MCP Server"} {
+	for _, unwanted := range []string{"Quick Add", "Create MCP Server", "Global MCP operations", "Your Servers"} {
 		if strings.Contains(left, unwanted) {
 			t.Fatalf("expected left pane to omit %q, got %q", unwanted, left)
 		}
@@ -134,8 +143,8 @@ func TestMCPManagerRenderQuickAddSection(t *testing.T) {
 	if strings.Contains(left, "Load missing servers from Codex") {
 		t.Fatalf("expected compact action copy to avoid the old long description, got %q", left)
 	}
-	if got := strings.Count(left, "Import/Export"); got != 1 {
-		t.Fatalf("expected transfer summary to appear once, got count %d in %q", got, left)
+	if got := strings.Count(left, "[T] Transfer"); got != 1 {
+		t.Fatalf("expected transfer button to appear once, got count %d in %q", got, left)
 	}
 }
 
@@ -146,7 +155,7 @@ func TestMCPManagerRenderServerRowIncludesTransportAndSelectionMarker(t *testing
 	m.selected = 0
 	m.browseFocus = mcpBrowseFocusServers
 
-	left := m.renderServerList()
+	left := m.renderServerList(0)
 
 	for _, want := range []string{"docs", "stdio", "➤"} {
 		if !strings.Contains(left, want) {
@@ -160,8 +169,8 @@ func TestMCPManagerQuickAddRowsUseWiderPaneWidth(t *testing.T) {
 
 	row := m.renderQuickAddItem(0, m.quickAddItems[0])
 
-	if got := lipgloss.Width(row); got < 36 {
-		t.Fatalf("expected quick-add row width to be widened, got %d in %q", got, row)
+	if got := lipgloss.Width(row); got < 28 {
+		t.Fatalf("expected quick-add row to fit the compact left pane, got %d in %q", got, row)
 	}
 }
 
@@ -215,7 +224,7 @@ func TestMCPManagerRenderOverviewIncludesProbeMetadata(t *testing.T) {
 
 	right := m.renderDetails()
 
-	for _, want := range []string{"Overview", "Transport: stdio", "Args: 2 configured", "Tools detected: 3", now.Format(time.RFC3339)} {
+	for _, want := range []string{"Config · docs", "Transport", "stdio", "Args", "2 configured", "Tools detected", "3", now.Format(time.RFC3339)} {
 		if !strings.Contains(right, want) {
 			t.Fatalf("expected overview to contain %q, got %q", want, right)
 		}
@@ -244,7 +253,7 @@ func TestMCPManagerDisabledStatusExplainsIntent(t *testing.T) {
 
 	right := m.renderDetails()
 
-	if !strings.Contains(right, "Disabled reason: disabled by spark") {
+	if !strings.Contains(right, "Disabled reason") || !strings.Contains(right, "disabled by spark") {
 		t.Fatalf("expected disabled reason in details, got %q", right)
 	}
 }
@@ -256,13 +265,18 @@ func TestMCPManagerRenderActionsAndStatusBarContext(t *testing.T) {
 	m.width = 120
 
 	right := m.renderDetails()
-	for _, want := range []string{"Status", "Help", "No recent activity"} {
+	for _, want := range []string{"Actions", "Probe", "Edit", "Disable", "Delete", "Transfer", "Status", "Help", "No recent activity"} {
 		if !strings.Contains(right, want) {
 			t.Fatalf("expected details to contain %q, got %q", want, right)
 		}
 	}
 
-	if got := m.contextHelpText(); !strings.Contains(got, "Enter Run Action") {
+	if got := m.contextHelpText(); !strings.Contains(got, "Tab Actions") {
+		t.Fatalf("expected server-list help text, got %q", got)
+	}
+
+	m.browseFocus = mcpBrowseFocusActions
+	if got := m.contextHelpText(); !strings.Contains(got, "Enter Run") {
 		t.Fatalf("expected actions help text, got %q", got)
 	}
 
@@ -316,7 +330,7 @@ func TestMCPManagerEditorFlowPreservesBrowseUntilExplicitEdit(t *testing.T) {
 	}
 
 	right := m.renderDetails()
-	if !strings.Contains(right, "Overview") {
+	if !strings.Contains(right, "Config · docs") {
 		t.Fatalf("expected overview in browse mode, got %q", right)
 	}
 
@@ -423,6 +437,23 @@ func TestMCPManagerSelectFieldCyclesWithArrowKeys(t *testing.T) {
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	if got := m.editFields[mcpEditFieldEnabled].value; got != "false" {
 		t.Fatalf("expected enabled to toggle right to false, got %q", got)
+	}
+}
+
+func TestMCPManagerSelectFieldRendersSegmentedControl(t *testing.T) {
+	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
+	m.startAddEditor("stdio")
+	m.editFocus = mcpEditFieldTransport
+
+	value := lipgloss.NewStyle().Render(m.renderEditorFieldValue(mcpEditFieldTransport, m.editFields[mcpEditFieldTransport], true))
+
+	for _, want := range []string{"stdio", "sse", "http"} {
+		if !strings.Contains(value, want) {
+			t.Fatalf("expected select rendering to contain %q, got %q", want, value)
+		}
+	}
+	if strings.Contains(value, "[stdio]") {
+		t.Fatalf("expected segmented select rendering to avoid bracket marker, got %q", value)
 	}
 }
 

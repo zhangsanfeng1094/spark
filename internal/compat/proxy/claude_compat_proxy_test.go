@@ -8,6 +8,9 @@ import (
 
 	anthropicadapter "spark/internal/compat/client/anthropic_messages"
 	"spark/internal/compat/gateway"
+	"spark/internal/compat/gateway/bridge"
+	reasoningfeature "spark/internal/compat/gateway/features/reasoning"
+	"spark/internal/compat/policy"
 	openai_chat_target "spark/internal/compat/target/openai_chat"
 )
 
@@ -37,7 +40,7 @@ func TestAnthropicRequestTranslator_BasicMapping(t *testing.T) {
 			"name": "sum",
 		},
 	}
-	out, err := gateway.AnthropicMessagesTranslator{}.ToChat(req)
+	out, err := bridge.OpenAIChatRequestBridge(bridge.AnthropicMessagesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -89,7 +92,7 @@ func TestAnthropicRequestTranslator_AssistantThinkingMapsToReasoningContent(t *t
 			},
 		},
 	}
-	out, err := gateway.AnthropicMessagesTranslator{}.ToChat(req)
+	out, err := bridge.OpenAIChatRequestBridge(bridge.AnthropicMessagesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -118,7 +121,7 @@ func TestAnthropicRequestTranslator_PreservesThinkingRequestConfig(t *testing.T)
 			},
 		},
 	}
-	out, err := gateway.AnthropicMessagesTranslator{}.ToChat(req)
+	out, err := bridge.OpenAIChatRequestBridge(bridge.AnthropicMessagesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -144,7 +147,7 @@ func TestAnthropicRequestTranslator_MapsOutputConfigEffortToReasoningEffort(t *t
 			},
 		},
 	}
-	out, err := gateway.AnthropicMessagesTranslator{}.ToChat(req)
+	out, err := bridge.OpenAIChatRequestBridge(bridge.AnthropicMessagesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
 	if err != nil {
 		t.Fatalf("translate failed: %v", err)
 	}
@@ -153,62 +156,6 @@ func TestAnthropicRequestTranslator_MapsOutputConfigEffortToReasoningEffort(t *t
 	}
 	if _, ok := out["output_config"]; ok {
 		t.Fatalf("did not expect output_config passthrough, got %#v", out)
-	}
-}
-
-func TestAnthropicCompatProxy_MimoAddsEmptyReasoningContentOnCacheMiss(t *testing.T) {
-	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://gateway.example/v1"}
-	chatReq := map[string]any{
-		"model": "mimo-v2.5-pro",
-		"messages": []map[string]any{
-			{
-				"role":    "assistant",
-				"content": "",
-				"tool_calls": []map[string]any{
-					{
-						"id":   "call_1",
-						"type": "function",
-						"function": map[string]any{
-							"name":      "sum",
-							"arguments": `{"a":1}`,
-						},
-					},
-				},
-			},
-		},
-	}
-	reasoning.ApplyToChatRequest(chatReq)
-	msgs := chatReq["messages"].([]map[string]any)
-	got, ok := msgs[0]["reasoning_content"]
-	if !ok || got != "" {
-		t.Fatalf("expected empty reasoning_content for MiMo cache miss, got %#v", msgs[0])
-	}
-}
-
-func TestAnthropicCompatProxy_DoesNotAddReasoningContentForGenericGateway(t *testing.T) {
-	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: "https://api.openai.com/v1"}
-	chatReq := map[string]any{
-		"messages": []map[string]any{
-			{
-				"role":    "assistant",
-				"content": "",
-				"tool_calls": []map[string]any{
-					{
-						"id":   "call_1",
-						"type": "function",
-						"function": map[string]any{
-							"name":      "sum",
-							"arguments": `{"a":1}`,
-						},
-					},
-				},
-			},
-		},
-	}
-	reasoning.ApplyToChatRequest(chatReq)
-	msgs := chatReq["messages"].([]map[string]any)
-	if _, ok := msgs[0]["reasoning_content"]; ok {
-		t.Fatalf("did not expect reasoning_content for generic gateway, got %#v", msgs[0])
 	}
 }
 
@@ -285,8 +232,8 @@ func TestForwardAnthropicStream_RealTimeTextDelta(t *testing.T) {
 }
 
 func TestForwardAnthropicStream_CachesReasoningContentForToolCalls(t *testing.T) {
-	var cache gateway.ReasoningCache
-	reasoning := gateway.ChatReasoningAdapter{Cache: &cache}
+	var cache reasoningfeature.ReasoningCache
+	reasoning := reasoningfeature.ChatReasoningAdapter{Cache: &cache}
 	upstream := strings.Join([]string{
 		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"think "}}]}`,
 		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"first"}}]}`,

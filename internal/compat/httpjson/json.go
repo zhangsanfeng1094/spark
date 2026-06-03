@@ -1,4 +1,4 @@
-package gateway
+package httpjson
 
 import (
 	"encoding/json"
@@ -7,7 +7,23 @@ import (
 	"strings"
 )
 
-func WriteJSONError(w http.ResponseWriter, status int, msg string) {
+func DecodeRequest(r *http.Request) (map[string]any, string, error) {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	rawBody := string(data)
+	var req map[string]any
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, rawBody, err
+	}
+	if req == nil {
+		req = map[string]any{}
+	}
+	return req, rawBody, nil
+}
+
+func WriteError(w http.ResponseWriter, status int, msg string) {
 	if msg == "" {
 		msg = http.StatusText(status)
 	}
@@ -22,7 +38,7 @@ func WriteJSONError(w http.ResponseWriter, status int, msg string) {
 	_ = json.NewEncoder(w).Encode(errBody)
 }
 
-func WriteUpstreamErrorAsJSON(w http.ResponseWriter, upResp *http.Response) {
+func WriteUpstreamError(w http.ResponseWriter, upResp *http.Response) {
 	data, _ := io.ReadAll(upResp.Body)
 	msg := strings.TrimSpace(string(data))
 
@@ -37,5 +53,5 @@ func WriteUpstreamErrorAsJSON(w http.ResponseWriter, upResp *http.Response) {
 	if msg == "" {
 		msg = http.StatusText(upResp.StatusCode)
 	}
-	WriteJSONError(w, upResp.StatusCode, msg)
+	WriteError(w, upResp.StatusCode, msg)
 }

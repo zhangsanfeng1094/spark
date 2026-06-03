@@ -47,37 +47,37 @@
     {
       "from": "dashboard",
       "to": "profile",
-      "keys": ["Down", "Down", "Enter"],
+      "keys": ["Down", "Down", "Down", "Enter"],
       "markers": ["Manage profiles"],
       "selectedText": "Launch integration"
     },
     {
       "from": "dashboard",
       "to": "mcp.overview",
-      "keys": ["Down", "Down", "Down", "Enter"],
+      "keys": ["Down", "Down", "Down", "Down", "Enter"],
       "markers": ["Manage MCP servers"],
       "selectedText": "Launch integration"
     },
     {
       "from": "dashboard",
       "to": "skills.overview",
-      "keys": ["Down", "Down", "Down", "Down", "Enter"],
+      "keys": ["Down", "Down", "Down", "Down", "Down", "Enter"],
       "markers": ["Manage skills"],
       "selectedText": "Launch integration"
     },
     {
       "from": "mcp.overview",
       "to": "mcp.add",
-      "keys": ["Enter"],
-      "markers": ["Add", "New server"],
-      "selectedText": "Add"
+      "keys": ["A"],
+      "markers": ["[A] Add"],
+      "selectedText": "augment-context-engine"
     },
     {
       "from": "mcp.overview",
       "to": "mcp.transfer",
-      "keys": ["Down", "Enter"],
-      "markers": ["Transfer"],
-      "selectedText": "Add"
+      "keys": ["T"],
+      "markers": ["[T] Transfer"],
+      "selectedText": "augment-context-engine"
     },
     {
       "from": "skills.overview",
@@ -102,6 +102,18 @@
     }
   ],
   "candidates": {
+    "dashboard": [
+      ["Enter"],
+      ["Down", "Enter"],
+      ["Down", "Down", "Enter"],
+      ["Down", "Down", "Down", "Enter"],
+      ["Down", "Down", "Down", "Down", "Enter"],
+      ["Down", "Down", "Down", "Down", "Down", "Enter"],
+      ["Up", "Enter"],
+      ["Tab"],
+      ["Tab", "Enter"],
+      ["Esc"]
+    ],
     "default": [
       ["Enter"],
       ["Down", "Enter"],

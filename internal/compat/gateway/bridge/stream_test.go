@@ -1,22 +1,22 @@
-package gateway
+package bridge
 
 import (
 	"strings"
-	"testing"
 
-	"spark/internal/compat/client/codex"
+	"spark/internal/compat/gateway/core"
+	"testing"
 )
 
-func TestWriteCodexResponsesStreamFromOpenAIChatEdgeCases(t *testing.T) {
+func TestRouteStreamOpenAIChatEdgeCases(t *testing.T) {
 	tests := []struct {
 		name   string
 		stream string
-		check  func(t *testing.T, output string, result codex.ResponsesStreamResult)
+		check  func(t *testing.T, output string, result StreamResult)
 	}{
 		{
 			name:   "empty stream completes without upstream chunks",
 			stream: "",
-			check: func(t *testing.T, output string, result codex.ResponsesStreamResult) {
+			check: func(t *testing.T, output string, result StreamResult) {
 				if !strings.Contains(output, `"type":"response.created"`) {
 					t.Fatalf("missing response.created event: %s", output)
 				}
@@ -28,7 +28,7 @@ func TestWriteCodexResponsesStreamFromOpenAIChatEdgeCases(t *testing.T) {
 		{
 			name:   "done without content marks upstream done",
 			stream: "data: [DONE]\n",
-			check: func(t *testing.T, output string, result codex.ResponsesStreamResult) {
+			check: func(t *testing.T, output string, result StreamResult) {
 				if !result.SawDone {
 					t.Fatalf("expected SawDone, got %#v", result)
 				}
@@ -43,7 +43,7 @@ func TestWriteCodexResponsesStreamFromOpenAIChatEdgeCases(t *testing.T) {
 		{
 			name:   "usage only chunk preserves usage",
 			stream: `data: {"id":"chatcmpl_usage","model":"mimo-v2.5-pro","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}` + "\n",
-			check: func(t *testing.T, output string, result codex.ResponsesStreamResult) {
+			check: func(t *testing.T, output string, result StreamResult) {
 				if result.ChunkCount != 1 {
 					t.Fatalf("expected one valid chunk, got %#v", result)
 				}
@@ -60,7 +60,7 @@ func TestWriteCodexResponsesStreamFromOpenAIChatEdgeCases(t *testing.T) {
 		{
 			name:   "malformed data before first chunk is explicit error",
 			stream: "data: {not-json}\n",
-			check: func(t *testing.T, output string, result codex.ResponsesStreamResult) {
+			check: func(t *testing.T, output string, result StreamResult) {
 				if !result.HandledError || result.ScanErr == nil {
 					t.Fatalf("expected handled parse error, got %#v", result)
 				}
@@ -76,7 +76,7 @@ func TestWriteCodexResponsesStreamFromOpenAIChatEdgeCases(t *testing.T) {
 				`data: {not-json}`,
 				`data: [DONE]`,
 			}, "\n"),
-			check: func(t *testing.T, output string, result codex.ResponsesStreamResult) {
+			check: func(t *testing.T, output string, result StreamResult) {
 				if result.HandledError {
 					t.Fatalf("did not expect handled error after a valid chunk: %#v", result)
 				}
@@ -93,13 +93,17 @@ func TestWriteCodexResponsesStreamFromOpenAIChatEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var output strings.Builder
-			result := WriteCodexResponsesStreamFromOpenAIChat(&output, strings.NewReader(tt.stream), nil)
+			selection, err := SelectRoute(core.Route{Client: core.ClientCodexResponses, Target: core.TargetOpenAIChat})
+			if err != nil {
+				t.Fatalf("select route: %v", err)
+			}
+			result := selection.Stream(&output, strings.NewReader(tt.stream), nil)
 			tt.check(t, output.String(), result)
 		})
 	}
 }
 
-func TestWriteCodexResponsesStreamFromOpenAIChatOrdersCoreEvents(t *testing.T) {
+func TestRouteStreamOpenAIChatOrdersCoreEvents(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"id":"chatcmpl_order","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"think"}}]}`,
 		`data: {"id":"chatcmpl_order","model":"mimo-v2.5-pro","choices":[{"delta":{"content":"Hi"}}]}`,
@@ -109,7 +113,11 @@ func TestWriteCodexResponsesStreamFromOpenAIChatOrdersCoreEvents(t *testing.T) {
 	}, "\n")
 
 	var output strings.Builder
-	result := WriteCodexResponsesStreamFromOpenAIChat(&output, strings.NewReader(stream), nil)
+	selection, err := SelectRoute(core.Route{Client: core.ClientCodexResponses, Target: core.TargetOpenAIChat})
+	if err != nil {
+		t.Fatalf("select route: %v", err)
+	}
+	result := selection.Stream(&output, strings.NewReader(stream), nil)
 
 	if result.ChunkCount != 4 || !result.SawDone || !result.SawContentDelta || result.ReasoningLen != 5 {
 		t.Fatalf("unexpected stream result: %#v", result)
@@ -129,7 +137,48 @@ func TestWriteCodexResponsesStreamFromOpenAIChatOrdersCoreEvents(t *testing.T) {
 	}
 }
 
-func TestWriteCodexResponsesStreamFromAnthropicMessagesToolInputDeltas(t *testing.T) {
+func TestRouteStreamOpenAIChatDoesNotFallbackForHandledNonTextEvents(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"id":"chatcmpl_reasoning","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"think"}}]}`,
+		`data: {"id":"chatcmpl_reasoning","model":"mimo-v2.5-pro","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"sum","arguments":"{}"}}]}}]}`,
+	}, "\n")
+
+	var output strings.Builder
+	selection, err := SelectRoute(core.Route{Client: core.ClientCodexResponses, Target: core.TargetOpenAIChat})
+	if err != nil {
+		t.Fatalf("select route: %v", err)
+	}
+	result := selection.Stream(&output, strings.NewReader(stream), nil)
+	got := output.String()
+
+	if result.ReasoningLen != 5 {
+		t.Fatalf("expected reasoning event to be handled, got %#v", result)
+	}
+	if strings.Count(got, `"type":"response.output_item.added"`) != 2 {
+		t.Fatalf("expected one reasoning item and one function call item, got: %s", got)
+	}
+	if strings.Contains(got, `"type":"message"`) {
+		t.Fatalf("unexpected response fallback message for non-text events: %s", got)
+	}
+}
+
+func TestRouteStreamOpenAIChatRawJSONFallbackWritesOnce(t *testing.T) {
+	stream := `{"id":"chatcmpl_full","model":"mimo-v2.5-pro","choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+
+	var output strings.Builder
+	selection, err := SelectRoute(core.Route{Client: core.ClientCodexResponses, Target: core.TargetOpenAIChat})
+	if err != nil {
+		t.Fatalf("select route: %v", err)
+	}
+	selection.Stream(&output, strings.NewReader(stream), nil)
+	got := output.String()
+
+	if strings.Count(got, `"delta":"Hello"`) != 1 {
+		t.Fatalf("expected raw JSON fallback text once, got: %s", got)
+	}
+}
+
+func TestRouteStreamAnthropicMessagesToolInputDeltas(t *testing.T) {
 	stream := strings.Join([]string{
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_1","model":"claude","usage":{"input_tokens":4,"output_tokens":1}}}`,
@@ -146,7 +195,11 @@ func TestWriteCodexResponsesStreamFromAnthropicMessagesToolInputDeltas(t *testin
 	}, "\n")
 
 	var output strings.Builder
-	result := WriteCodexResponsesStreamFromAnthropicMessages(&output, strings.NewReader(stream), nil)
+	selection, err := SelectRoute(core.Route{Client: core.ClientCodexResponses, Target: core.TargetAnthropicMessages})
+	if err != nil {
+		t.Fatalf("select route: %v", err)
+	}
+	result := selection.Stream(&output, strings.NewReader(stream), nil)
 	got := output.String()
 
 	if result.ChunkCount != 6 {

@@ -6,25 +6,30 @@ Keep compatibility conversion layered without changing external behavior:
 - `ir`: provider-neutral request, response, stream event, tool, usage, and reasoning model
 - `target`: Compat IR <-> upstream provider protocol
 - `gateway`: route selection, HTTP entry, stream/non-stream dispatch, gateway errors
+- `httpjson`: shared JSON request/error helpers for compat HTTP surfaces
+- `logutil`: shared protocol-aware log redaction for compat payload structures
 - `integration`: upstream URL/key loading, HTTP client, retry policy, logs, local state
 
 ## Current State (Function Mapping)
 
 ### Codex Responses caller -> OpenAI Chat target
-- Gateway handler: `internal/compat/gateway.CodexResponsesHandler`
+- Gateway handler: `internal/compat/gateway.NewCodexResponsesHandler`
 - Integration executor: `internal/integrations.codexChatExecutor`
 - Retry strategy: `shouldRetryWithMinimalChatReq`, `minimalChatCompletionsRequest`, `ultraMinimalChatCompletionsRequest`
 - Client request adapter: `internal/compat/client/codex.ResponsesInbound`
 - Target adapter: `internal/compat/target/openai_chat.ChatOutbound`
+- Gateway bridge: `bridge.SelectRouteWithOptions` composes `CodexResponsesClientCodec` with `OpenAIChatTargetCodec`
 - Stream conversion: `target/openai_chat.ChatStreamEvents` -> `ir.StreamEvent` -> `client/codex.ResponsesStreamWriter`
 - Non-stream conversion: `target/openai_chat.ChatResponse` -> `ir.Response` -> `client/codex.ResponsesClientResponse`
-- Route: `gateway.Route{Client: codex_responses, Target: openai_chat}`
+- Route: `gateway/core.Route{Client: codex_responses, Target: openai_chat}`
+- Log redaction: `internal/compat/logutil.StructureJSONForLog`
 
 ### Anthropic Messages caller -> OpenAI Chat target
-- Gateway handler: `internal/compat/gateway.AnthropicMessagesHandler`
+- Gateway handler: `internal/compat/gateway.NewAnthropicMessagesToOpenAIChatHandler`
 - Integration executor: `internal/integrations.anthropicCompatProxy.postChatCompletions`
 - Client request adapter: `internal/compat/client/anthropic_messages.MessagesInbound`
 - Target adapter: `internal/compat/target/openai_chat.ChatOutbound`
+- Gateway bridge: `bridge.OpenAIChatRequestBridge` composes `AnthropicMessagesClientCodec` with `OpenAIChatTargetCodec`
 - Response writer: `target/openai_chat.ChatResponse` -> `client/anthropic_messages.MessagesClientResponse`
 - Stream writer: `client/anthropic_messages.WriteMessagesStream`
 
@@ -55,14 +60,14 @@ Keep compatibility conversion layered without changing external behavior:
   - golden tests for decode and malformed payloads remain identical
 
 ### Phase 2 (Introduce request translator interface)
-- Move `RequestTranslator` and route selection into `internal/compat/gateway`.
+- Move `RequestTranslator` into `internal/compat/gateway/core` and route selection into `internal/compat/gateway`.
 - Implement translators by composing client adapter + target adapter directly.
 - Response and stream paths use client writer functions through gateway orchestration.
 - Acceptance:
   - stream and non-stream snapshot tests unchanged
 
 ### Phase 3 (Executor boundary)
-- Add `ChatExecutor` abstraction:
+- Add `core.ChatExecutor` abstraction:
   - `Do(ctx, chatReq) (*http.Response, error)`
 - Move retry policy from handler into a codex-specific executor policy object.
 - Acceptance:
@@ -97,8 +102,8 @@ These are safe, low-scope improvements before large refactor:
    - keep scanner max-size setting and log if limit likely hit
 
 Current target locations:
-- `internal/compat/gateway/stream.go` for Codex Responses stream conversion
-- `internal/compat/gateway/anthropic_handler.go` for Anthropic Messages stream conversion
+- `internal/compat/gateway/bridge/stream.go` for bridge stream conversion
+- `internal/compat/gateway/anthropic_messages_handler.go` for Anthropic Messages stream conversion
 
 ## Test Strategy Per Phase
 - Unit tests:

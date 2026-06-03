@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"spark/internal/compat/gateway"
+	openai_chat_target "spark/internal/compat/target/openai_chat"
 )
 
 type ResponsesProxy struct {
@@ -68,25 +69,18 @@ func (p *ResponsesProxy) warnf(summary string) {
 }
 
 func (p *ResponsesProxy) handleResponses(w http.ResponseWriter, r *http.Request) {
-	reasoning := gateway.ChatReasoningAdapter{UpstreamBase: p.upstreamBase}
-	route := gateway.Route{Client: gateway.ClientCodexResponses, Target: gateway.TargetOpenAIChat}
 	executor := newCodexChatExecutor(p)
-	var prepare gateway.ChatRequestPreparer = reasoning.ApplyToChatRequest
 	if p.mode == ResponsesProxyModeAnthropicMessagesOnly {
-		route.Target = gateway.TargetAnthropicMessages
 		executor = newCodexAnthropicMessagesExecutor(p)
-		prepare = nil
 	}
-	handler := gateway.CodexResponsesHandler{
+	handler := gateway.NewCodexResponsesHandler(gateway.CodexResponsesOptions{
 		Mode:          string(p.mode),
-		Route:         route,
 		UpstreamBase:  p.upstreamBase,
 		Logf:          p.logf,
 		Warnf:         p.warnf,
 		PostResponses: p.postResponses,
 		Executor:      executor,
-		PrepareChat:   prepare,
-	}
+	})
 	handler.ServeHTTP(w, r)
 }
 
@@ -141,7 +135,7 @@ func ultraMinimalChatCompletionsRequest(chatReq map[string]any) map[string]any {
 		if role != "user" && role != "system" {
 			continue
 		}
-		c := gateway.NormalizeMessageContent(msgs[i]["content"])
+		c := openai_chat_target.NormalizeMessageContent(msgs[i]["content"])
 		if c != "" {
 			content = c
 			break
@@ -159,12 +153,4 @@ func ultraMinimalChatCompletionsRequest(chatReq map[string]any) map[string]any {
 
 func (p *ResponsesProxy) forwardResponsesPassthrough(w http.ResponseWriter, upResp *http.Response) {
 	gateway.ForwardResponsesPassthrough(w, upResp, p.logf)
-}
-
-func (p *ResponsesProxy) forwardNonStream(w http.ResponseWriter, upResp *http.Response) {
-	gateway.ForwardCodexNonStream(w, upResp, p.warnf, p.logf)
-}
-
-func (p *ResponsesProxy) forwardStream(w http.ResponseWriter, upResp *http.Response) {
-	gateway.ForwardCodexStream(w, upResp, p.warnf, p.logf)
 }

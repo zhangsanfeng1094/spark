@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"spark/internal/compat/gateway"
+	reasoningfeature "spark/internal/compat/gateway/features/reasoning"
 )
 
 type AnthropicProxy struct {
@@ -15,7 +16,7 @@ type AnthropicProxy struct {
 	upstreamBase   string
 	upstreamKey    string
 	preferredModel string
-	reasoningCache gateway.ReasoningCache
+	reasoningCache reasoningfeature.ReasoningCache
 }
 
 func StartAnthropicProxy(upstreamBase, upstreamKey, preferredModel string) (*AnthropicProxy, error) {
@@ -44,17 +45,13 @@ func (p *AnthropicProxy) logf(format string, args ...any) {
 }
 
 func (p *AnthropicProxy) handleMessages(w http.ResponseWriter, r *http.Request) {
-	reasoning := gateway.ChatReasoningAdapter{
-		UpstreamBase: p.upstreamBase,
-		Cache:        &p.reasoningCache,
-	}
-	handler := gateway.AnthropicMessagesHandler{
-		PreferredModel:        p.preferredModel,
-		Logf:                  p.logf,
-		PostChatCompletions:   p.postChatCompletions,
-		ApplyReasoningContent: reasoning.ApplyToChatRequest,
-		RememberReasoning:     reasoning.RememberForToolCallIDs,
-	}
+	handler := gateway.NewAnthropicMessagesToOpenAIChatHandler(gateway.AnthropicMessagesOptions{
+		PreferredModel:      p.preferredModel,
+		UpstreamBase:        p.upstreamBase,
+		ReasoningCache:      &p.reasoningCache,
+		Logf:                p.logf,
+		PostChatCompletions: p.postChatCompletions,
+	})
 	handler.ServeHTTP(w, r)
 }
 

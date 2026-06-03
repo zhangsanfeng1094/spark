@@ -89,17 +89,30 @@ internal/compat/
       request_out.go
       response_in.go
       stream_in.go
+      extractors.go
       OpenAI Chat Completions upstream target adapters.
 
   gateway/
-    codex_handler.go
-    anthropic_handler.go
-    route.go
-    stream.go
-    nonstream.go
-    pipeline.go
-    translators.go
-    HTTP routing and orchestration only. No protocol field mapping.
+    core/
+      route.go
+      pipeline.go
+      Route keys, route normalization, unsupported-route errors, and the
+      translated-chat execution pipeline.
+    features/
+      reasoning/
+        reasoning_cache.go
+        Tool-call reasoning echo cache and request adapter.
+    bridge/
+      registry.go
+      types.go
+      translators.go
+      Route selection plus client/target codec composition. This layer binds
+      client/* adapters to target/* adapters through IR; it should not grow
+      one full mapper for every client-target pair.
+    codex_responses_handler.go
+    anthropic_messages_handler.go
+    HTTP routing, concrete route registration, stream/non-stream forwarding,
+    and orchestration only. No protocol field mapping.
 ```
 
 ## Naming Rules
@@ -122,15 +135,26 @@ Target adapters:
 - Build upstream request JSON from `ir.Request`.
 - Parse upstream non-stream JSON into `ir.Response`.
 - Parse upstream stream chunks into `ir.StreamEvent`.
+- Own target-specific fallback extraction helpers used by retry and diagnostics.
 - Do not know which client called the gateway.
 
 Gateway:
 - Detect or receive the client protocol.
 - Select the target protocol from profile/API type.
+- Use protocol bridge selections from `gateway/bridge`.
 - Execute the upstream request.
 - For stream, convert upstream chunks to IR events and immediately write client
   events.
 - For non-stream, convert upstream JSON to IR response and then client JSON.
+
+Gateway bridge:
+- Compose `client/*` inbound adapters with `target/*` outbound adapters.
+- Compose target response adapters with client response writers for non-stream
+  responses.
+- Compose target stream parsers with client stream writers for route streams.
+- Implement `gateway/core.RequestTranslator`.
+- Do not import the gateway root package or own HTTP behavior.
+- Do not model conversion as `N clients * M targets` pairwise field mappers.
 
 IR:
 - Owns common concepts: messages, content blocks, tools, tool results,

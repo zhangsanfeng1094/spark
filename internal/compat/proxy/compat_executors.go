@@ -7,7 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	"spark/internal/compat/gateway"
+	"spark/internal/compat/gateway/core"
+	"spark/internal/compat/logutil"
 )
 
 type codexChatExecutor struct {
@@ -18,11 +19,11 @@ type codexAnthropicMessagesExecutor struct {
 	proxy *ResponsesProxy
 }
 
-func newCodexChatExecutor(proxy *ResponsesProxy) gateway.ChatExecutor {
+func newCodexChatExecutor(proxy *ResponsesProxy) core.Executor {
 	return codexChatExecutor{proxy: proxy}
 }
 
-func newCodexAnthropicMessagesExecutor(proxy *ResponsesProxy) gateway.ChatExecutor {
+func newCodexAnthropicMessagesExecutor(proxy *ResponsesProxy) core.Executor {
 	return codexAnthropicMessagesExecutor{proxy: proxy}
 }
 
@@ -68,7 +69,7 @@ func (e codexChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*htt
 
 	e.proxy.logf("retrying with minimal chat request due to status=%d body_bytes=%d", upResp.StatusCode, len(data))
 	minReq := minimalChatCompletionsRequest(chatReq)
-	e.proxy.logf("mapped chat request(minimal) structure=%s", gateway.StructureJSONForLog(minReq))
+	e.proxy.logf("mapped chat request(minimal) structure=%s", logutil.StructureJSONForLog(minReq))
 	upResp, err = e.proxy.postChatCompletions(ctx, minReq)
 	if err != nil {
 		e.proxy.logf("upstream minimal retry failed: %v", err)
@@ -98,7 +99,7 @@ func (e codexChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*htt
 
 	e.proxy.logf("retrying with ultra-minimal chat request due to status=%d body_bytes=%d", upResp.StatusCode, len(data))
 	ultraReq := ultraMinimalChatCompletionsRequest(chatReq)
-	e.proxy.logf("mapped chat request(ultra-minimal) structure=%s", gateway.StructureJSONForLog(ultraReq))
+	e.proxy.logf("mapped chat request(ultra-minimal) structure=%s", logutil.StructureJSONForLog(ultraReq))
 	upResp, err = e.proxy.postChatCompletions(ctx, ultraReq)
 	if err != nil {
 		e.proxy.logf("upstream ultra-minimal retry failed: %v", err)

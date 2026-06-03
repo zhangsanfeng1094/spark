@@ -1,4 +1,4 @@
-package gateway
+package openai_chat
 
 import (
 	"encoding/json"
@@ -7,26 +7,25 @@ import (
 	"time"
 
 	"spark/internal/compat/ir"
-	openai_chat_target "spark/internal/compat/target/openai_chat"
 )
 
-type ChatToolCall struct {
+type ToolCall struct {
 	ID        string
 	CallID    string
 	Name      string
 	Arguments string
 }
 
-type ChatToolCallDelta struct {
+type ToolCallDelta struct {
 	Index          int
 	CallID         string
 	Name           string
 	ArgumentsDelta string
 }
 
-func ExtractChatToolCalls(resp map[string]any) []ChatToolCall {
-	irResp := openai_chat_target.ChatResponse(resp)
-	out := make([]ChatToolCall, 0, len(irResp.Output))
+func ExtractToolCalls(resp map[string]any) []ToolCall {
+	irResp := ChatResponse(resp)
+	out := make([]ToolCall, 0, len(irResp.Output))
 	for i, block := range irResp.Output {
 		if block.Type != ir.BlockToolCall || block.ToolCall == nil || block.ToolCall.Name == "" {
 			continue
@@ -39,7 +38,7 @@ func ExtractChatToolCalls(resp map[string]any) []ChatToolCall {
 		if args == "" {
 			args = "{}"
 		}
-		out = append(out, ChatToolCall{
+		out = append(out, ToolCall{
 			ID:        id,
 			CallID:    id,
 			Name:      block.ToolCall.Name,
@@ -49,15 +48,15 @@ func ExtractChatToolCalls(resp map[string]any) []ChatToolCall {
 	return out
 }
 
-func ExtractChatToolCallDeltas(chunk map[string]any) []ChatToolCallDelta {
-	out := make([]ChatToolCallDelta, 0, 2)
-	for _, event := range openai_chat_target.ChatStreamEvents(chunk) {
+func ExtractToolCallDeltas(chunk map[string]any) []ToolCallDelta {
+	out := make([]ToolCallDelta, 0, 2)
+	for _, event := range ChatStreamEvents(chunk) {
 		if event.Type != ir.StreamEventContentDelta ||
 			event.Delta.Type != ir.BlockToolCall ||
 			event.Delta.ToolCall == nil {
 			continue
 		}
-		out = append(out, ChatToolCallDelta{
+		out = append(out, ToolCallDelta{
 			Index:          StreamToolIndex(event.Delta.Raw, len(out)),
 			CallID:         event.Delta.ToolCall.ID,
 			Name:           event.Delta.ToolCall.Name,
@@ -67,8 +66,8 @@ func ExtractChatToolCallDeltas(chunk map[string]any) []ChatToolCallDelta {
 	return out
 }
 
-func ExtractChatText(resp map[string]any) string {
-	irResp := openai_chat_target.ChatResponse(resp)
+func ExtractText(resp map[string]any) string {
+	irResp := ChatResponse(resp)
 	for _, block := range irResp.Output {
 		if block.Type == ir.BlockText && block.Text != "" {
 			return block.Text
@@ -82,8 +81,8 @@ func ExtractChatText(resp map[string]any) string {
 	return NormalizeMessageContent(c0["text"])
 }
 
-func ExtractChatDelta(chunk map[string]any) string {
-	for _, event := range openai_chat_target.ChatStreamEvents(chunk) {
+func ExtractDelta(chunk map[string]any) string {
+	for _, event := range ChatStreamEvents(chunk) {
 		if event.Type == ir.StreamEventContentDelta && event.Delta.Type == ir.BlockText && event.Delta.Text != "" {
 			return event.Delta.Text
 		}
@@ -101,13 +100,13 @@ func ExtractChatDelta(chunk map[string]any) string {
 	return NormalizeMessageContent(c0["text"])
 }
 
-func ExtractChatReasoningDelta(chunk map[string]any) string {
-	text, _ := ExtractChatReasoningDeltaValue(chunk)
+func ExtractReasoningDelta(chunk map[string]any) string {
+	text, _ := ExtractReasoningDeltaValue(chunk)
 	return text
 }
 
-func ExtractChatReasoningDeltaValue(chunk map[string]any) (string, bool) {
-	for _, event := range openai_chat_target.ChatStreamEvents(chunk) {
+func ExtractReasoningDeltaValue(chunk map[string]any) (string, bool) {
+	for _, event := range ChatStreamEvents(chunk) {
 		if event.Type == ir.StreamEventContentDelta &&
 			event.Delta.Type == ir.BlockReasoning &&
 			event.Delta.Reasoning != nil {
@@ -124,16 +123,16 @@ func ExtractChatReasoningDeltaValue(chunk map[string]any) (string, bool) {
 			return text, true
 		}
 	}
-	return ExtractChatReasoningTextValue(chunk)
+	return ExtractReasoningTextValue(chunk)
 }
 
-func ExtractChatReasoningText(resp map[string]any) string {
-	text, _ := ExtractChatReasoningTextValue(resp)
+func ExtractReasoningText(resp map[string]any) string {
+	text, _ := ExtractReasoningTextValue(resp)
 	return text
 }
 
-func ExtractChatReasoningTextValue(resp map[string]any) (string, bool) {
-	irResp := openai_chat_target.ChatResponse(resp)
+func ExtractReasoningTextValue(resp map[string]any) (string, bool) {
+	irResp := ChatResponse(resp)
 	for _, block := range irResp.Output {
 		if block.Type == ir.BlockReasoning && block.Reasoning != nil {
 			return block.Reasoning.Text, true
