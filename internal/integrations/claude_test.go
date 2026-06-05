@@ -1,10 +1,23 @@
 package integrations
 
 import (
+	"reflect"
 	"testing"
 
 	"spark/internal/config"
 )
+
+func TestClaudePromptArgs(t *testing.T) {
+	appendArgs := claudePromptArgs(&config.PromptInjection{Mode: config.PromptModeAppend, Content: "extra"})
+	if !reflect.DeepEqual(appendArgs, []string{"--append-system-prompt", "extra"}) {
+		t.Fatalf("unexpected append args: %v", appendArgs)
+	}
+
+	replaceArgs := claudePromptArgs(&config.PromptInjection{Mode: config.PromptModeReplace, Content: "base"})
+	if !reflect.DeepEqual(replaceArgs, []string{"--system-prompt", "base"}) {
+		t.Fatalf("unexpected replace args: %v", replaceArgs)
+	}
+}
 
 func TestResolveClaudeDirectToken(t *testing.T) {
 	p := &config.Profile{APIKey: "profile-key"}

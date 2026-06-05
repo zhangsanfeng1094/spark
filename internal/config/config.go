@@ -224,8 +224,9 @@ func SupportsOpenAIAPIType(v, target string) bool {
 }
 
 type IntegrationConfig struct {
-	Profile string            `json:"profile,omitempty"`
-	Aliases map[string]string `json:"aliases,omitempty"`
+	Profile          string            `json:"profile,omitempty"`
+	Aliases          map[string]string `json:"aliases,omitempty"`
+	ModelCatalogJSON string            `json:"model_catalog_json,omitempty"`
 }
 
 type History struct {
@@ -241,6 +242,7 @@ type RootConfig struct {
 	Integrations   map[string]*IntegrationConfig `json:"integrations"`
 	History        History                       `json:"history,omitempty"`
 	McpServers     map[string]*McpServerConfig   `json:"mcp_servers,omitempty"`
+	Prompts        PromptConfig                  `json:"prompts,omitempty"`
 }
 
 func defaultConfig() *RootConfig {
@@ -254,6 +256,11 @@ func defaultConfig() *RootConfig {
 		},
 		Integrations: map[string]*IntegrationConfig{},
 		McpServers:   map[string]*McpServerConfig{},
+		Prompts: PromptConfig{
+			Enabled:  boolPtr(false),
+			Presets:  map[string]*PromptPreset{},
+			Bindings: []PromptBinding{},
+		},
 	}
 }
 
@@ -320,6 +327,7 @@ func Normalize(cfg *RootConfig) {
 	if cfg.McpServers == nil {
 		cfg.McpServers = map[string]*McpServerConfig{}
 	}
+	normalizePromptConfig(&cfg.Prompts)
 	for _, ic := range cfg.Integrations {
 		if ic == nil {
 			continue
@@ -327,6 +335,7 @@ func Normalize(cfg *RootConfig) {
 		if ic.Profile == "" {
 			ic.Profile = cfg.DefaultProfile
 		}
+		ic.ModelCatalogJSON = strings.TrimSpace(ic.ModelCatalogJSON)
 	}
 	for _, p := range cfg.Profiles {
 		if p == nil {

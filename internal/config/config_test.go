@@ -22,6 +22,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		Models:        []string{"gpt-4.1-mini", "gpt-4.1"},
 		DefaultModel:  "gpt-4.1",
 	}
+	cfg.Integrations["codex"] = &IntegrationConfig{
+		Profile:          "work",
+		ModelCatalogJSON: " /home/me/.codex/custom_models.json ",
+	}
 	cfg.UpsertModelHistory("gpt-4.1-mini")
 	cfg.SetMcpServer("docs", &McpServerConfig{
 		Command: "npx",
@@ -52,6 +56,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got.Integration("codex").Profile != "work" {
 		t.Fatalf("integration profile mismatch, got %q", got.Integration("codex").Profile)
+	}
+	if got.Integration("codex").ModelCatalogJSON != "/home/me/.codex/custom_models.json" {
+		t.Fatalf("integration model catalog mismatch, got %q", got.Integration("codex").ModelCatalogJSON)
 	}
 	if !reflect.DeepEqual(got.Profiles["work"].Models, []string{"gpt-4.1-mini", "gpt-4.1"}) {
 		t.Fatalf("profile models mismatch: %#v", got.Profiles["work"].Models)

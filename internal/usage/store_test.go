@@ -75,6 +75,45 @@ func TestQueryWindowsUsesSQLiteAggregates(t *testing.T) {
 	}
 }
 
+func TestQueryWindowsWithFilterRestrictsModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.db")
+	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	records := []Record{
+		{Timestamp: now.Add(-2 * time.Hour), Client: "codex", Model: "glm-5.1", InputTokens: 100, OutputTokens: 50},
+		{Timestamp: now.Add(-1 * time.Hour), Client: "codex", Model: "gpt-5", TotalTokens: 300},
+		{Timestamp: now.AddDate(0, 0, -1), Client: "claude", Model: "glm-5.1", TotalTokens: 40},
+	}
+	for _, record := range records {
+		if err := Append(path, record); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	windows, count, err := QueryWindowsWithFilter(path, now, QueryFilter{Model: " glm-5.1 "})
+	if err != nil {
+		t.Fatalf("QueryWindowsWithFilter failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+	if got := windows[WindowAll].Summary.TotalTokens; got != 190 {
+		t.Fatalf("all total = %d, want 190", got)
+	}
+	if got := windows[WindowToday].Summary.TotalTokens; got != 150 {
+		t.Fatalf("today total = %d, want 150", got)
+	}
+	for _, row := range windows[WindowAll].Breakdowns {
+		if row.Model != "glm-5.1" {
+			t.Fatalf("unexpected model in breakdown: %#v", row)
+		}
+	}
+	for _, row := range windows[WindowAll].HeavyRequests {
+		if row.Model != "glm-5.1" {
+			t.Fatalf("unexpected model in heavy requests: %#v", row)
+		}
+	}
+}
+
 func TestSummarizeForClients(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	records := []Record{

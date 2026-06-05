@@ -5,9 +5,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"spark/internal/config"
 	"spark/internal/skills"
+	"spark/internal/usage"
 )
 
 func TestProfileNamesSorted(t *testing.T) {
@@ -193,20 +195,26 @@ func TestResolveModelsStripsNUL(t *testing.T) {
 	}
 }
 
-func TestRootCmdIncludesSkillCommand(t *testing.T) {
+func TestRootCmdIncludesSkillAndPromptCommands(t *testing.T) {
 	root := NewRootCmd()
 	if root.CommandPath() != "spark" {
 		t.Fatalf("unexpected root path: %q", root.CommandPath())
 	}
-	found := false
+	foundSkill := false
+	foundPrompt := false
 	for _, cmd := range root.Commands() {
 		if cmd.Name() == "skill" {
-			found = true
-			break
+			foundSkill = true
+		}
+		if cmd.Name() == "prompt" {
+			foundPrompt = true
 		}
 	}
-	if !found {
+	if !foundSkill {
 		t.Fatalf("expected skill command to be registered")
+	}
+	if !foundPrompt {
+		t.Fatalf("expected prompt command to be registered")
 	}
 }
 
@@ -295,6 +303,44 @@ func TestDebugNestedSnapshotsRenderSubscreens(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUsageCommandModelFilterOmitsOtherModels(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path, err := usage.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath failed: %v", err)
+	}
+	now := time.Now()
+	for _, record := range []usage.Record{
+		{Timestamp: now.Add(-1 * time.Hour), Client: "codex", Model: "glm-5.1", InputTokens: 100, OutputTokens: 50},
+		{Timestamp: now.Add(-30 * time.Minute), Client: "claude", Model: "other-model", TotalTokens: 900},
+	} {
+		if err := usage.Append(path, record); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"usage", "--model", "glm-5.1"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{"Model: glm-5.1", "glm-5.1", "150"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected usage output to contain %q, got %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"other-model", "900"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("expected usage output to omit %q, got %q", unwanted, got)
+		}
 	}
 }
 

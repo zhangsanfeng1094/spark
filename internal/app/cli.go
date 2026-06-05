@@ -39,10 +39,33 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newMcpCmd())
 	root.AddCommand(newSkillCmd())
+	root.AddCommand(newUsageCmd())
 	root.AddCommand(newProfileCmd())
+	root.AddCommand(newPromptCmd())
 	root.AddCommand(newDebugCmd())
 	root.AddCommand(newVersionCmd())
 	return root
+}
+
+func newUsageCmd() *cobra.Command {
+	var modelFlag string
+
+	cmd := &cobra.Command{
+		Use:   "usage",
+		Short: "Show recorded compat proxy token usage",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			model := strings.TrimSpace(modelFlag)
+			snapshot, err := loadTokenUsageSnapshotWithFilter(usage.QueryFilter{Model: model})
+			if err != nil {
+				return err
+			}
+			printUsageReport(cmd, snapshot, model)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&modelFlag, "model", "", "Only show usage for this model")
+	return cmd
 }
 
 func newLaunchCmd() *cobra.Command {
@@ -152,8 +175,20 @@ func newProfileCmd() *cobra.Command {
 	return cmd
 }
 
+func newPromptCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "prompt",
+		Short: "Manage prompt presets and bindings",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return managePrompts()
+		},
+	}
+	return cmd
+}
+
 func interactiveMenuOptions() []string {
-	return []string{"Launch integration", "Launch with profile", "Token usage", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
+	return []string{"Launch integration", "Launch with profile", "Token usage", "Manage profiles", "Manage prompts", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
 }
 
 func interactiveMenuDescriptions() map[string]string {
@@ -162,6 +197,7 @@ func interactiveMenuDescriptions() map[string]string {
 		"Launch with profile": "Start Spark with the selected coding agent integration after choosing a profile for this launch.",
 		"Token usage":         "Review recorded compat proxy token usage with fixed time filters.",
 		"Manage profiles":     "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
+		"Manage prompts":      "Manage prompt presets, client bindings, and append or replace injection modes.",
 		"Manage MCP servers":  "Manage MCP server entries, health probes, and transport settings.",
 		"Manage skills":       "Browse installed skills, add new ones, and toggle them on or off.",
 		"Show config file":    "Print the active Spark config path after leaving the dashboard.",
@@ -200,8 +236,39 @@ func newDebugSnapshotCmd() *cobra.Command {
 	cmd.AddCommand(newDebugDashboardSnapshotCmd())
 	cmd.AddCommand(newDebugTokenUsageSnapshotCmd())
 	cmd.AddCommand(newDebugProfileSnapshotCmd())
+	cmd.AddCommand(newDebugPromptSnapshotCmd())
 	cmd.AddCommand(newDebugMCPSnapshotCmd())
 	cmd.AddCommand(newDebugSkillSnapshotCmd())
+	return cmd
+}
+
+func newDebugPromptSnapshotCmd() *cobra.Command {
+	var width int
+	var height int
+	var state string
+	var color bool
+
+	cmd := &cobra.Command{
+		Use:   "prompt",
+		Short: "Render the prompt manager without starting the TUI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			view, err := tui.RenderPromptManagerSnapshot(cfg, width, height, state)
+			if err != nil {
+				return err
+			}
+			writeSnapshot(cmd, view, color)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&width, "width", 120, "Snapshot terminal width")
+	cmd.Flags().IntVar(&height, "height", 32, "Snapshot terminal height")
+	cmd.Flags().StringVar(&state, "state", "overview", "State: overview, disabled, bindings, binding-disabled, add-preset, add-binding, edit-current, error")
+	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
 	return cmd
 }
 
@@ -412,6 +479,10 @@ func runInteractive() error {
 			if err := manageProfiles(); err != nil {
 				return err
 			}
+		case "Manage prompts":
+			if err := managePrompts(); err != nil {
+				return err
+			}
 		case "Manage MCP servers":
 			if err := manageMcpServers(); err != nil {
 				return err
@@ -430,12 +501,16 @@ func runInteractive() error {
 }
 
 func loadTokenUsageSnapshot() (tui.TokenUsageSnapshot, error) {
+	return loadTokenUsageSnapshotWithFilter(usage.QueryFilter{})
+}
+
+func loadTokenUsageSnapshotWithFilter(filter usage.QueryFilter) (tui.TokenUsageSnapshot, error) {
 	path, err := usage.DefaultPath()
 	if err != nil {
 		return tui.TokenUsageSnapshot{}, err
 	}
 	now := time.Now()
-	windows, count, err := usage.QueryWindows(path, now)
+	windows, count, err := usage.QueryWindowsWithFilter(path, now, filter)
 	if err != nil {
 		return tui.TokenUsageSnapshot{}, err
 	}
@@ -457,6 +532,102 @@ func loadTokenUsageSnapshot() (tui.TokenUsageSnapshot, error) {
 		})
 	}
 	return snapshot, nil
+}
+
+func printUsageReport(cmd *cobra.Command, snapshot tui.TokenUsageSnapshot, model string) {
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "Token usage")
+	if model != "" {
+		fmt.Fprintf(out, "Model: %s\n", model)
+	}
+	fmt.Fprintf(out, "Records: %s\n", formatUsageInt(snapshot.RecordCount))
+	fmt.Fprintf(out, "Source: %s\n\n", snapshot.SourcePath)
+
+	fmt.Fprintf(out, "%-8s %10s %12s %12s %12s %12s\n", "Window", "Requests", "Tokens", "Input", "Output", "Cached")
+	for _, window := range snapshot.Windows {
+		summary := window.Summary
+		fmt.Fprintf(out, "%-8s %10s %12s %12s %12s %12s\n",
+			window.Label,
+			formatUsageInt(summary.Requests),
+			formatUsageInt(summary.TotalTokens),
+			formatUsageInt(summary.InputTokens),
+			formatUsageInt(summary.OutputTokens),
+			formatUsageInt(summary.CachedInputTokens),
+		)
+	}
+
+	window := usageReportWindow(snapshot)
+	if window.Summary.Requests == 0 {
+		fmt.Fprintln(out, "\nNo recorded compat proxy usage for this filter.")
+		return
+	}
+
+	fmt.Fprintln(out, "\nBreakdown by source and model")
+	fmt.Fprintf(out, "%-12s %-28s %10s %12s %12s %12s %12s\n", "Source", "Model", "Requests", "Tokens", "Input", "Output", "Cached")
+	for _, row := range window.Breakdowns {
+		fmt.Fprintf(out, "%-12s %-28s %10s %12s %12s %12s %12s\n",
+			fitUsageCell(row.Client, 12),
+			fitUsageCell(row.Model, 28),
+			formatUsageInt(row.Requests),
+			formatUsageInt(row.TotalTokens),
+			formatUsageInt(row.InputTokens),
+			formatUsageInt(row.OutputTokens),
+			formatUsageInt(row.CachedInputTokens),
+		)
+	}
+
+	if len(window.HeavyRequests) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "\nLargest requests")
+	fmt.Fprintf(out, "%-19s %-12s %-28s %12s %12s %12s\n", "Time", "Source", "Model", "Tokens", "In/Out", "Cached")
+	for _, row := range window.HeavyRequests {
+		fmt.Fprintf(out, "%-19s %-12s %-28s %12s %12s %12s\n",
+			row.Timestamp.Format("2006-01-02 15:04"),
+			fitUsageCell(row.Client, 12),
+			fitUsageCell(row.Model, 28),
+			formatUsageInt(row.TotalTokens),
+			formatUsageInt(row.InputTokens)+"/"+formatUsageInt(row.OutputTokens),
+			formatUsageInt(row.CachedInputTokens),
+		)
+	}
+}
+
+func usageReportWindow(snapshot tui.TokenUsageSnapshot) tui.TokenUsageWindow {
+	if len(snapshot.Windows) == 0 {
+		return tui.TokenUsageWindow{}
+	}
+	for _, window := range snapshot.Windows {
+		if window.Window == string(usage.WindowAll) {
+			return window
+		}
+	}
+	return snapshot.Windows[len(snapshot.Windows)-1]
+}
+
+func formatUsageInt(v int) string {
+	s := fmt.Sprintf("%d", v)
+	parts := []string{}
+	for len(s) > 3 {
+		parts = append(parts, s[len(s)-3:])
+		s = s[:len(s)-3]
+	}
+	parts = append(parts, s)
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.Join(parts, ",")
+}
+
+func fitUsageCell(value string, width int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= width {
+		return value
+	}
+	if width <= 1 {
+		return value[:width]
+	}
+	return value[:width-1] + "~"
 }
 
 func usageWindowLabel(window usage.Window) string {
@@ -640,6 +811,20 @@ func launchIntegration(name string, opts LaunchOptions) error {
 	}
 
 	fmt.Printf("Launching %s with %s using profile %s\n", r.String(), models[0], profileName)
+	prompt, err := cfg.ResolvePromptInjection(strings.ToLower(name), models[0])
+	if err != nil {
+		return err
+	}
+	integration := cfg.Integration(name)
+	if cr, ok := r.(integrations.ConfiguredPromptRunner); ok {
+		return cr.RunWithConfigAndPrompt(profile, integration, models[0], opts.PassArgs, prompt)
+	}
+	if prompt != nil {
+		if pr, ok := r.(integrations.PromptRunner); ok {
+			return pr.RunWithPrompt(profile, models[0], opts.PassArgs, prompt)
+		}
+		return fmt.Errorf("prompt binding exists for %s/%s, but integration does not support prompt injection", strings.ToLower(name), models[0])
+	}
 	return r.Run(profile, models[0], opts.PassArgs)
 }
 
@@ -649,6 +834,14 @@ func manageProfiles() error {
 		return err
 	}
 	return tui.ManageProfilesDashboard(cfg)
+}
+
+func managePrompts() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	return tui.ManagePromptsDashboard(cfg)
 }
 
 func manageSkills() error {

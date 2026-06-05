@@ -206,41 +206,22 @@ func (m *pmModel) renderRightPane(height int) string {
 			val = strings.Repeat("*", len(val))
 		}
 
-		displayVal := truncateDisplay(m.decorateFieldValue(i, val), m.inputWidth-2)
-		if m.focusArea == pmFocusFields && i == m.focusField && !f.readOnly {
-			if f.cursor >= len(val) {
-				displayVal = truncateDisplay(displayVal+"█", m.inputWidth-2)
-			} else {
-				r := []rune(val)
-				displayVal = truncateDisplay(string(r[:f.cursor])+"█"+string(r[f.cursor:]), m.inputWidth-2)
-			}
+		focused := m.focusArea == pmFocusFields && i == m.focusField
+		decoratedValue := m.decorateFieldValue(i, val)
+		cursor := f.cursor
+		if focused && !f.readOnly && f.cursor >= len([]rune(val)) {
+			cursor = len([]rune(decoratedValue))
 		}
-
-		currentInputStyle := pmCompactInputStyle.Copy().Width(m.inputWidth)
-		if m.focusArea == pmFocusFields && i == m.focusField {
-			currentInputStyle = pmCompactFocusedInputStyle.Copy().Width(m.inputWidth)
-		}
-		if f.readOnly {
-			currentInputStyle = pmCompactReadOnlyInputStyle.Copy().Width(m.inputWidth)
-			if m.focusArea == pmFocusFields && i == m.focusField {
-				currentInputStyle = pmCompactFocusedInputStyle.Copy().Width(m.inputWidth)
-			}
-		}
-		labelStyle := pmLabelStyle
-		if m.focusArea == pmFocusFields && i == m.focusField {
-			labelStyle = pmFocusedLabelStyle
-		}
-		label := f.label
-		if f.required {
-			label = "* " + label
-		}
-		divider := lipgloss.NewStyle().Foreground(colorBorder).Render("│")
-
-		row := lipgloss.JoinHorizontal(lipgloss.Center,
-			labelStyle.Render(label),
-			divider,
-			currentInputStyle.Render(displayVal),
-		)
+		row := renderCompactFormRow(compactFormRowOptions{
+			Label:      f.label,
+			Value:      decoratedValue,
+			Width:      m.inputWidth,
+			Focused:    focused,
+			ReadOnly:   f.readOnly,
+			Required:   f.required,
+			Cursor:     cursor,
+			ShowCursor: focused && !f.readOnly,
+		})
 		rowH := lipgloss.Height(row)
 		m.fieldStartRelY[i] = relY
 		m.fieldEndRelY[i] = relY + rowH - 1

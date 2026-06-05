@@ -89,6 +89,10 @@ func selectClaudeDirectAuth(token, tokenSource string) (string, string, string, 
 }
 
 func (c *Claude) Run(profile *config.Profile, model string, args []string) error {
+	return c.RunWithPrompt(profile, model, args, nil)
+}
+
+func (c *Claude) RunWithPrompt(profile *config.Profile, model string, args []string, prompt *config.PromptInjection) error {
 	claudePath, err := c.findPath()
 	if err != nil {
 		return fmt.Errorf("claude is not installed, install from https://code.claude.com/docs/en/quickstart")
@@ -101,6 +105,7 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 	if effectiveModel != "" {
 		cmdArgs = append(cmdArgs, "--model", effectiveModel)
 	}
+	cmdArgs = append(cmdArgs, claudePromptArgs(prompt)...)
 	cmdArgs = append(cmdArgs, args...)
 	baseURL := anthropicBaseURL(profile)
 	apiKey := ""
@@ -158,4 +163,18 @@ func (c *Claude) Run(profile *config.Profile, model string, args []string) error
 		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
 	}
 	return runCmd(claudePath, cmdArgs, env)
+}
+
+func claudePromptArgs(prompt *config.PromptInjection) []string {
+	if prompt == nil {
+		return nil
+	}
+	switch prompt.Mode {
+	case config.PromptModeReplace:
+		return []string{"--system-prompt", prompt.Content}
+	case config.PromptModeAppend:
+		return []string{"--append-system-prompt", prompt.Content}
+	default:
+		return nil
+	}
 }

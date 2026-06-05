@@ -26,6 +26,41 @@ func TestCodexArgs(t *testing.T) {
 	}
 }
 
+func TestCodexPromptArgs(t *testing.T) {
+	c := &Codex{}
+
+	appendArgs := c.argsWithPrompt("gpt-5", "https://api.example.com/v1", []string{"resume"}, &config.PromptInjection{
+		Mode:    config.PromptModeAppend,
+		Content: "extra instructions\n",
+	})
+	if !reflect.DeepEqual(appendArgs[len(appendArgs)-3:], []string{"-c", `developer_instructions="extra instructions\n"`, "resume"}) {
+		t.Fatalf("unexpected append prompt args: %v", appendArgs)
+	}
+
+	replaceArgs := c.argsWithPrompt("gpt-5", "https://api.example.com/v1", nil, &config.PromptInjection{
+		Mode: config.PromptModeReplace,
+		Path: "/tmp/prompt.md",
+	})
+	if !reflect.DeepEqual(replaceArgs[len(replaceArgs)-2:], []string{"-c", `model_instructions_file="/tmp/prompt.md"`}) {
+		t.Fatalf("unexpected replace prompt args: %v", replaceArgs)
+	}
+}
+
+func TestCodexModelCatalogArgs(t *testing.T) {
+	c := &Codex{}
+	got := c.argsWithConfigAndPrompt("glm-5.1", "https://api.example.com/v1", &config.IntegrationConfig{
+		ModelCatalogJSON: " /home/me/.codex/custom_models.json ",
+	}, []string{"resume"}, nil)
+	wantTail := []string{
+		"-c", `model_catalog_json="/home/me/.codex/custom_models.json"`,
+		"-m", "glm-5.1",
+		"resume",
+	}
+	if !reflect.DeepEqual(got[len(got)-len(wantTail):], wantTail) {
+		t.Fatalf("unexpected model catalog args tail: %v", got)
+	}
+}
+
 func TestCodexEnv(t *testing.T) {
 	profile := &config.Profile{
 		OpenAIOrg:     "org-test",

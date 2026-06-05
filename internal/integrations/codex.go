@@ -17,6 +17,14 @@ func (c *Codex) String() string { return "Codex" }
 const codexProviderName = "spark"
 
 func (c *Codex) args(model, baseURL string, extra []string) []string {
+	return c.argsWithConfigAndPrompt(model, baseURL, nil, extra, nil)
+}
+
+func (c *Codex) argsWithPrompt(model, baseURL string, extra []string, prompt *config.PromptInjection) []string {
+	return c.argsWithConfigAndPrompt(model, baseURL, nil, extra, prompt)
+}
+
+func (c *Codex) argsWithConfigAndPrompt(model, baseURL string, integration *config.IntegrationConfig, extra []string, prompt *config.PromptInjection) []string {
 	cmdArgs := []string{
 		"-c", fmt.Sprintf(`model_providers.%s.name="Spark"`, codexProviderName),
 		"-c", fmt.Sprintf(`model_providers.%s.base_url="%s"`, codexProviderName, baseURL),
@@ -25,14 +33,26 @@ func (c *Codex) args(model, baseURL string, extra []string) []string {
 		"-c", fmt.Sprintf(`model_providers.%s.requires_openai_auth=false`, codexProviderName),
 		"-c", fmt.Sprintf(`model_provider="%s"`, codexProviderName),
 	}
+	if integration != nil && strings.TrimSpace(integration.ModelCatalogJSON) != "" {
+		cmdArgs = append(cmdArgs, "-c", fmt.Sprintf("model_catalog_json=%q", strings.TrimSpace(integration.ModelCatalogJSON)))
+	}
 	if model != "" {
 		cmdArgs = append(cmdArgs, "-m", model)
 	}
+	cmdArgs = append(cmdArgs, codexPromptArgs(prompt)...)
 	cmdArgs = append(cmdArgs, extra...)
 	return cmdArgs
 }
 
 func (c *Codex) Run(profile *config.Profile, model string, args []string) error {
+	return c.RunWithPrompt(profile, model, args, nil)
+}
+
+func (c *Codex) RunWithPrompt(profile *config.Profile, model string, args []string, prompt *config.PromptInjection) error {
+	return c.RunWithConfigAndPrompt(profile, nil, model, args, prompt)
+}
+
+func (c *Codex) RunWithConfigAndPrompt(profile *config.Profile, integration *config.IntegrationConfig, model string, args []string, prompt *config.PromptInjection) error {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return fmt.Errorf("codex is not installed, install with: npm install -g @openai/codex")
 	}
@@ -79,8 +99,22 @@ func (c *Codex) Run(profile *config.Profile, model string, args []string) error 
 		fmt.Fprintln(os.Stderr, routeLine)
 	}
 
-	cmdArgs := c.args(model, envBaseURL, args)
+	cmdArgs := c.argsWithConfigAndPrompt(model, envBaseURL, integration, args, prompt)
 	return runCmd("codex", cmdArgs, codexEnv(profile, envKey))
+}
+
+func codexPromptArgs(prompt *config.PromptInjection) []string {
+	if prompt == nil {
+		return nil
+	}
+	switch prompt.Mode {
+	case config.PromptModeReplace:
+		return []string{"-c", fmt.Sprintf("model_instructions_file=%q", prompt.Path)}
+	case config.PromptModeAppend:
+		return []string{"-c", fmt.Sprintf(`developer_instructions=%q`, prompt.Content)}
+	default:
+		return nil
+	}
 }
 
 func resolveOpenAIAPIKey(profileKey string) (key string, source string) {

@@ -7,9 +7,13 @@ func TestInteractiveMenuOptionsIncludeSkills(t *testing.T) {
 	foundSkills := false
 	foundTokenUsage := false
 	foundLaunchWithProfile := false
+	foundPrompts := false
 	for _, option := range options {
 		if option == "Manage skills" {
 			foundSkills = true
+		}
+		if option == "Manage prompts" {
+			foundPrompts = true
 		}
 		if option == "Token usage" {
 			foundTokenUsage = true
@@ -26,5 +30,8 @@ func TestInteractiveMenuOptionsIncludeSkills(t *testing.T) {
 	}
 	if !foundLaunchWithProfile {
 		t.Fatalf("expected Launch with profile option, got %v", options)
+	}
+	if !foundPrompts {
+		t.Fatalf("expected Manage prompts option, got %v", options)
 	}
 }
