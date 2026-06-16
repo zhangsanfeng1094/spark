@@ -224,8 +224,9 @@ func SupportsOpenAIAPIType(v, target string) bool {
 }
 
 type IntegrationConfig struct {
-	Profile string            `json:"profile,omitempty"`
-	Aliases map[string]string `json:"aliases,omitempty"`
+	Profile          string            `json:"profile,omitempty"`
+	Aliases          map[string]string `json:"aliases,omitempty"`
+	ModelCatalogJSON string            `json:"model_catalog_json,omitempty"`
 }
 
 type History struct {
@@ -235,12 +236,14 @@ type History struct {
 }
 
 type RootConfig struct {
-	Version        int                           `json:"version"`
-	DefaultProfile string                        `json:"default_profile"`
-	Profiles       map[string]*Profile           `json:"profiles"`
-	Integrations   map[string]*IntegrationConfig `json:"integrations"`
-	History        History                       `json:"history,omitempty"`
-	McpServers     map[string]*McpServerConfig   `json:"mcp_servers,omitempty"`
+	Version            int                           `json:"version"`
+	DefaultProfile     string                        `json:"default_profile"`
+	DefaultIntegration string                        `json:"default_integration,omitempty"`
+	Profiles           map[string]*Profile           `json:"profiles"`
+	Integrations       map[string]*IntegrationConfig `json:"integrations"`
+	History            History                       `json:"history,omitempty"`
+	McpServers         map[string]*McpServerConfig   `json:"mcp_servers,omitempty"`
+	Prompts            PromptConfig                  `json:"prompts,omitempty"`
 }
 
 func defaultConfig() *RootConfig {
@@ -254,6 +257,11 @@ func defaultConfig() *RootConfig {
 		},
 		Integrations: map[string]*IntegrationConfig{},
 		McpServers:   map[string]*McpServerConfig{},
+		Prompts: PromptConfig{
+			Enabled:  boolPtr(false),
+			Presets:  map[string]*PromptPreset{},
+			Bindings: []PromptBinding{},
+		},
 	}
 }
 
@@ -305,6 +313,7 @@ func Normalize(cfg *RootConfig) {
 	if cfg.DefaultProfile == "" {
 		cfg.DefaultProfile = "default"
 	}
+	cfg.DefaultIntegration = strings.ToLower(strings.TrimSpace(cfg.DefaultIntegration))
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]*Profile{}
 	}
@@ -320,6 +329,7 @@ func Normalize(cfg *RootConfig) {
 	if cfg.McpServers == nil {
 		cfg.McpServers = map[string]*McpServerConfig{}
 	}
+	normalizePromptConfig(&cfg.Prompts)
 	for _, ic := range cfg.Integrations {
 		if ic == nil {
 			continue
@@ -327,6 +337,7 @@ func Normalize(cfg *RootConfig) {
 		if ic.Profile == "" {
 			ic.Profile = cfg.DefaultProfile
 		}
+		ic.ModelCatalogJSON = strings.TrimSpace(ic.ModelCatalogJSON)
 	}
 	for _, p := range cfg.Profiles {
 		if p == nil {
@@ -354,6 +365,25 @@ func NormalizeModels(in []string) []string {
 		out = append(out, m)
 	}
 	return out
+}
+
+func EffectiveProfileModels(profile *Profile) []string {
+	if profile == nil {
+		return nil
+	}
+	models := NormalizeModels(profile.Models)
+	defaultModel := NormalizeModel(profile.DefaultModel)
+	if defaultModel == "" {
+		return models
+	}
+	ordered := make([]string, 0, len(models)+1)
+	ordered = append(ordered, defaultModel)
+	for _, model := range models {
+		if model != defaultModel {
+			ordered = append(ordered, model)
+		}
+	}
+	return ordered
 }
 
 func NormalizeModel(in string) string {

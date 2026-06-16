@@ -14,6 +14,7 @@ type StreamResult struct {
 	SawDone          bool
 	SawContentDelta  bool
 	ReasoningLen     int
+	ReasoningSamples []string
 	FirstValidChunk  string
 	LastValidChunk   string
 	Usage            map[string]any

@@ -208,3 +208,23 @@ func isTerminalFile(f *os.File) bool {
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
+
+// writePromptTempFile writes content to a temp file and returns the path.
+// The caller should defer os.Remove(path).
+func writePromptTempFile(content string) (string, error) {
+	f, err := os.CreateTemp("", "spark-prompt-*.md")
+	if err != nil {
+		return "", fmt.Errorf("create temp prompt file: %w", err)
+	}
+	path := f.Name()
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		os.Remove(path)
+		return "", fmt.Errorf("write temp prompt file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("close temp prompt file: %w", err)
+	}
+	return path, nil
+}

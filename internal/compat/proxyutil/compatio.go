@@ -105,9 +105,6 @@ func newDailyRollingLogWriter(basePath string, keepDays int) (*dailyRollingLogWr
 		ext:      filepath.Ext(basePath),
 		keepDays: keepDays,
 	}
-	if err := os.MkdirAll(w.dir, 0o755); err != nil {
-		return nil, "", err
-	}
 	if err := w.rotateLocked(time.Now()); err != nil {
 		return nil, "", err
 	}
@@ -146,7 +143,11 @@ func (w *dailyRollingLogWriter) rotateLocked(now time.Time) error {
 		_ = w.current.Close()
 		w.current = nil
 	}
-	path := filepath.Join(w.dir, fmt.Sprintf("%s-%s%s", w.baseName, day, w.ext))
+	dayDir := filepath.Join(w.dir, now.Format("2006"), now.Format("01"), now.Format("02"))
+	if err := os.MkdirAll(dayDir, 0o755); err != nil {
+		return err
+	}
+	path := filepath.Join(dayDir, w.baseName+w.ext)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -159,29 +160,24 @@ func (w *dailyRollingLogWriter) rotateLocked(now time.Time) error {
 }
 
 func (w *dailyRollingLogWriter) cleanupLocked(now time.Time) {
-	entries, err := os.ReadDir(w.dir)
-	if err != nil {
-		return
-	}
 	cutoff := now.AddDate(0, 0, -(w.keepDays - 1))
-	prefix := w.baseName + "-"
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	_ = filepath.WalkDir(w.dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || entry.Name() != w.baseName+w.ext {
+			return nil
 		}
-		name := entry.Name()
-		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, w.ext) {
-			continue
-		}
-		dayPart := strings.TrimSuffix(strings.TrimPrefix(name, prefix), w.ext)
-		fileDay, err := time.Parse("2006-01-02", dayPart)
+		rel, err := filepath.Rel(w.dir, filepath.Dir(path))
 		if err != nil {
-			continue
+			return nil
+		}
+		fileDay, err := time.Parse("2006/01/02", filepath.ToSlash(rel))
+		if err != nil {
+			return nil
 		}
 		if fileDay.Before(cutoff) {
-			_ = os.Remove(filepath.Join(w.dir, name))
+			_ = os.Remove(path)
 		}
-	}
+		return nil
+	})
 }
 
 func OpenProxyLogFile(envKey, defaultFileName, prefix string) (io.WriteCloser, string, error) {
@@ -205,6 +201,64 @@ func OpenProxyLogFileWithInit(envKey, defaultFileName, prefix string, writeInitL
 		_, _ = fmt.Fprintf(w, "%s [%s] logger initialized\n", time.Now().Format(time.RFC3339), prefix)
 	}
 	return w, rollingPath, nil
+}
+
+func OpenProxySessionLogFile(currentLogPath, sessionID, prefix string) (io.WriteCloser, string, error) {
+	basePath := sessionLogBasePath(currentLogPath, sessionID)
+	w, rollingPath, err := newDailyRollingLogWriter(basePath, 7)
+	if err != nil {
+		return nil, "", err
+	}
+	_, _ = fmt.Fprintf(w, "%s [%s] session logger initialized session=%s\n", time.Now().Format(time.RFC3339), prefix, SanitizeLogFilePart(sessionID))
+	return w, rollingPath, nil
+}
+
+func sessionLogBasePath(currentLogPath, sessionID string) string {
+	ext := filepath.Ext(currentLogPath)
+	dir := filepath.Dir(currentLogPath)
+	base := strings.TrimSuffix(filepath.Base(currentLogPath), ext)
+	if dayDir, ok := splitDailyLogDir(dir); ok {
+		dir = dayDir
+	}
+	return filepath.Join(dir, base+"-"+SanitizeLogFilePart(sessionID)+ext)
+}
+
+func splitDailyLogDir(dir string) (string, bool) {
+	day := filepath.Base(dir)
+	monthDir := filepath.Dir(dir)
+	month := filepath.Base(monthDir)
+	yearDir := filepath.Dir(monthDir)
+	year := filepath.Base(yearDir)
+	if _, err := time.Parse("2006/01/02", strings.Join([]string{year, month, day}, "/")); err != nil {
+		return dir, false
+	}
+	return filepath.Dir(yearDir), true
+}
+
+func SanitizeLogFilePart(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+		if b.Len() >= 96 {
+			break
+		}
+	}
+	out := strings.Trim(b.String(), "-._")
+	if out == "" {
+		return "unknown"
+	}
+	return out
 }
 
 func launchRouteLogger() (io.WriteCloser, string, error) {

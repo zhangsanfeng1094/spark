@@ -433,38 +433,23 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "f2":
 		m.save()
 		return nil, true
-	case "a":
-		if m.focusArea == pmFocusFields {
-			return nil, false
-		}
+	case "f3":
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActAdd
 		return m.runAction(pmActAdd), true
-	case "c":
-		if m.focusArea == pmFocusFields {
-			return nil, false
-		}
+	case "f4":
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActCopy
 		return m.runAction(pmActCopy), true
-	case "d":
-		if m.focusArea == pmFocusFields {
-			return nil, false
-		}
-		m.focusArea = pmFocusActions
-		m.actionIndex = pmActDel
-		return m.runAction(pmActDel), true
-	case "f":
-		if m.focusArea == pmFocusFields {
-			return nil, false
-		}
+	case "f6":
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActDefault
 		return m.runAction(pmActDefault), true
-	case "t":
-		if m.focusArea == pmFocusFields {
-			return nil, false
-		}
+	case "f7":
+		m.focusArea = pmFocusActions
+		m.actionIndex = pmActDel
+		return m.runAction(pmActDel), true
+	case "f8":
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActTest
 		return m.runAction(pmActTest), true
@@ -620,7 +605,7 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		case "tab", "shift+tab":
 			m.modelSearchFocused = !m.modelSearchFocused
 			return nil
-		case "ctrl+f":
+		case "f5":
 			return m.fetchModelsFromAPI()
 		case "f6":
 			m.startModelAdd()

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "dspy-advanced-workflow": {
+      "source": "intertwine/dspy-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/dspy-advanced-workflow/SKILL.md",
+      "computedHash": "993c7eecd49242cc6f9976f4b45af9b98cbe26defdeac91235624ec85537145a"
+    }
+  }
+}

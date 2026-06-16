@@ -168,8 +168,9 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 		}
 	}
 	summary := summarizeConnectionTestResults(results)
+	details := formatConnectionTestEndpointDetails(results)
 	if allSucceeded {
-		msg := fmt.Sprintf("OK (model: %s; endpoints: %s)", testModel, summary)
+		msg := fmt.Sprintf("OK (model: %s)\n%s", testModel, details)
 		AppendModelConnectionTestLogf("result=pass model=%q summary=%q total_latency_ms=%d", testModel, summary, totalLatency.Milliseconds())
 		return TestResult{
 			Success: true,
@@ -201,7 +202,7 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 	if reason == "" {
 		reason = "unknown failure"
 	}
-	msg := fmt.Sprintf("Failed (%s; endpoints: %s)", reason, summary)
+	msg := fmt.Sprintf("Failed (%s)\n%s", reason, details)
 	AppendModelConnectionTestLogf("result=fail reason=%q summary=%q total_latency_ms=%d", reason, summary, totalLatency.Milliseconds())
 	return TestResult{
 		Success: false,
@@ -254,14 +255,19 @@ func connectionTestPayload(model, endpointType string) (string, map[string]any, 
 			"stream":            false,
 		}, nil
 	case config.OpenAIAPITypeChatCompletions:
-		return "/chat/completions", map[string]any{
+		payload := map[string]any{
 			"model": model,
 			"messages": []map[string]string{
 				{"role": "user", "content": "ping"},
 			},
-			"max_tokens": 16,
-			"stream":     false,
-		}, nil
+			"stream": false,
+		}
+		if chatCompletionsUsesMaxCompletionTokens(model) {
+			payload["max_completion_tokens"] = 16
+		} else {
+			payload["max_tokens"] = 16
+		}
+		return "/chat/completions", payload, nil
 	case config.OpenAIAPITypeGeminiGenerateContent:
 		return "/models/" + model + ":generateContent", map[string]any{
 			"contents": []map[string]any{
@@ -288,6 +294,14 @@ func connectionTestPayload(model, endpointType string) (string, map[string]any, 
 	default:
 		return "", nil, fmt.Errorf("unsupported endpoint type: %s", endpointType)
 	}
+}
+
+func chatCompletionsUsesMaxCompletionTokens(model string) bool {
+	name := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(name, "gpt-5") ||
+		strings.HasPrefix(name, "o1") ||
+		strings.HasPrefix(name, "o3") ||
+		strings.HasPrefix(name, "o4")
 }
 
 func (p CurlPoster) PostJSON(ctx context.Context, req Request) (Response, error) {
@@ -402,6 +416,27 @@ func summarizeConnectionTestResults(results []connectionTestResult) string {
 		parts = append(parts, fmt.Sprintf("%s=%d", r.request.endpointType, r.status))
 	}
 	return strings.Join(parts, ",")
+}
+
+func formatConnectionTestEndpointDetails(results []connectionTestResult) string {
+	parts := make([]string, 0, len(results))
+	for _, r := range results {
+		parts = append(parts, formatConnectionTestEndpointDetail(r))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func formatConnectionTestEndpointDetail(r connectionTestResult) string {
+	if r.err != nil {
+		return fmt.Sprintf("%s: ERR: %s", r.request.endpointType, r.err.Error())
+	}
+	if r.status < 200 || r.status >= 300 {
+		if errMsg := extractEndpointErrorMessage(r.body); errMsg != "" {
+			return fmt.Sprintf("%s: HTTP %d: %s", r.request.endpointType, r.status, errMsg)
+		}
+		return fmt.Sprintf("%s: HTTP %d", r.request.endpointType, r.status)
+	}
+	return fmt.Sprintf("%s: HTTP %d", r.request.endpointType, r.status)
 }
 
 func extractEndpointErrorMessage(body []byte) string {

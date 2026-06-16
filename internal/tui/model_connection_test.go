@@ -611,7 +611,7 @@ func TestModelsModalFunctionShortcutsDoNotConflictWithSearch(t *testing.T) {
 	}
 }
 
-func TestModelsModalFetchUsesCtrlFNotF5(t *testing.T) {
+func TestModelsModalFetchUsesF5NotCtrlF(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "p1",
 		Profiles: map[string]*config.Profile{
@@ -622,19 +622,19 @@ func TestModelsModalFetchUsesCtrlFNotF5(t *testing.T) {
 	m.defaultModel = "gpt-4o"
 	m.openModelsModal()
 
-	if cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyF5}); cmd != nil {
-		t.Fatal("expected F5 not to trigger model fetch")
+	if cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyCtrlF}); cmd != nil {
+		t.Fatal("expected Ctrl+F not to trigger model fetch")
 	}
 	if m.modelModalNote != "" {
-		t.Fatalf("expected F5 not to change fetch note, got %q", m.modelModalNote)
+		t.Fatalf("expected Ctrl+F not to change fetch note, got %q", m.modelModalNote)
 	}
 
-	cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyCtrlF})
+	cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyF5})
 	if cmd == nil {
-		t.Fatal("expected Ctrl+F to trigger model fetch")
+		t.Fatal("expected F5 to trigger model fetch")
 	}
 	if m.modelModalNote != "Fetching models from API..." {
-		t.Fatalf("expected Ctrl+F to set fetch note, got %q", m.modelModalNote)
+		t.Fatalf("expected F5 to set fetch note, got %q", m.modelModalNote)
 	}
 }
 

@@ -5,9 +5,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"spark/internal/config"
 	"spark/internal/skills"
+	"spark/internal/tui"
+	"spark/internal/usage"
 )
 
 func TestProfileNamesSorted(t *testing.T) {
@@ -125,6 +128,103 @@ func TestResolveLaunchProfileProfileFlagDoesNotFallback(t *testing.T) {
 	}
 }
 
+func TestResolveQuickLaunchDefaultsUsesLastSelection(t *testing.T) {
+	cfg := testProfileConfig()
+	cfg.History.LastSelection = "codex"
+
+	selection, err := resolveQuickLaunchDefaults(cfg, []string{"claude", "codex"})
+	if err != nil {
+		t.Fatalf("resolveQuickLaunchDefaults failed: %v", err)
+	}
+	if selection.Integration != "codex" || selection.Profile != "default" || selection.Model != "model-default" {
+		t.Fatalf("unexpected quick launch selection: %+v", selection)
+	}
+}
+
+func TestResolveQuickLaunchDefaultsUsesDefaultIntegrationBeforeHistory(t *testing.T) {
+	cfg := testProfileConfig()
+	cfg.DefaultIntegration = " Codex "
+	cfg.History.LastSelection = "claude"
+
+	selection, err := resolveQuickLaunchDefaults(cfg, []string{"claude", "codex"})
+	if err != nil {
+		t.Fatalf("resolveQuickLaunchDefaults failed: %v", err)
+	}
+	if selection.Integration != "codex" || cfg.DefaultIntegration != " Codex " {
+		t.Fatalf("unexpected quick launch selection: %+v default=%q", selection, cfg.DefaultIntegration)
+	}
+}
+
+func TestResolveQuickLaunchDefaultsFallsBackToFirstIntegration(t *testing.T) {
+	for _, lastSelection := range []string{"", "missing"} {
+		cfg := testProfileConfig()
+		cfg.History.LastSelection = lastSelection
+
+		selection, err := resolveQuickLaunchDefaults(cfg, []string{"claude", "codex"})
+		if err != nil {
+			t.Fatalf("resolveQuickLaunchDefaults failed: %v", err)
+		}
+		if selection.Integration != "claude" {
+			t.Fatalf("expected first integration for last selection %q, got %+v", lastSelection, selection)
+		}
+	}
+}
+
+func TestResolveQuickLaunchDefaultsFallsBackToHistoryWhenDefaultIntegrationInvalid(t *testing.T) {
+	cfg := testProfileConfig()
+	cfg.DefaultIntegration = "missing"
+	cfg.History.LastSelection = "codex"
+
+	selection, err := resolveQuickLaunchDefaults(cfg, []string{"claude", "codex"})
+	if err != nil {
+		t.Fatalf("resolveQuickLaunchDefaults failed: %v", err)
+	}
+	if selection.Integration != "codex" {
+		t.Fatalf("expected history fallback, got %+v", selection)
+	}
+}
+
+func TestResolveQuickLaunchDefaultsPrefersDefaultModel(t *testing.T) {
+	cfg := testProfileConfig()
+	cfg.Profiles["default"] = &config.Profile{
+		Models:       []string{"model-a", "model-b"},
+		DefaultModel: "model-b",
+	}
+
+	selection, err := resolveQuickLaunchDefaults(cfg, []string{"claude", "codex"})
+	if err != nil {
+		t.Fatalf("resolveQuickLaunchDefaults failed: %v", err)
+	}
+	if selection.Model != "model-b" {
+		t.Fatalf("expected default model, got %+v", selection)
+	}
+}
+
+func TestResolveQuickLaunchDefaultsRequiresModel(t *testing.T) {
+	cfg := testProfileConfig()
+	cfg.Profiles["default"] = &config.Profile{}
+
+	_, err := resolveQuickLaunchDefaults(cfg, []string{"claude", "codex"})
+	if err == nil || !strings.Contains(err.Error(), "Manage profiles") {
+		t.Fatalf("expected Manage profiles model error, got %v", err)
+	}
+}
+
+func TestFormatLaunchLineHighlightsValuesWithoutChangingText(t *testing.T) {
+	got := formatLaunchLine("Codex", "gpt-5.5", "azure-free-linux")
+	plain := tui.StripANSI(got)
+	want := "Launching Codex with gpt-5.5 using profile azure-free-linux"
+	if plain != want {
+		t.Fatalf("plain launch line mismatch, got %q want %q", plain, want)
+	}
+	if got == plain {
+		t.Fatalf("expected colored launch line, got plain text")
+	}
+	if strings.Contains(got, "48;") {
+		t.Fatalf("expected foreground-only launch highlights, got %q", got)
+	}
+}
+
 func testProfileConfig() *config.RootConfig {
 	return &config.RootConfig{
 		DefaultProfile: "default",
@@ -198,14 +298,13 @@ func TestRootCmdIncludesSkillCommand(t *testing.T) {
 	if root.CommandPath() != "spark" {
 		t.Fatalf("unexpected root path: %q", root.CommandPath())
 	}
-	found := false
+	foundSkill := false
 	for _, cmd := range root.Commands() {
 		if cmd.Name() == "skill" {
-			found = true
-			break
+			foundSkill = true
 		}
 	}
-	if !found {
+	if !foundSkill {
 		t.Fatalf("expected skill command to be registered")
 	}
 }
@@ -235,14 +334,14 @@ func TestDebugDashboardSnapshotRendersCurrentDashboard(t *testing.T) {
 	buf := &bytes.Buffer{}
 	root.SetOut(buf)
 	root.SetErr(buf)
-	root.SetArgs([]string{"debug", "snapshot", "dashboard", "--width", "90", "--height", "12"})
+	root.SetArgs([]string{"debug", "snapshot", "dashboard", "--width", "90", "--height", "16"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
 	got := buf.String()
-	for _, want := range []string{"Spark", "Launch integration", "Launch with profile", "Current profile: default", "Config file:"} {
+	for _, want := range []string{"Spark", "Quick launch", "Launch options", "Manage settings", "Default profile: default", "Default model: not set", "Config file:"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected dashboard snapshot to contain %q, got %q", want, got)
 		}
@@ -295,6 +394,44 @@ func TestDebugNestedSnapshotsRenderSubscreens(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUsageCommandModelFilterOmitsOtherModels(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path, err := usage.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath failed: %v", err)
+	}
+	now := time.Now()
+	for _, record := range []usage.Record{
+		{Timestamp: now.Add(-1 * time.Hour), Client: "codex", Model: "glm-5.1", InputTokens: 100, OutputTokens: 50},
+		{Timestamp: now.Add(-30 * time.Minute), Client: "claude", Model: "other-model", TotalTokens: 900},
+	} {
+		if err := usage.Append(path, record); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"usage", "--model", "glm-5.1"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{"Model: glm-5.1", "glm-5.1", "150"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected usage output to contain %q, got %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"other-model", "900"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("expected usage output to omit %q, got %q", unwanted, got)
+		}
 	}
 }
 

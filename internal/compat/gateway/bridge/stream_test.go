@@ -162,6 +162,30 @@ func TestRouteStreamOpenAIChatDoesNotFallbackForHandledNonTextEvents(t *testing.
 	}
 }
 
+func TestRouteStreamOpenAIChatCapturesReasoningSamples(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"id":"chatcmpl_reasoning","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"think first"}}]}`,
+		`data: {"id":"chatcmpl_reasoning","model":"mimo-v2.5-pro","choices":[{"delta":{"thinking":"provider thought"}}]}`,
+	}, "\n")
+
+	var output strings.Builder
+	selection, err := SelectRoute(core.Route{Client: core.ClientCodexResponses, Target: core.TargetOpenAIChat})
+	if err != nil {
+		t.Fatalf("select route: %v", err)
+	}
+	result := selection.Stream(&output, strings.NewReader(stream), nil)
+
+	if len(result.ReasoningSamples) != 2 {
+		t.Fatalf("expected reasoning samples, got %#v", result.ReasoningSamples)
+	}
+	if result.ReasoningSamples[0] != "reasoning_content:[think first]" {
+		t.Fatalf("unexpected reasoning_content sample: %#v", result.ReasoningSamples)
+	}
+	if result.ReasoningSamples[1] != "thinking:[provider thought]" {
+		t.Fatalf("unexpected thinking sample: %#v", result.ReasoningSamples)
+	}
+}
+
 func TestRouteStreamOpenAIChatRawJSONFallbackWritesOnce(t *testing.T) {
 	stream := `{"id":"chatcmpl_full","model":"mimo-v2.5-pro","choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
 

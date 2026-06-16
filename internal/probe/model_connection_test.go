@@ -24,6 +24,26 @@ func (f *fakePoster) PostJSON(_ context.Context, req Request) (Response, error) 
 	return Response{Status: f.status, Body: f.body}, f.err
 }
 
+type sequencePoster struct {
+	requests  []Request
+	responses []Response
+	errs      []error
+}
+
+func (s *sequencePoster) PostJSON(_ context.Context, req Request) (Response, error) {
+	s.requests = append(s.requests, req)
+	idx := len(s.requests) - 1
+	var resp Response
+	if idx < len(s.responses) {
+		resp = s.responses[idx]
+	}
+	var err error
+	if idx < len(s.errs) {
+		err = s.errs[idx]
+	}
+	return resp, err
+}
+
 func TestModelConnectionWritesLogFile(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "model-test.log")
 	t.Setenv("SPARK_MODEL_TEST_LOG", logPath)
@@ -63,6 +83,44 @@ func TestModelConnectionTestsAllExplicitEndpoints(t *testing.T) {
 	}
 	if len(poster.requests) != 2 {
 		t.Fatalf("expected two requests, got %d", len(poster.requests))
+	}
+}
+
+func TestModelConnectionSucceedsWhenAnyExplicitEndpointWorks(t *testing.T) {
+	poster := &sequencePoster{
+		responses: []Response{
+			{Status: 200, Body: []byte(`{"id":"resp_1"}`)},
+			{Status: 400, Body: []byte(`{"error":{"message":"Unsupported parameter: 'max_tokens'"}}`)},
+		},
+	}
+	profile := &config.Profile{
+		OpenAIBaseURL: "http://127.0.0.1:1/v1",
+		OpenAIAPIType: "responses,chat_completions",
+		DefaultModel:  "gpt-5",
+	}
+
+	got := testModelConnection(profile, "", poster)
+	if !got.Success {
+		t.Fatalf("expected success when responses endpoint works, got: %s", got.Message)
+	}
+	if !strings.Contains(got.Message, "responses=200") || !strings.Contains(got.Message, "chat_completions=400") {
+		t.Fatalf("expected both endpoint results in success message, got %q", got.Message)
+	}
+	if len(poster.requests) != 2 {
+		t.Fatalf("expected two requests, got %d", len(poster.requests))
+	}
+}
+
+func TestConnectionTestPayloadUsesMaxCompletionTokensForGPT5ChatCompletions(t *testing.T) {
+	_, payload, err := connectionTestPayload("gpt-5", config.OpenAIAPITypeChatCompletions)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if payload["max_completion_tokens"] != 16 {
+		t.Fatalf("expected max_completion_tokens=16, got %#v", payload)
+	}
+	if _, ok := payload["max_tokens"]; ok {
+		t.Fatalf("did not expect max_tokens for gpt-5 payload: %#v", payload)
 	}
 }
 

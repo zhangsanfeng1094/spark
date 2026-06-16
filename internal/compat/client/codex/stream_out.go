@@ -17,6 +17,7 @@ type ResponsesStreamResult struct {
 	SawDone          bool
 	SawContentDelta  bool
 	ReasoningLen     int
+	ReasoningSamples []string
 	FirstValidChunk  string
 	LastValidChunk   string
 	Usage            map[string]any
@@ -84,6 +85,7 @@ func (w *ResponsesStreamWriter) ObserveUpstreamChunk(raw map[string]any, sample 
 		w.result.ChunkSamples = append(w.result.ChunkSamples, truncateForStreamResult(sample, 512))
 	}
 	w.state.observeChunk(raw)
+	w.result.observeReasoningSamples(raw)
 }
 
 func (w *ResponsesStreamWriter) WriteEvent(event ir.StreamEvent) bool {
@@ -557,4 +559,66 @@ func truncateForStreamResult(s string, max int) string {
 		return s
 	}
 	return s[:max] + "...(truncated)"
+}
+
+func (r *ResponsesStreamResult) observeReasoningSamples(chunk map[string]any) {
+	if r == nil || len(r.ReasoningSamples) >= 12 {
+		return
+	}
+	for _, rawChoice := range listValue(chunk["choices"]) {
+		choice := mapValue(rawChoice)
+		delta := mapValue(choice["delta"])
+		if len(delta) == 0 {
+			delta = choice
+		}
+		for _, sample := range reasoningFieldSamples(delta, 100) {
+			r.ReasoningSamples = append(r.ReasoningSamples, sample)
+			if len(r.ReasoningSamples) >= 12 {
+				return
+			}
+		}
+	}
+}
+
+func reasoningFieldSamples(m map[string]any, maxRunes int) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := []string{"reasoning_content", "reasoning", "thinking", "thought", "reasoning_details"}
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if sample, ok := reasoningFieldSampleValue(m[key], maxRunes); ok {
+			out = append(out, key+":"+sample)
+		}
+	}
+	return out
+}
+
+func listValue(v any) []any {
+	items, _ := v.([]any)
+	return items
+}
+
+func reasoningFieldSampleValue(v any, maxRunes int) (string, bool) {
+	text := stringValue(v)
+	if text == "" {
+		if data, err := json.Marshal(v); err == nil && string(data) != "null" {
+			text = string(data)
+		}
+	}
+	if text == "" {
+		return "", false
+	}
+	return "[" + truncateRunesForStreamResult(text, maxRunes) + "]", true
+}
+
+func truncateRunesForStreamResult(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "...(truncated)"
 }

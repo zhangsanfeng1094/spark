@@ -13,26 +13,37 @@ import (
 
 type codexChatExecutor struct {
 	proxy *ResponsesProxy
+	logf  func(format string, args ...any)
 }
 
 type codexAnthropicMessagesExecutor struct {
 	proxy *ResponsesProxy
+	logf  func(format string, args ...any)
 }
 
 func newCodexChatExecutor(proxy *ResponsesProxy) core.Executor {
-	return codexChatExecutor{proxy: proxy}
+	return newCodexChatExecutorWithLogf(proxy, proxy.logf)
 }
 
 func newCodexAnthropicMessagesExecutor(proxy *ResponsesProxy) core.Executor {
-	return codexAnthropicMessagesExecutor{proxy: proxy}
+	return newCodexAnthropicMessagesExecutorWithLogf(proxy, proxy.logf)
+
+}
+
+func newCodexChatExecutorWithLogf(proxy *ResponsesProxy, logf func(format string, args ...any)) core.Executor {
+	return codexChatExecutor{proxy: proxy, logf: logf}
+}
+
+func newCodexAnthropicMessagesExecutorWithLogf(proxy *ResponsesProxy, logf func(format string, args ...any)) core.Executor {
+	return codexAnthropicMessagesExecutor{proxy: proxy, logf: logf}
 }
 
 func (e codexAnthropicMessagesExecutor) Do(ctx context.Context, req map[string]any) (*http.Response, error) {
-	upResp, err := e.proxy.postAnthropicMessages(ctx, req)
+	upResp, err := e.proxy.postAnthropicMessagesWithLogf(ctx, req, e.logf)
 	if err != nil {
 		return nil, err
 	}
-	e.proxy.logf("upstream status=%d on mapped anthropic messages request", upResp.StatusCode)
+	e.logf("upstream status=%d on mapped anthropic messages request", upResp.StatusCode)
 	if upResp.StatusCode >= 400 {
 		e.proxy.warnf(fmt.Sprintf("upstream returned status %d", upResp.StatusCode))
 	}
@@ -40,11 +51,11 @@ func (e codexAnthropicMessagesExecutor) Do(ctx context.Context, req map[string]a
 }
 
 func (e codexChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
-	upResp, err := e.proxy.postChatCompletions(ctx, chatReq)
+	upResp, err := e.proxy.postChatCompletionsWithLogf(ctx, chatReq, e.logf)
 	if err != nil {
 		return nil, err
 	}
-	e.proxy.logf("upstream status=%d on initial mapped request", upResp.StatusCode)
+	e.logf("upstream status=%d on initial mapped request", upResp.StatusCode)
 	if upResp.StatusCode < 400 {
 		return upResp, nil
 	}
@@ -52,7 +63,7 @@ func (e codexChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*htt
 	e.proxy.warnf(fmt.Sprintf("upstream returned status %d", upResp.StatusCode))
 	data, _ := io.ReadAll(upResp.Body)
 	_ = upResp.Body.Close()
-	e.proxy.logf(
+	e.logf(
 		"upstream error on initial mapped request status=%d content_type=%q content_encoding=%q body_bytes=%d",
 		upResp.StatusCode,
 		upResp.Header.Get("Content-Type"),
@@ -67,22 +78,22 @@ func (e codexChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*htt
 		}, nil
 	}
 
-	e.proxy.logf("retrying with minimal chat request due to status=%d body_bytes=%d", upResp.StatusCode, len(data))
+	e.logf("retrying with minimal chat request due to status=%d body_bytes=%d", upResp.StatusCode, len(data))
 	minReq := minimalChatCompletionsRequest(chatReq)
-	e.proxy.logf("mapped chat request(minimal) structure=%s", logutil.StructureJSONForLog(minReq))
-	upResp, err = e.proxy.postChatCompletions(ctx, minReq)
+	e.logf("mapped chat request(minimal) structure=%s", logutil.StructureJSONForLog(minReq))
+	upResp, err = e.proxy.postChatCompletionsWithLogf(ctx, minReq, e.logf)
 	if err != nil {
-		e.proxy.logf("upstream minimal retry failed: %v", err)
+		e.logf("upstream minimal retry failed: %v", err)
 		return nil, err
 	}
-	e.proxy.logf("upstream status=%d on minimal retry", upResp.StatusCode)
+	e.logf("upstream status=%d on minimal retry", upResp.StatusCode)
 	if upResp.StatusCode < 400 {
 		return upResp, nil
 	}
 
 	data, _ = io.ReadAll(upResp.Body)
 	_ = upResp.Body.Close()
-	e.proxy.logf(
+	e.logf(
 		"upstream error on minimal retry status=%d content_type=%q content_encoding=%q body_bytes=%d",
 		upResp.StatusCode,
 		upResp.Header.Get("Content-Type"),
@@ -97,19 +108,19 @@ func (e codexChatExecutor) Do(ctx context.Context, chatReq map[string]any) (*htt
 		}, nil
 	}
 
-	e.proxy.logf("retrying with ultra-minimal chat request due to status=%d body_bytes=%d", upResp.StatusCode, len(data))
+	e.logf("retrying with ultra-minimal chat request due to status=%d body_bytes=%d", upResp.StatusCode, len(data))
 	ultraReq := ultraMinimalChatCompletionsRequest(chatReq)
-	e.proxy.logf("mapped chat request(ultra-minimal) structure=%s", logutil.StructureJSONForLog(ultraReq))
-	upResp, err = e.proxy.postChatCompletions(ctx, ultraReq)
+	e.logf("mapped chat request(ultra-minimal) structure=%s", logutil.StructureJSONForLog(ultraReq))
+	upResp, err = e.proxy.postChatCompletionsWithLogf(ctx, ultraReq, e.logf)
 	if err != nil {
-		e.proxy.logf("upstream ultra-minimal retry failed: %v", err)
+		e.logf("upstream ultra-minimal retry failed: %v", err)
 		return nil, err
 	}
-	e.proxy.logf("upstream status=%d on ultra-minimal retry", upResp.StatusCode)
+	e.logf("upstream status=%d on ultra-minimal retry", upResp.StatusCode)
 	if upResp.StatusCode >= 400 {
 		data, _ := io.ReadAll(upResp.Body)
 		_ = upResp.Body.Close()
-		e.proxy.logf(
+		e.logf(
 			"upstream error on ultra-minimal retry status=%d content_type=%q content_encoding=%q body_bytes=%d",
 			upResp.StatusCode,
 			upResp.Header.Get("Content-Type"),

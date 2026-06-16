@@ -15,12 +15,17 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 	cfg := defaultConfig()
 	cfg.DefaultProfile = "work"
+	cfg.DefaultIntegration = " Codex "
 	cfg.Profiles["work"] = &Profile{
 		OpenAIBaseURL: "https://example.com/v1",
 		APIKey:        "token",
 		ModelListURL:  "https://example.com/custom/models",
 		Models:        []string{"gpt-4.1-mini", "gpt-4.1"},
 		DefaultModel:  "gpt-4.1",
+	}
+	cfg.Integrations["codex"] = &IntegrationConfig{
+		Profile:          "work",
+		ModelCatalogJSON: " /home/me/.codex/custom_models.json ",
 	}
 	cfg.UpsertModelHistory("gpt-4.1-mini")
 	cfg.SetMcpServer("docs", &McpServerConfig{
@@ -41,6 +46,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.DefaultProfile != "work" {
 		t.Fatalf("DefaultProfile mismatch, got %q", got.DefaultProfile)
 	}
+	if got.DefaultIntegration != "codex" {
+		t.Fatalf("DefaultIntegration mismatch, got %q", got.DefaultIntegration)
+	}
 	if got.Profiles["work"] == nil || got.Profiles["work"].EffectiveAPIKey() != "token" {
 		t.Fatalf("work profile not persisted correctly: %#v", got.Profiles["work"])
 	}
@@ -52,6 +60,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got.Integration("codex").Profile != "work" {
 		t.Fatalf("integration profile mismatch, got %q", got.Integration("codex").Profile)
+	}
+	if got.Integration("codex").ModelCatalogJSON != "/home/me/.codex/custom_models.json" {
+		t.Fatalf("integration model catalog mismatch, got %q", got.Integration("codex").ModelCatalogJSON)
 	}
 	if !reflect.DeepEqual(got.Profiles["work"].Models, []string{"gpt-4.1-mini", "gpt-4.1"}) {
 		t.Fatalf("profile models mismatch: %#v", got.Profiles["work"].Models)
@@ -145,7 +156,8 @@ func TestNormalizeModelStripsNUL(t *testing.T) {
 
 func TestNormalizeSanitizesStoredModels(t *testing.T) {
 	cfg := &RootConfig{
-		DefaultProfile: "default",
+		DefaultProfile:     "default",
+		DefaultIntegration: " Codex ",
 		Profiles: map[string]*Profile{
 			"default": {
 				Models:       []string{"glm-5\x00", " glm-5 ", "other"},
@@ -162,6 +174,9 @@ func TestNormalizeSanitizesStoredModels(t *testing.T) {
 
 	if cfg.Profiles["default"].DefaultModel != "glm-5" {
 		t.Fatalf("DefaultModel=%q", cfg.Profiles["default"].DefaultModel)
+	}
+	if cfg.DefaultIntegration != "codex" {
+		t.Fatalf("DefaultIntegration=%q", cfg.DefaultIntegration)
 	}
 	if !reflect.DeepEqual(cfg.Profiles["default"].Models, []string{"glm-5", "other"}) {
 		t.Fatalf("Models=%#v", cfg.Profiles["default"].Models)

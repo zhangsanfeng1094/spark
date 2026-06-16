@@ -277,35 +277,40 @@ func QueryHeavyRequests(path string, window Window, now time.Time, limit int) ([
 }
 
 func QueryWindows(path string, now time.Time) (map[Window]WindowData, int, error) {
+	return QueryWindowsWithFilter(path, now, QueryFilter{})
+}
+
+func QueryWindowsWithFilter(path string, now time.Time, filter QueryFilter) (map[Window]WindowData, int, error) {
 	db, err := openStore(path)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer db.Close()
+	where, filterArgs := filterWhere(filter)
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM usage_records`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM usage_records`+where, filterArgs...).Scan(&count); err != nil {
 		return nil, 0, err
 	}
 	out := make(map[Window]WindowData, len(Windows()))
 	for _, window := range Windows() {
-		summary, err := querySummary(db, window, now)
+		summary, err := querySummaryWithFilter(db, window, now, filter)
 		if err != nil {
 			return nil, 0, err
 		}
-		breakdowns, err := queryBreakdowns(db, window, now)
+		breakdowns, err := queryBreakdownsWithFilter(db, window, now, filter)
 		if err != nil {
 			return nil, 0, err
 		}
 		var series []DailySummary
 		if window == WindowToday {
-			series, err = queryHourlySeriesForToday(db, now)
+			series, err = queryHourlySeriesForTodayWithFilter(db, now, filter)
 		} else {
-			series, err = queryDailySeries(db, window, now)
+			series, err = queryDailySeriesWithFilter(db, window, now, filter)
 		}
 		if err != nil {
 			return nil, 0, err
 		}
-		heavy, err := queryHeavyRequests(db, window, now, 5)
+		heavy, err := queryHeavyRequestsWithFilter(db, window, now, 5, filter)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -317,6 +322,10 @@ func QueryWindows(path string, now time.Time) (map[Window]WindowData, int, error
 		}
 	}
 	return out, count, nil
+}
+
+type QueryFilter struct {
+	Model string
 }
 
 type WindowData struct {
@@ -377,7 +386,12 @@ func initStore(db *sql.DB) error {
 }
 
 func querySummary(db *sql.DB, window Window, now time.Time) (Summary, error) {
+	return querySummaryWithFilter(db, window, now, QueryFilter{})
+}
+
+func querySummaryWithFilter(db *sql.DB, window Window, now time.Time, filter QueryFilter) (Summary, error) {
 	where, args := windowWhere(window, now)
+	where, args = appendFilterWhere(where, args, filter)
 	summary := Summary{Window: window, Client: ClientAll()}
 	err := db.QueryRow(`
 		SELECT
@@ -397,7 +411,12 @@ func querySummary(db *sql.DB, window Window, now time.Time) (Summary, error) {
 }
 
 func queryBreakdowns(db *sql.DB, window Window, now time.Time) ([]Breakdown, error) {
+	return queryBreakdownsWithFilter(db, window, now, QueryFilter{})
+}
+
+func queryBreakdownsWithFilter(db *sql.DB, window Window, now time.Time, filter QueryFilter) ([]Breakdown, error) {
 	where, args := windowWhere(window, now)
+	where, args = appendFilterWhere(where, args, filter)
 	rows, err := db.Query(`
 		SELECT
 			CASE WHEN trim(client) = '' THEN 'unknown' ELSE lower(trim(client)) END AS client_display,
@@ -434,17 +453,20 @@ func queryBreakdowns(db *sql.DB, window Window, now time.Time) ([]Breakdown, err
 }
 
 func queryDailySeries(db *sql.DB, window Window, now time.Time) ([]DailySummary, error) {
+	return queryDailySeriesWithFilter(db, window, now, QueryFilter{})
+}
+
+func queryDailySeriesWithFilter(db *sql.DB, window Window, now time.Time, filter QueryFilter) ([]DailySummary, error) {
 	days := dailySeriesDays(window, now)
 	if len(days) == 0 {
 		return days, nil
 	}
 	start := days[0].Day
 	end := days[len(days)-1].Day.AddDate(0, 0, 1)
+	where, args := appendFilterWhere(" WHERE timestamp_ms >= ? AND timestamp_ms < ?", []any{start.UnixMilli(), end.UnixMilli()}, filter)
 	rows, err := db.Query(`
 		SELECT timestamp_ms, input_tokens, output_tokens, total_tokens, cached_input_tokens
-		FROM usage_records
-		WHERE timestamp_ms >= ? AND timestamp_ms < ?`,
-		start.UnixMilli(), end.UnixMilli())
+		FROM usage_records`+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -467,6 +489,10 @@ func queryDailySeries(db *sql.DB, window Window, now time.Time) ([]DailySummary,
 }
 
 func queryHourlySeriesForToday(db *sql.DB, now time.Time) ([]DailySummary, error) {
+	return queryHourlySeriesForTodayWithFilter(db, now, QueryFilter{})
+}
+
+func queryHourlySeriesForTodayWithFilter(db *sql.DB, now time.Time, filter QueryFilter) ([]DailySummary, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -480,11 +506,10 @@ func queryHourlySeriesForToday(db *sql.DB, now time.Time) ([]DailySummary, error
 		out = append(out, point)
 		byHour[hourKey(point.Day)] = &out[len(out)-1]
 	}
+	where, args := appendFilterWhere(" WHERE timestamp_ms >= ? AND timestamp_ms < ?", []any{start.UnixMilli(), start.AddDate(0, 0, 1).UnixMilli()}, filter)
 	rows, err := db.Query(`
 		SELECT timestamp_ms, input_tokens, output_tokens, total_tokens, cached_input_tokens
-		FROM usage_records
-		WHERE timestamp_ms >= ? AND timestamp_ms < ?`,
-		start.UnixMilli(), start.AddDate(0, 0, 1).UnixMilli())
+		FROM usage_records`+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -503,10 +528,15 @@ func queryHourlySeriesForToday(db *sql.DB, now time.Time) ([]DailySummary, error
 }
 
 func queryHeavyRequests(db *sql.DB, window Window, now time.Time, limit int) ([]HeavyRequest, error) {
+	return queryHeavyRequestsWithFilter(db, window, now, limit, QueryFilter{})
+}
+
+func queryHeavyRequestsWithFilter(db *sql.DB, window Window, now time.Time, limit int, filter QueryFilter) ([]HeavyRequest, error) {
 	if limit <= 0 {
 		limit = 5
 	}
 	where, args := windowWhere(window, now)
+	where, args = appendFilterWhere(where, args, filter)
 	args = append(args, limit)
 	rows, err := db.Query(`
 		SELECT
@@ -580,6 +610,25 @@ func windowWhere(window Window, now time.Time) (string, []any) {
 	default:
 		return " WHERE 0", nil
 	}
+}
+
+func filterWhere(filter QueryFilter) (string, []any) {
+	return appendFilterWhere("", nil, filter)
+}
+
+func appendFilterWhere(where string, args []any, filter QueryFilter) (string, []any) {
+	model := strings.TrimSpace(filter.Model)
+	if model == "" {
+		return where, args
+	}
+	clause := "trim(model) = ?"
+	if where == "" {
+		where = " WHERE " + clause
+	} else {
+		where += " AND " + clause
+	}
+	args = append(args, model)
+	return where, args
 }
 
 func boolInt(v bool) int {

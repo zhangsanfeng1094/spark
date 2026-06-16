@@ -14,8 +14,11 @@ type DashboardAction struct {
 }
 
 type DashboardSummary struct {
-	CurrentProfile string
-	ConfigPath     string
+	CurrentProfile         string
+	QuickLaunchIntegration string
+	DefaultProfile         string
+	DefaultModel           string
+	ConfigPath             string
 }
 
 type dashboardModel struct {
@@ -49,6 +52,15 @@ var (
 					Padding(0, 1)
 	dashboardBodyTextStyle = lipgloss.NewStyle().
 				Foreground(colorTextSoft)
+	dashboardQuickLaunchValueStyle = lipgloss.NewStyle().
+					Foreground(colorAccent).
+					Bold(true)
+	dashboardDefaultProfileValueStyle = lipgloss.NewStyle().
+						Foreground(colorSuccess).
+						Bold(true)
+	dashboardDefaultModelValueStyle = lipgloss.NewStyle().
+					Foreground(colorWarning).
+					Bold(true)
 	dashboardMutedTextStyle = lipgloss.NewStyle().
 				Foreground(colorMuted)
 )
@@ -167,10 +179,28 @@ func (m *dashboardModel) renderDetailPane(width int) string {
 		dashboardBodyTextStyle.Width(width - 4).Render(action.Description),
 		"",
 		dashboardSectionTitleStyle.Render("Current Context"),
-		dashboardBodyTextStyle.Render("Current profile: " + emptyFallback(m.summary.CurrentProfile, "not set")),
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			dashboardBodyTextStyle.Render("Quick launch: "),
+			dashboardQuickLaunchValueStyle.Render(emptyFallback(m.summary.QuickLaunchIntegration, "not set")),
+		),
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			dashboardBodyTextStyle.Render("Default profile: "),
+			dashboardDefaultProfileValueStyle.Render(emptyFallback(summaryDefaultProfile(m.summary), "not set")),
+		),
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			dashboardBodyTextStyle.Render("Default model: "),
+			dashboardDefaultModelValueStyle.Render(emptyFallback(m.summary.DefaultModel, "not set")),
+		),
 		dashboardMutedTextStyle.Width(width - 4).Render("Config file: " + emptyFallback(m.summary.ConfigPath, "unavailable")),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func summaryDefaultProfile(summary DashboardSummary) string {
+	if summary.DefaultProfile != "" {
+		return summary.DefaultProfile
+	}
+	return summary.CurrentProfile
 }
 
 func emptyFallback(value, fallback string) string {

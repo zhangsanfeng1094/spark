@@ -98,6 +98,9 @@ func ForwardCodexStreamWithWriter(w http.ResponseWriter, upResp *http.Response, 
 		result.ChunkCount, result.ExtractedTextLen, len(result.ChunkSamples))
 	callLogf(logf, "stream parse flags saw_done=%t saw_content_delta=%t reasoning_len=%d first_chunk_bytes=%d last_chunk_bytes=%d",
 		result.SawDone, result.SawContentDelta, result.ReasoningLen, len(result.FirstValidChunk), len(result.LastValidChunk))
+	if len(result.ReasoningSamples) > 0 {
+		callLogf(logf, "stream reasoning samples %v", result.ReasoningSamples)
+	}
 	if result.HandledError {
 		callWarnf(warnf, "upstream stream failed before first chunk")
 		return

@@ -1,10 +1,36 @@
 package integrations
 
 import (
+	"reflect"
 	"testing"
 
 	"spark/internal/config"
 )
+
+func TestClaudePromptArgs(t *testing.T) {
+	appendArgs := claudePromptArgs(&config.PromptInjection{Mode: config.PromptModeAppend, Path: "/tmp/extra.md"})
+	if !reflect.DeepEqual(appendArgs, []string{"--append-system-prompt-file", "/tmp/extra.md"}) {
+		t.Fatalf("unexpected append args: %v", appendArgs)
+	}
+
+	replaceArgs := claudePromptArgs(&config.PromptInjection{Mode: config.PromptModeReplace, Path: "/tmp/base.md"})
+	if !reflect.DeepEqual(replaceArgs, []string{"--system-prompt-file", "/tmp/base.md"}) {
+		t.Fatalf("unexpected replace args: %v", replaceArgs)
+	}
+}
+
+func TestClaudePromptArgsEmptyPath(t *testing.T) {
+	got := claudePromptArgs(&config.PromptInjection{Mode: config.PromptModeReplace, Content: "inline content"})
+	if got != nil {
+		t.Fatalf("expected nil when path is empty, got %v", got)
+	}
+}
+
+func TestClaudePromptArgsNil(t *testing.T) {
+	if got := claudePromptArgs(nil); got != nil {
+		t.Fatalf("expected nil for nil prompt, got %v", got)
+	}
+}
 
 func TestResolveClaudeDirectToken(t *testing.T) {
 	p := &config.Profile{APIKey: "profile-key"}

@@ -3,7 +3,9 @@
     "allow": [
       "mcp__deepwiki__ask_question",
       "mcp__augment-context-engine__codebase-retrieval",
-      "mcp__context-mode__ctx_execute"
+      "mcp__context-mode__ctx_execute",
+      "mcp__codegraph__codegraph_explore",
+      "mcp__deepwiki__read_wiki_structure"
     ]
   }
 }
