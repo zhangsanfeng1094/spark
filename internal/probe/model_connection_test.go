@@ -78,7 +78,7 @@ func TestModelConnectionTestsAllExplicitEndpoints(t *testing.T) {
 	if got.Success {
 		t.Fatalf("expected failure against fake poster, got success: %s", got.Message)
 	}
-	if !strings.Contains(got.Message, "responses=ERR") || !strings.Contains(got.Message, "chat_completions=ERR") {
+	if !strings.Contains(got.Message, "responses: ERR") || !strings.Contains(got.Message, "chat_completions: ERR") {
 		t.Fatalf("expected both endpoint results in message, got %q", got.Message)
 	}
 	if len(poster.requests) != 2 {
@@ -103,7 +103,7 @@ func TestModelConnectionSucceedsWhenAnyExplicitEndpointWorks(t *testing.T) {
 	if !got.Success {
 		t.Fatalf("expected success when responses endpoint works, got: %s", got.Message)
 	}
-	if !strings.Contains(got.Message, "responses=200") || !strings.Contains(got.Message, "chat_completions=400") {
+	if !strings.Contains(got.Message, "responses: HTTP 200") || !strings.Contains(got.Message, "chat_completions: HTTP 400") {
 		t.Fatalf("expected both endpoint results in success message, got %q", got.Message)
 	}
 	if len(poster.requests) != 2 {
@@ -136,10 +136,10 @@ func TestModelConnectionAnthropicEndpointDoesNotFallbackToResponses(t *testing.T
 	if got.Success {
 		t.Fatalf("expected failure against fake poster, got success: %s", got.Message)
 	}
-	if !strings.Contains(got.Message, "anthropic_messages=ERR") {
+	if !strings.Contains(got.Message, "anthropic_messages: ERR") {
 		t.Fatalf("expected anthropic endpoint result in message, got %q", got.Message)
 	}
-	if strings.Contains(got.Message, "responses=ERR") {
+	if strings.Contains(got.Message, "responses: ERR") {
 		t.Fatalf("did not expect responses fallback for anthropic profile, got %q", got.Message)
 	}
 	if len(poster.requests) != 1 || poster.requests[0].EndpointType != config.OpenAIAPITypeAnthropicMessages {

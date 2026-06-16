@@ -254,7 +254,7 @@ func TestProfileManagerLeftButtonsUseTwoRowsWithDefault(t *testing.T) {
 			t.Fatalf("expected left actions to avoid letter shortcut %q, got %q", blocked, left)
 		}
 	}
-	if !strings.Contains(left, "Copy") || !strings.Contains(left, "\n Default") {
+	if !strings.Contains(left, "F4 Copy") || !strings.Contains(left, "\n F6 Default") {
 		t.Fatalf("expected two-row left actions with default button, got %q", left)
 	}
 }
@@ -328,7 +328,7 @@ func TestProfileManagerRightPaneShowsActionsAndHelpSections(t *testing.T) {
 	m.focusField = pmFieldOpenAIBaseURL
 
 	right := m.renderRightPane(0)
-	for _, want := range []string{"Actions", "Status", "Help", "Test Connection", "[F2] Save"} {
+	for _, want := range []string{"Actions", "Status", "Help", "F8 Test", "F2 Save"} {
 		if !strings.Contains(right, want) {
 			t.Fatalf("expected %q in right pane, got %q", want, right)
 		}
