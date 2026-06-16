@@ -5,4 +5,6 @@ npm/.npm-cache
 .gocache
 .gomodcache
 dist
+!web/dist/
+!web/dist/.gitkeep
 .claude

@@ -160,16 +160,15 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 		return TestResult{Success: false, Message: msg, Latency: totalLatency, LogPath: logPath}
 	}
 
-	allSucceeded := true
+	anySucceeded := false
 	for _, r := range results {
-		if r.err != nil || r.status < 200 || r.status >= 300 {
-			allSucceeded = false
-			break
+		if r.err == nil && r.status >= 200 && r.status < 300 {
+			anySucceeded = true
 		}
 	}
 	summary := summarizeConnectionTestResults(results)
 	details := formatConnectionTestEndpointDetails(results)
-	if allSucceeded {
+	if anySucceeded {
 		msg := fmt.Sprintf("OK (model: %s)\n%s", testModel, details)
 		AppendModelConnectionTestLogf("result=pass model=%q summary=%q total_latency_ms=%d", testModel, summary, totalLatency.Milliseconds())
 		return TestResult{
