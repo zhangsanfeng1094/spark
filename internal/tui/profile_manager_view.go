@@ -139,19 +139,19 @@ func (m *pmModel) renderLeftPaneBottom(width int) []string {
 	btnStyle := pmLeftBtnStyle.Copy().MarginRight(0)
 	activeBtnStyle := pmLeftActiveBtnStyle.Copy().MarginRight(0)
 
-	addBtn := btnStyle.Render("[A] Add")
-	copyBtn := btnStyle.Render("[C] Copy")
-	defaultBtn := btnStyle.Render("[F] Default")
-	delBtn := btnStyle.Render("[D] Del")
+	addBtn := btnStyle.Render("F3 Add")
+	copyBtn := btnStyle.Render("F4 Copy")
+	defaultBtn := btnStyle.Render("F6 Default")
+	delBtn := btnStyle.Render("F7 Del")
 	if m.focusArea == pmFocusActions {
 		if m.actionIndex == pmActAdd {
-			addBtn = activeBtnStyle.Render("[A] Add")
+			addBtn = activeBtnStyle.Render("F3 Add")
 		} else if m.actionIndex == pmActCopy {
-			copyBtn = activeBtnStyle.Render("[C] Copy")
+			copyBtn = activeBtnStyle.Render("F4 Copy")
 		} else if m.actionIndex == pmActDefault {
-			defaultBtn = activeBtnStyle.Render("[F] Default")
+			defaultBtn = activeBtnStyle.Render("F6 Default")
 		} else if m.actionIndex == pmActDel {
-			delBtn = activeBtnStyle.Render("[D] Del")
+			delBtn = activeBtnStyle.Render("F7 Del")
 		}
 	}
 
@@ -229,13 +229,13 @@ func (m *pmModel) renderRightPane(height int) string {
 		relY += rowH
 	}
 
-	testBtn := pmCompactBtnStyle.Render("[T] Test Connection")
-	saveBtn := pmCompactBtnStyle.Render("[F2] Save")
+	testBtn := pmCompactBtnStyle.Render("F8 Test")
+	saveBtn := pmCompactBtnStyle.Render("F2 Save")
 	if m.focusArea == pmFocusActions {
 		if m.actionIndex == pmActTest {
-			testBtn = pmCompactActiveBtnStyle.Render("[T] Test Connection")
+			testBtn = pmCompactActiveBtnStyle.Render("F8 Test")
 		} else if m.actionIndex == pmActSave {
-			saveBtn = pmCompactActiveBtnStyle.Render("[F2] Save")
+			saveBtn = pmCompactActiveBtnStyle.Render("F2 Save")
 		}
 	}
 
@@ -441,7 +441,7 @@ func renderModelModalHelpRows(editing bool, searchFocused bool) []string {
 	return []string{
 		row("Search", "type text · Backspace edit · Delete clear"),
 		row("Move", navigation),
-		row("Actions", "Ctrl+F Fetch · F6 Add · F7 Edit · F8 Delete"),
+		row("Actions", "F5 Fetch · F6 Add · F7 Edit · F8 Delete"),
 		row("Finish", "Enter Select · Esc Cancel"),
 	}
 }
@@ -471,7 +471,7 @@ func styleStatusMain(s string) string {
 func (m *pmModel) helpText() string {
 	switch m.focusArea {
 	case pmFocusProfiles:
-		return "Tab Focus · Enter Edit · A Add · C Copy · F Default · D Del"
+		return "Tab Focus · Enter Edit · F3 Add · F4 Copy · F6 Default · F7 Del"
 	case pmFocusFields:
 		return "Tab Focus · Enter Edit · F2 Save · Esc Back"
 	case pmFocusActions:

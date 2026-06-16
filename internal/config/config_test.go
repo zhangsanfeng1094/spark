@@ -15,6 +15,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 	cfg := defaultConfig()
 	cfg.DefaultProfile = "work"
+	cfg.DefaultIntegration = " Codex "
 	cfg.Profiles["work"] = &Profile{
 		OpenAIBaseURL: "https://example.com/v1",
 		APIKey:        "token",
@@ -44,6 +45,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 	if got.DefaultProfile != "work" {
 		t.Fatalf("DefaultProfile mismatch, got %q", got.DefaultProfile)
+	}
+	if got.DefaultIntegration != "codex" {
+		t.Fatalf("DefaultIntegration mismatch, got %q", got.DefaultIntegration)
 	}
 	if got.Profiles["work"] == nil || got.Profiles["work"].EffectiveAPIKey() != "token" {
 		t.Fatalf("work profile not persisted correctly: %#v", got.Profiles["work"])
@@ -152,7 +156,8 @@ func TestNormalizeModelStripsNUL(t *testing.T) {
 
 func TestNormalizeSanitizesStoredModels(t *testing.T) {
 	cfg := &RootConfig{
-		DefaultProfile: "default",
+		DefaultProfile:     "default",
+		DefaultIntegration: " Codex ",
 		Profiles: map[string]*Profile{
 			"default": {
 				Models:       []string{"glm-5\x00", " glm-5 ", "other"},
@@ -169,6 +174,9 @@ func TestNormalizeSanitizesStoredModels(t *testing.T) {
 
 	if cfg.Profiles["default"].DefaultModel != "glm-5" {
 		t.Fatalf("DefaultModel=%q", cfg.Profiles["default"].DefaultModel)
+	}
+	if cfg.DefaultIntegration != "codex" {
+		t.Fatalf("DefaultIntegration=%q", cfg.DefaultIntegration)
 	}
 	if !reflect.DeepEqual(cfg.Profiles["default"].Models, []string{"glm-5", "other"}) {
 		t.Fatalf("Models=%#v", cfg.Profiles["default"].Models)

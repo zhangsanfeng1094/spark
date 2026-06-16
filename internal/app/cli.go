@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -9,11 +10,19 @@ import (
 
 	"github.com/spf13/cobra"
 	"spark/internal/config"
+	"spark/internal/httpserver"
 	"spark/internal/integrations"
 	"spark/internal/skills"
 	"spark/internal/tui"
 	"spark/internal/usage"
 	"spark/internal/version"
+)
+
+const (
+	ansiReset                 = "\x1b[0m"
+	launchIntegrationValueSGR = "\x1b[1;38;2;200;174;252m"
+	launchModelValueSGR       = "\x1b[1;38;2;244;201;93m"
+	launchProfileValueSGR     = "\x1b[1;38;2;95;211;141m"
 )
 
 func NewRootCmd() *cobra.Command {
@@ -41,10 +50,40 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newSkillCmd())
 	root.AddCommand(newUsageCmd())
 	root.AddCommand(newProfileCmd())
-	root.AddCommand(newPromptCmd())
+	root.AddCommand(newHTTPServerCmd())
 	root.AddCommand(newDebugCmd())
 	root.AddCommand(newVersionCmd())
 	return root
+}
+
+func newHTTPServerCmd() *cobra.Command {
+	var addr string
+	var devUI string
+	var openBrowser bool
+
+	cmd := &cobra.Command{
+		Use:   "httpserver",
+		Short: "Start the local Spark web configuration server",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if openBrowser {
+				fmt.Fprintln(cmd.ErrOrStderr(), "--open is reserved and is not implemented yet")
+			}
+			server, err := httpserver.New(httpserver.Options{Addr: addr, DevUI: devUI})
+			if err != nil {
+				return err
+			}
+			if httpserver.IsWideListenAddress(server.Addr()) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: listening on %s exposes the unauthenticated configuration server beyond localhost\n", server.Addr())
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Spark HTTP server listening on http://%s\n", server.Addr())
+			return server.ListenAndServe()
+		},
+	}
+	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:8765", "HTTP listen address")
+	cmd.Flags().StringVar(&devUI, "dev-ui", "", "Proxy non-API requests to a Vite dev server URL")
+	cmd.Flags().BoolVar(&openBrowser, "open", false, "Open a browser after startup (reserved)")
+	return cmd
 }
 
 func newUsageCmd() *cobra.Command {
@@ -175,33 +214,27 @@ func newProfileCmd() *cobra.Command {
 	return cmd
 }
 
-func newPromptCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "prompt",
-		Short: "Manage prompt presets and bindings",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return managePrompts()
-		},
-	}
-	return cmd
-}
+const (
+	interactiveActionQuickLaunch    = "Quick launch"
+	interactiveActionLaunchOptions  = "Launch options"
+	interactiveActionManageSettings = "Manage settings"
+)
 
 func interactiveMenuOptions() []string {
-	return []string{"Launch integration", "Launch with profile", "Token usage", "Manage profiles", "Manage prompts", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
+	return []string{interactiveActionQuickLaunch, interactiveActionLaunchOptions, interactiveActionManageSettings, "Token usage", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
 }
 
 func interactiveMenuDescriptions() map[string]string {
 	return map[string]string{
-		"Launch integration":  "Start Spark with the selected coding agent integration using the default profile and model settings.",
-		"Launch with profile": "Start Spark with the selected coding agent integration after choosing a profile for this launch.",
-		"Token usage":         "Review recorded compat proxy token usage with fixed time filters.",
-		"Manage profiles":     "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
-		"Manage prompts":      "Manage prompt presets, client bindings, and append or replace injection modes.",
-		"Manage MCP servers":  "Manage MCP server entries, health probes, and transport settings.",
-		"Manage skills":       "Browse installed skills, add new ones, and toggle them on or off.",
-		"Show config file":    "Print the active Spark config path after leaving the dashboard.",
-		"Quit":                "Exit Spark without making additional changes.",
+		interactiveActionQuickLaunch:    "Start Spark immediately with the quick launch integration, default profile, and default model.",
+		interactiveActionLaunchOptions:  "Choose the integration, profile, and configured model for this launch.",
+		interactiveActionManageSettings: "Manage global defaults, prompt injection, Codex model catalog, and launch history.",
+		"Token usage":                   "Review recorded compat proxy token usage with fixed time filters.",
+		"Manage profiles":               "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
+		"Manage MCP servers":            "Manage MCP server entries, health probes, and transport settings.",
+		"Manage skills":                 "Browse installed skills, add new ones, and toggle them on or off.",
+		"Show config file":              "Print the active Spark config path after leaving the dashboard.",
+		"Quit":                          "Exit Spark without making additional changes.",
 	}
 }
 
@@ -236,39 +269,8 @@ func newDebugSnapshotCmd() *cobra.Command {
 	cmd.AddCommand(newDebugDashboardSnapshotCmd())
 	cmd.AddCommand(newDebugTokenUsageSnapshotCmd())
 	cmd.AddCommand(newDebugProfileSnapshotCmd())
-	cmd.AddCommand(newDebugPromptSnapshotCmd())
 	cmd.AddCommand(newDebugMCPSnapshotCmd())
 	cmd.AddCommand(newDebugSkillSnapshotCmd())
-	return cmd
-}
-
-func newDebugPromptSnapshotCmd() *cobra.Command {
-	var width int
-	var height int
-	var state string
-	var color bool
-
-	cmd := &cobra.Command{
-		Use:   "prompt",
-		Short: "Render the prompt manager without starting the TUI",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			view, err := tui.RenderPromptManagerSnapshot(cfg, width, height, state)
-			if err != nil {
-				return err
-			}
-			writeSnapshot(cmd, view, color)
-			return nil
-		},
-	}
-	cmd.Flags().IntVar(&width, "width", 120, "Snapshot terminal width")
-	cmd.Flags().IntVar(&height, "height", 32, "Snapshot terminal height")
-	cmd.Flags().StringVar(&state, "state", "overview", "State: overview, disabled, bindings, binding-disabled, add-preset, add-binding, edit-current, error")
-	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
 	return cmd
 }
 
@@ -283,14 +285,7 @@ func newDebugDashboardSnapshotCmd() *cobra.Command {
 		Short: "Render the main dashboard without starting the TUI",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			summary := tui.DashboardSummary{}
-			if path, err := config.ConfigPath(); err == nil {
-				summary.ConfigPath = path
-			}
-			if cfg, err := config.Load(); err == nil {
-				summary.CurrentProfile = cfg.DefaultProfile
-			}
-
+			summary := loadDashboardSummary()
 			view, err := tui.RenderDashboardSnapshot("Spark", interactiveDashboardActions(), summary, width, height, cursor)
 			if err != nil {
 				return err
@@ -304,6 +299,27 @@ func newDebugDashboardSnapshotCmd() *cobra.Command {
 	cmd.Flags().IntVar(&cursor, "cursor", 0, "Selected dashboard row")
 	cmd.Flags().BoolVar(&color, "color", false, "Keep ANSI color escape sequences")
 	return cmd
+}
+
+func loadDashboardSummary() tui.DashboardSummary {
+	summary := tui.DashboardSummary{}
+	if path, err := config.ConfigPath(); err == nil {
+		summary.ConfigPath = path
+	}
+	if cfg, err := config.Load(); err == nil {
+		applyDashboardConfigSummary(&summary, cfg, integrations.Names())
+	}
+	return summary
+}
+
+func applyDashboardConfigSummary(summary *tui.DashboardSummary, cfg *config.RootConfig, integrationNames []string) {
+	if summary == nil || cfg == nil {
+		return
+	}
+	summary.QuickLaunchIntegration = defaultQuickLaunchIntegration(cfg, integrationNames)
+	summary.DefaultProfile = cfg.DefaultProfile
+	summary.CurrentProfile = cfg.DefaultProfile
+	summary.DefaultModel = defaultProfileModel(cfg)
 }
 
 func newDebugTokenUsageSnapshotCmd() *cobra.Command {
@@ -438,34 +454,52 @@ func runInteractive() error {
 	}
 
 	for {
-		summary := tui.DashboardSummary{}
-		if path, err := config.ConfigPath(); err == nil {
-			summary.ConfigPath = path
-		}
-		if cfg, err := config.Load(); err == nil {
-			summary.CurrentProfile = cfg.DefaultProfile
-		}
-
+		summary := loadDashboardSummary()
 		choice, err := tui.SelectDashboard("Spark", interactiveDashboardActions(), summary)
 		if err != nil {
 			return err
 		}
 		switch choice {
-		case "Launch integration":
-			name, err := tui.SelectOne("Select integration:", integrations.Names())
+		case interactiveActionQuickLaunch:
+			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			if err := launchIntegration(name, LaunchOptions{}); err != nil {
+			selection, err := resolveQuickLaunchDefaults(cfg, integrations.Names())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				continue
+			}
+			if err := launchIntegration(selection.Integration, LaunchOptions{Profile: selection.Profile, Model: selection.Model}); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
-		case "Launch with profile":
-			name, err := tui.SelectOne("Select integration:", integrations.Names())
+		case interactiveActionLaunchOptions:
+			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			if err := launchIntegration(name, LaunchOptions{SelectProfile: true}); err != nil {
+			integrationNames := integrations.Names()
+			selection, err := tui.SelectLaunchOptions(integrationNames, cfg, defaultQuickLaunchIntegration(cfg, integrationNames))
+			if err != nil {
+				if errors.Is(err, tui.ErrCanceled) {
+					continue
+				}
+				return err
+			}
+			if selection.Model == "" {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", missingProfileModelError(selection.Profile))
+				continue
+			}
+			if err := launchIntegration(selection.Integration, LaunchOptions{Profile: selection.Profile, Model: selection.Model}); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+		case interactiveActionManageSettings:
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if err := tui.ManageSettingsDashboard(cfg, integrations.Names()); err != nil {
+				return err
 			}
 		case "Token usage":
 			snapshot, err := loadTokenUsageSnapshot()
@@ -477,10 +511,6 @@ func runInteractive() error {
 			}
 		case "Manage profiles":
 			if err := manageProfiles(); err != nil {
-				return err
-			}
-		case "Manage prompts":
-			if err := managePrompts(); err != nil {
 				return err
 			}
 		case "Manage MCP servers":
@@ -727,6 +757,92 @@ type LaunchOptions struct {
 
 type profilePicker func(title string, options []string) (string, error)
 
+func resolveQuickLaunchDefaults(cfg *config.RootConfig, integrationNames []string) (tui.LaunchSelection, error) {
+	selection := tui.LaunchSelection{}
+	if cfg == nil {
+		return selection, fmt.Errorf("config is required")
+	}
+	selection.Integration = defaultQuickLaunchIntegration(cfg, integrationNames)
+	if selection.Integration == "" {
+		return selection, fmt.Errorf("no integrations available")
+	}
+	selection.Profile = cfg.DefaultProfile
+	profile, err := cfg.ProfileByName(selection.Profile)
+	if err != nil {
+		return selection, fmt.Errorf("default profile %q is not configured; open Manage profiles to choose a default profile", emptyFallback(selection.Profile, "not set"))
+	}
+	models := config.EffectiveProfileModels(profile)
+	if len(models) > 0 {
+		selection.Model = models[0]
+	}
+	if selection.Model == "" {
+		return selection, missingDefaultProfileModelError(selection.Profile)
+	}
+	return selection, nil
+}
+
+func defaultQuickLaunchIntegration(cfg *config.RootConfig, integrationNames []string) string {
+	if len(integrationNames) == 0 {
+		return ""
+	}
+	defaultIntegration := ""
+	lastSelection := ""
+	if cfg != nil {
+		defaultIntegration = strings.TrimSpace(cfg.DefaultIntegration)
+		lastSelection = strings.TrimSpace(cfg.History.LastSelection)
+	}
+	if matched := firstMatchingIntegration(defaultIntegration, integrationNames); matched != "" {
+		return matched
+	}
+	if matched := firstMatchingIntegration(lastSelection, integrationNames); matched != "" {
+		return matched
+	}
+	return integrationNames[0]
+}
+
+func firstMatchingIntegration(want string, integrationNames []string) string {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return ""
+	}
+	for _, name := range integrationNames {
+		if strings.EqualFold(want, name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func defaultProfileModel(cfg *config.RootConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	profile, err := cfg.ProfileByName(cfg.DefaultProfile)
+	if err != nil {
+		return ""
+	}
+	models := config.EffectiveProfileModels(profile)
+	if len(models) == 0 {
+		return ""
+	}
+	return models[0]
+}
+
+func missingProfileModelError(profileName string) error {
+	return fmt.Errorf("no model configured for profile %q; open Manage profiles to set default_model or models", emptyFallback(profileName, "not set"))
+}
+
+func missingDefaultProfileModelError(profileName string) error {
+	return fmt.Errorf("no model configured for default profile %q; open Manage profiles to set default_model or models", emptyFallback(profileName, "not set"))
+}
+
+func emptyFallback(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func launchIntegration(name string, opts LaunchOptions) error {
 	if err := validateProfileSelectionFlags(opts.Profile, opts.SelectProfile); err != nil {
 		return err
@@ -810,10 +926,15 @@ func launchIntegration(name string, opts LaunchOptions) error {
 		}
 	}
 
-	fmt.Printf("Launching %s with %s using profile %s\n", r.String(), models[0], profileName)
+	fmt.Println(formatLaunchLine(r.String(), models[0], profileName))
 	prompt, err := cfg.ResolvePromptInjection(strings.ToLower(name), models[0])
 	if err != nil {
 		return err
+	}
+	if prompt != nil {
+		fmt.Printf("✓ Prompt injection: %s (mode: %s)\n", prompt.Path, prompt.Mode)
+	} else if cfg.Prompts.IsEnabled() {
+		fmt.Printf("⚠ Prompt injection: not configured for %s/%s\n", strings.ToLower(name), models[0])
 	}
 	integration := cfg.Integration(name)
 	if cr, ok := r.(integrations.ConfiguredPromptRunner); ok {
@@ -828,20 +949,24 @@ func launchIntegration(name string, opts LaunchOptions) error {
 	return r.Run(profile, models[0], opts.PassArgs)
 }
 
+func formatLaunchLine(integration, model, profileName string) string {
+	return fmt.Sprintf("Launching %s with %s using profile %s",
+		colorLaunchValue(launchIntegrationValueSGR, integration),
+		colorLaunchValue(launchModelValueSGR, model),
+		colorLaunchValue(launchProfileValueSGR, profileName),
+	)
+}
+
+func colorLaunchValue(sgr, value string) string {
+	return sgr + value + ansiReset
+}
+
 func manageProfiles() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	return tui.ManageProfilesDashboard(cfg)
-}
-
-func managePrompts() error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	return tui.ManagePromptsDashboard(cfg)
 }
 
 func manageSkills() error {
@@ -852,29 +977,7 @@ func resolveModels(modelFlag string, profile *config.Profile) []string {
 	if model := config.NormalizeModel(modelFlag); model != "" {
 		return []string{model}
 	}
-	if profile == nil {
-		return nil
-	}
-	models := config.NormalizeModels(profile.Models)
-	defaultModel := config.NormalizeModel(profile.DefaultModel)
-	if defaultModel != "" {
-		if len(models) == 0 {
-			return []string{defaultModel}
-		}
-		ordered := make([]string, 0, len(models)+1)
-		ordered = append(ordered, defaultModel)
-		for _, m := range models {
-			if m == defaultModel {
-				continue
-			}
-			ordered = append(ordered, m)
-		}
-		return ordered
-	}
-	if len(models) > 0 {
-		return models
-	}
-	return nil
+	return config.EffectiveProfileModels(profile)
 }
 
 func validateProfileSelectionFlags(profileFlag string, selectProfile bool) error {

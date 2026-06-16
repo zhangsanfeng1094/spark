@@ -36,13 +36,33 @@ func TestProfileManagerHelpTextChangesByFocusArea(t *testing.T) {
 		},
 	})
 
-	if got := m.helpText(); !strings.Contains(got, "Enter Edit") {
+	if got := m.helpText(); !strings.Contains(got, "Enter Edit") || strings.Contains(got, "A Add") || strings.Contains(got, "T Test") {
 		t.Fatalf("unexpected profiles help text: %q", got)
 	}
 
 	m.focusArea = pmFocusFields
 	if got := m.helpText(); !strings.Contains(got, "F2 Save") {
 		t.Fatalf("unexpected fields help text: %q", got)
+	}
+}
+
+func TestProfileManagerGlobalLetterShortcutsAreDisabled(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "gptload",
+		Profiles: map[string]*config.Profile{
+			"gptload": {OpenAIBaseURL: "https://api.openai.com/v1"},
+		},
+	})
+	m.focusArea = pmFocusProfiles
+
+	for _, r := range []rune("acdtf") {
+		cmd, handled := m.handleMainKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		if handled || cmd != nil {
+			t.Fatalf("expected %q not to trigger a profile action", string(r))
+		}
+		if m.focusArea != pmFocusProfiles {
+			t.Fatalf("expected focus to stay on profiles after %q, got %d", string(r), m.focusArea)
+		}
 	}
 }
 
@@ -83,13 +103,13 @@ func TestModelsModalHelpAvoidsTextLetterShortcuts(t *testing.T) {
 			t.Fatalf("expected models modal help to avoid text shortcut %s, got %q", blocked, view)
 		}
 	}
-	for _, want := range []string{"Search", "type text", "Ctrl+F Fetch", "F6 Add", "F7 Edit", "F8 Delete", "Enter Select"} {
+	for _, want := range []string{"Search", "type text", "F5 Fetch", "F6 Add", "F7 Edit", "F8 Delete", "Enter Select"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected models modal help to contain %q, got %q", want, view)
 		}
 	}
-	if strings.Contains(view, "F5 Fetch") {
-		t.Fatalf("expected models modal help to avoid F5 Fetch, got %q", view)
+	if strings.Contains(view, "Ctrl+F Fetch") {
+		t.Fatalf("expected models modal help to avoid Ctrl+F Fetch, got %q", view)
 	}
 	if strings.Contains(view, "F9 Default") {
 		t.Fatalf("expected models modal help to omit F9 Default, got %q", view)
@@ -224,11 +244,18 @@ func TestProfileManagerLeftButtonsUseTwoRowsWithDefault(t *testing.T) {
 	})
 
 	left := m.renderLeftPane(0)
-	if !strings.Contains(left, "[A] Add") || !strings.Contains(left, "[C] Copy") || !strings.Contains(left, "[F] Default") || !strings.Contains(left, "[D] Del") {
-		t.Fatalf("expected two-row left actions with default button, got %q", left)
+	for _, want := range []string{"Add", "Copy", "Default", "Del"} {
+		if !strings.Contains(left, want) {
+			t.Fatalf("expected left actions to contain %q, got %q", want, left)
+		}
 	}
-	if !strings.Contains(left, "[C] Copy") || !strings.Contains(left, "\n [F] Default") {
-		t.Fatalf("expected action rows to break between copy and default, got %q", left)
+	for _, blocked := range []string{"[A] Add", "[C] Copy", "[F] Default", "[D] Del"} {
+		if strings.Contains(left, blocked) {
+			t.Fatalf("expected left actions to avoid letter shortcut %q, got %q", blocked, left)
+		}
+	}
+	if !strings.Contains(left, "Copy") || !strings.Contains(left, "\n Default") {
+		t.Fatalf("expected two-row left actions with default button, got %q", left)
 	}
 }
 
@@ -301,10 +328,13 @@ func TestProfileManagerRightPaneShowsActionsAndHelpSections(t *testing.T) {
 	m.focusField = pmFieldOpenAIBaseURL
 
 	right := m.renderRightPane(0)
-	for _, want := range []string{"Actions", "Status", "Help", "[T] Test Connection", "[F2] Save"} {
+	for _, want := range []string{"Actions", "Status", "Help", "Test Connection", "[F2] Save"} {
 		if !strings.Contains(right, want) {
 			t.Fatalf("expected %q in right pane, got %q", want, right)
 		}
+	}
+	if strings.Contains(right, "[T] Test Connection") {
+		t.Fatalf("expected right pane to avoid letter shortcut for test, got %q", right)
 	}
 	if strings.Index(right, "Help") > strings.Index(right, "Actions") {
 		t.Fatalf("expected Help above Actions, got %q", right)

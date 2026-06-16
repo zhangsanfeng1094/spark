@@ -236,13 +236,14 @@ type History struct {
 }
 
 type RootConfig struct {
-	Version        int                           `json:"version"`
-	DefaultProfile string                        `json:"default_profile"`
-	Profiles       map[string]*Profile           `json:"profiles"`
-	Integrations   map[string]*IntegrationConfig `json:"integrations"`
-	History        History                       `json:"history,omitempty"`
-	McpServers     map[string]*McpServerConfig   `json:"mcp_servers,omitempty"`
-	Prompts        PromptConfig                  `json:"prompts,omitempty"`
+	Version            int                           `json:"version"`
+	DefaultProfile     string                        `json:"default_profile"`
+	DefaultIntegration string                        `json:"default_integration,omitempty"`
+	Profiles           map[string]*Profile           `json:"profiles"`
+	Integrations       map[string]*IntegrationConfig `json:"integrations"`
+	History            History                       `json:"history,omitempty"`
+	McpServers         map[string]*McpServerConfig   `json:"mcp_servers,omitempty"`
+	Prompts            PromptConfig                  `json:"prompts,omitempty"`
 }
 
 func defaultConfig() *RootConfig {
@@ -312,6 +313,7 @@ func Normalize(cfg *RootConfig) {
 	if cfg.DefaultProfile == "" {
 		cfg.DefaultProfile = "default"
 	}
+	cfg.DefaultIntegration = strings.ToLower(strings.TrimSpace(cfg.DefaultIntegration))
 	if cfg.Profiles == nil {
 		cfg.Profiles = map[string]*Profile{}
 	}
@@ -363,6 +365,25 @@ func NormalizeModels(in []string) []string {
 		out = append(out, m)
 	}
 	return out
+}
+
+func EffectiveProfileModels(profile *Profile) []string {
+	if profile == nil {
+		return nil
+	}
+	models := NormalizeModels(profile.Models)
+	defaultModel := NormalizeModel(profile.DefaultModel)
+	if defaultModel == "" {
+		return models
+	}
+	ordered := make([]string, 0, len(models)+1)
+	ordered = append(ordered, defaultModel)
+	for _, model := range models {
+		if model != defaultModel {
+			ordered = append(ordered, model)
+		}
+	}
+	return ordered
 }
 
 func NormalizeModel(in string) string {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"spark/internal/compat/gateway"
+	"spark/internal/compat/gateway/core"
 	openai_chat_target "spark/internal/compat/target/openai_chat"
 )
 
@@ -69,19 +70,45 @@ func (p *ResponsesProxy) warnf(summary string) {
 }
 
 func (p *ResponsesProxy) handleResponses(w http.ResponseWriter, r *http.Request) {
-	executor := newCodexChatExecutor(p)
-	if p.mode == ResponsesProxyModeAnthropicMessagesOnly {
-		executor = newCodexAnthropicMessagesExecutor(p)
-	}
 	handler := gateway.NewCodexResponsesHandler(gateway.CodexResponsesOptions{
 		Mode:          string(p.mode),
 		UpstreamBase:  p.upstreamBase,
 		Logf:          p.logf,
+		SessionLogf:   p.sessionLogfForRequest,
 		Warnf:         p.warnf,
 		PostResponses: p.postResponses,
-		Executor:      executor,
+		ExecutorForLog: func(logf func(format string, args ...any)) core.Executor {
+			if p.mode == ResponsesProxyModeAnthropicMessagesOnly {
+				return newCodexAnthropicMessagesExecutorWithLogf(p, logf)
+			}
+			return newCodexChatExecutorWithLogf(p, logf)
+		},
 	})
 	handler.ServeHTTP(w, r)
+}
+
+func (p *ResponsesProxy) sessionLogfForRequest(req map[string]any) func(format string, args ...any) {
+	if p == nil || p.compatProxyServer == nil {
+		return nil
+	}
+	sessionID := codexSessionID(req)
+	if sessionID == "" {
+		return p.logf
+	}
+	return p.compatProxyServer.sessionLogf(sessionID)
+}
+
+func codexSessionID(req map[string]any) string {
+	metadata, _ := req["client_metadata"].(map[string]any)
+	if metadata == nil {
+		return ""
+	}
+	for _, key := range []string{"x-codex-window-id", "x-codex-session-id", "session_id"} {
+		if value, _ := metadata[key].(string); strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (p *ResponsesProxy) postResponses(ctx context.Context, req map[string]any) (*http.Response, error) {
@@ -89,11 +116,19 @@ func (p *ResponsesProxy) postResponses(ctx context.Context, req map[string]any) 
 }
 
 func (p *ResponsesProxy) postChatCompletions(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
-	return p.postUpstreamJSON(ctx, p.upstreamBase, p.upstreamKey, "/chat/completions", chatReq, p.logf)
+	return p.postChatCompletionsWithLogf(ctx, chatReq, p.logf)
 }
 
 func (p *ResponsesProxy) postAnthropicMessages(ctx context.Context, req map[string]any) (*http.Response, error) {
-	return p.postAnthropicMessagesJSON(ctx, p.upstreamBase, p.upstreamKey, req, p.logf)
+	return p.postAnthropicMessagesWithLogf(ctx, req, p.logf)
+}
+
+func (p *ResponsesProxy) postChatCompletionsWithLogf(ctx context.Context, chatReq map[string]any, logf func(format string, args ...any)) (*http.Response, error) {
+	return p.postUpstreamJSON(ctx, p.upstreamBase, p.upstreamKey, "/chat/completions", chatReq, logf)
+}
+
+func (p *ResponsesProxy) postAnthropicMessagesWithLogf(ctx context.Context, req map[string]any, logf func(format string, args ...any)) (*http.Response, error) {
+	return p.postAnthropicMessagesJSON(ctx, p.upstreamBase, p.upstreamKey, req, logf)
 }
 
 func shouldRetryWithMinimalChatReq(status int, data []byte) bool {

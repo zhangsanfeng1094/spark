@@ -24,22 +24,26 @@ const (
 )
 
 type codexResponsesHandler struct {
-	mode          string
-	route         core.Route
-	upstreamBase  string
-	logf          func(format string, args ...any)
-	warnf         func(summary string)
-	postResponses func(ctx context.Context, req map[string]any) (*http.Response, error)
-	executor      core.Executor
+	mode           string
+	route          core.Route
+	upstreamBase   string
+	logf           func(format string, args ...any)
+	sessionLogf    func(map[string]any) func(format string, args ...any)
+	warnf          func(summary string)
+	postResponses  func(ctx context.Context, req map[string]any) (*http.Response, error)
+	executor       core.Executor
+	executorForLog func(func(format string, args ...any)) core.Executor
 }
 
 type CodexResponsesOptions struct {
-	Mode          string
-	UpstreamBase  string
-	Logf          func(format string, args ...any)
-	Warnf         func(summary string)
-	PostResponses func(ctx context.Context, req map[string]any) (*http.Response, error)
-	Executor      core.Executor
+	Mode           string
+	UpstreamBase   string
+	Logf           func(format string, args ...any)
+	SessionLogf    func(map[string]any) func(format string, args ...any)
+	Warnf          func(summary string)
+	PostResponses  func(ctx context.Context, req map[string]any) (*http.Response, error)
+	Executor       core.Executor
+	ExecutorForLog func(func(format string, args ...any)) core.Executor
 }
 
 func NewCodexResponsesHandler(opts CodexResponsesOptions) codexResponsesHandler {
@@ -60,13 +64,15 @@ func NewCodexResponsesHandler(opts CodexResponsesOptions) codexResponsesHandler 
 		route.Target = core.TargetAnthropicMessages
 	}
 	return codexResponsesHandler{
-		mode:          mode,
-		route:         route,
-		upstreamBase:  opts.UpstreamBase,
-		logf:          logf,
-		warnf:         warnf,
-		postResponses: opts.PostResponses,
-		executor:      opts.Executor,
+		mode:           mode,
+		route:          route,
+		upstreamBase:   opts.UpstreamBase,
+		logf:           logf,
+		sessionLogf:    opts.SessionLogf,
+		warnf:          warnf,
+		postResponses:  opts.PostResponses,
+		executor:       opts.Executor,
+		executorForLog: opts.ExecutorForLog,
 	}
 }
 
@@ -88,20 +94,27 @@ func (h codexResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.logf("raw incoming body bytes=%d", len(rawBody))
-	h.logf("decoded responses request structure=%s", structureJSONForLog(req))
+	logf := h.logf
+	if h.sessionLogf != nil {
+		if scoped := h.sessionLogf(req); scoped != nil {
+			logf = scoped
+		}
+	}
+	logf("raw incoming body bytes=%d", len(rawBody))
+	logf("decoded responses request structure=%s", structureJSONForLog(req))
 
 	if h.mode == ResponsesModePreferResponses && h.postResponses != nil {
 		upResp, err := h.postResponses(r.Context(), req)
 		if err != nil {
-			h.logf("upstream responses request failed: %v", err)
+			logf("upstream responses request failed: %v", err)
 			h.warnf("upstream request failed")
 			httpjson.WriteError(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
 			return
 		}
 		if upResp.StatusCode < 400 {
-			h.logf("route=request->responses_passthrough status=%d", upResp.StatusCode)
+			logf("route=request->responses_passthrough status=%d", upResp.StatusCode)
 			defer upResp.Body.Close()
-			ForwardResponsesPassthrough(w, upResp, h.logf)
+			ForwardResponsesPassthrough(w, upResp, logf)
 			return
 		}
 		errBody, _ := io.ReadAll(upResp.Body)
@@ -115,49 +128,53 @@ func (h codexResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
-		h.logf("responses passthrough fallback triggered status=%d body_bytes=%d", upResp.StatusCode, len(errBody))
-		h.logf("route=request->chat_fallback reason=responses_not_supported status=%d", upResp.StatusCode)
+		logf("responses passthrough fallback triggered status=%d body_bytes=%d", upResp.StatusCode, len(errBody))
+		logf("route=request->chat_fallback reason=responses_not_supported status=%d", upResp.StatusCode)
 	}
 
 	selection, err := bridge.SelectRouteWithOptions(h.route, bridge.SelectionOptions{
 		Reasoning: h.reasoningPolicyForRequest(req),
 	})
 	if err != nil {
-		h.logf("route selection failed: %v", err)
+		logf("route selection failed: %v", err)
 		httpjson.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	h.logDroppedReasoningControls(req)
-	if h.executor == nil {
-		h.logf("upstream executor missing")
+	h.logDroppedReasoningControls(req, logf)
+	executor := h.executor
+	if h.executorForLog != nil {
+		executor = h.executorForLog(logf)
+	}
+	if executor == nil {
+		logf("upstream executor missing")
 		h.warnf("upstream executor missing")
 		httpjson.WriteError(w, http.StatusBadGateway, "upstream executor missing")
 		return
 	}
 
-	upstreamReq, upResp, err := core.ExecuteTranslated(r.Context(), req, selection.Translator, h.executor, h.prepareRequestForSelection(selection))
+	upstreamReq, upResp, err := core.ExecuteTranslated(r.Context(), req, selection.Translator, executor, h.prepareRequestForSelection(selection))
 	if err != nil {
 		var perr core.PipelineError
 		if errors.As(err, &perr) && perr.Stage == core.PipelineStageTranslate {
-			h.logf("request translate failed: %v", perr.Err)
+			logf("request translate failed: %v", perr.Err)
 			httpjson.WriteError(w, http.StatusBadRequest, "invalid request")
 			return
 		}
-		h.logf("upstream request failed: %v", err)
+		logf("upstream request failed: %v", err)
 		h.warnf("upstream request failed")
 		httpjson.WriteError(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
 		return
 	}
-	h.logf("mapped upstream request(initial) structure=%s", structureJSONForLog(upstreamReq))
-	h.logf("route=request->%s status=%d", selection.Route.Target, upResp.StatusCode)
+	logf("mapped upstream request(initial) structure=%s", structureJSONForLog(upstreamReq))
+	logf("route=request->%s status=%d", selection.Route.Target, upResp.StatusCode)
 	defer upResp.Body.Close()
 
 	stream, _ := req["stream"].(bool)
 	if stream {
-		ForwardCodexStreamWithWriter(w, upResp, selection.Stream, h.warnf, h.logf)
+		ForwardCodexStreamWithWriter(w, upResp, selection.Stream, h.warnf, logf)
 		return
 	}
-	ForwardCodexNonStreamWithWriter(w, upResp, selection.NonStream, h.warnf, h.logf)
+	ForwardCodexNonStreamWithWriter(w, upResp, selection.NonStream, h.warnf, logf)
 }
 
 func (h codexResponsesHandler) prepareRequestForSelection(selection bridge.RouteSelection) core.RequestPreparer {
@@ -167,7 +184,7 @@ func (h codexResponsesHandler) prepareRequestForSelection(selection bridge.Route
 	return nil
 }
 
-func (h codexResponsesHandler) logDroppedReasoningControls(req map[string]any) {
+func (h codexResponsesHandler) logDroppedReasoningControls(req map[string]any, logf func(format string, args ...any)) {
 	if h.route.Normalize().Target != core.TargetOpenAIChat {
 		return
 	}
@@ -177,7 +194,7 @@ func (h codexResponsesHandler) logDroppedReasoningControls(req map[string]any) {
 	if len(dropped) == 0 {
 		return
 	}
-	h.logf("reasoning controls degraded target=%s model=%s dropped=%s", core.TargetOpenAIChat, irReq.Model, strings.Join(dropped, ","))
+	logf("reasoning controls degraded target=%s model=%s dropped=%s", core.TargetOpenAIChat, irReq.Model, strings.Join(dropped, ","))
 }
 
 func (h codexResponsesHandler) reasoningPolicyForRequest(req map[string]any) policy.ReasoningPolicy {

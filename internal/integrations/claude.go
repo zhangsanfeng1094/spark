@@ -165,15 +165,19 @@ func (c *Claude) RunWithPrompt(profile *config.Profile, model string, args []str
 	return runCmd(claudePath, cmdArgs, env)
 }
 
+// claudePromptArgs returns CLI args for file-based prompt injection.
 func claudePromptArgs(prompt *config.PromptInjection) []string {
 	if prompt == nil {
 		return nil
 	}
+	if prompt.Path == "" {
+		return nil
+	}
 	switch prompt.Mode {
 	case config.PromptModeReplace:
-		return []string{"--system-prompt", prompt.Content}
+		return []string{"--system-prompt-file", prompt.Path}
 	case config.PromptModeAppend:
-		return []string{"--append-system-prompt", prompt.Content}
+		return []string{"--append-system-prompt-file", prompt.Path}
 	default:
 		return nil
 	}

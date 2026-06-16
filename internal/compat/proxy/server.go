@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,19 +15,21 @@ import (
 )
 
 type compatProxyServer struct {
-	server      *http.Server
-	listener    net.Listener
-	mux         *http.ServeMux
-	baseURL     string
-	client      *http.Client
-	quietStderr bool
-	logFile     io.WriteCloser
-	logMu       sync.Mutex
-	logPath     string
-	logPrefix   string
-	closeOnce   sync.Once
-	closeErr    error
-	restore     func()
+	server       *http.Server
+	listener     net.Listener
+	mux          *http.ServeMux
+	baseURL      string
+	client       *http.Client
+	quietStderr  bool
+	logFile      io.WriteCloser
+	sessionLogs  map[string]io.WriteCloser
+	sessionPaths map[string]string
+	logMu        sync.Mutex
+	logPath      string
+	logPrefix    string
+	closeOnce    sync.Once
+	closeErr     error
+	restore      func()
 }
 
 func newCompatProxyServer(openLogFile func() (io.WriteCloser, string, error), logPrefix string, quietStderr bool) (*compatProxyServer, error) {
@@ -40,14 +43,16 @@ func newCompatProxyServer(openLogFile func() (io.WriteCloser, string, error), lo
 		return nil, err
 	}
 	return &compatProxyServer{
-		listener:    ln,
-		mux:         http.NewServeMux(),
-		baseURL:     "http://" + ln.Addr().String(),
-		client:      proxyutil.NewStreamingHTTPClient(),
-		quietStderr: quietStderr,
-		logFile:     logFile,
-		logPath:     logPath,
-		logPrefix:   logPrefix,
+		listener:     ln,
+		mux:          http.NewServeMux(),
+		baseURL:      "http://" + ln.Addr().String(),
+		client:       proxyutil.NewStreamingHTTPClient(),
+		quietStderr:  quietStderr,
+		logFile:      logFile,
+		sessionLogs:  map[string]io.WriteCloser{},
+		sessionPaths: map[string]string{},
+		logPath:      logPath,
+		logPrefix:    logPrefix,
 	}, nil
 }
 
@@ -91,9 +96,43 @@ func (s *compatProxyServer) Close() error {
 			_ = s.logFile.Close()
 			s.logFile = nil
 		}
+		for key, w := range s.sessionLogs {
+			_ = w.Close()
+			delete(s.sessionLogs, key)
+		}
 		s.logMu.Unlock()
 	})
 	return s.closeErr
+}
+
+func (s *compatProxyServer) sessionLogf(sessionID string) func(format string, args ...any) {
+	if s == nil {
+		return func(string, ...any) {}
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return s.logf
+	}
+	clean := proxyutil.SanitizeLogFilePart(sessionID)
+	return func(format string, args ...any) {
+		line := fmt.Sprintf("["+s.logPrefix+"] "+format, args...)
+		s.logMu.Lock()
+		defer s.logMu.Unlock()
+		if s.logFile != nil {
+			_, _ = fmt.Fprintf(s.logFile, "%s %s session=%s\n", time.Now().Format(time.RFC3339), line, clean)
+		}
+		w := s.sessionLogs[clean]
+		if w == nil {
+			var path string
+			var err error
+			w, path, err = proxyutil.OpenProxySessionLogFile(s.logPath, clean, s.logPrefix)
+			if err != nil {
+				return
+			}
+			s.sessionLogs[clean] = w
+			s.sessionPaths[clean] = path
+		}
+		_, _ = fmt.Fprintf(w, "%s %s\n", time.Now().Format(time.RFC3339), line)
+	}
 }
 
 func (s *compatProxyServer) logf(format string, args ...any) {

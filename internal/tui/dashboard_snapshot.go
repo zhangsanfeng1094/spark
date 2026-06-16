@@ -72,43 +72,6 @@ func RenderMCPManagerSnapshot(cfg *config.RootConfig, width, height int, state s
 	return m.View(), nil
 }
 
-func RenderPromptManagerSnapshot(cfg *config.RootConfig, width, height int, state string) (string, error) {
-	if cfg == nil {
-		return "", fmt.Errorf("config is required")
-	}
-	width, height = normalizeSnapshotSize(width, height)
-	m := newPromptManagerModel(cfg)
-	m.width = width
-	m.height = height
-
-	switch strings.ToLower(strings.TrimSpace(state)) {
-	case "", "overview", "presets":
-	case "disabled":
-		m.cfg.Prompts.SetEnabled(false)
-	case "bindings":
-		m.section = promptSectionBindings
-	case "binding-disabled":
-		m.section = promptSectionBindings
-		if len(m.cfg.Prompts.Bindings) == 0 {
-			return "", fmt.Errorf("binding-disabled prompt snapshot requires a binding")
-		}
-		m.cfg.Prompts.Bindings[0].SetEnabled(false)
-	case "add", "add-preset":
-		m.section = promptSectionPresets
-		m.startAddCurrentSection()
-	case "add-binding":
-		m.section = promptSectionBindings
-		m.startAddCurrentSection()
-	case "edit", "edit-current":
-		m.startEditCurrent()
-	case "error":
-		m.status = errorStatus("Prompt preset file is empty.")
-	default:
-		return "", fmt.Errorf("unknown prompt snapshot state: %s", state)
-	}
-	return m.View(), nil
-}
-
 func RenderSkillManagerSnapshot(registry *skills.Registry, width, height int, state string) (string, error) {
 	width, height = normalizeSnapshotSize(width, height)
 	m := newSkillManagerModel(registry)

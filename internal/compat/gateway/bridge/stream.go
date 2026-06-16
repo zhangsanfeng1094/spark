@@ -130,6 +130,7 @@ func streamResultFromCodex(result codex.ResponsesStreamResult) StreamResult {
 		SawDone:          result.SawDone,
 		SawContentDelta:  result.SawContentDelta,
 		ReasoningLen:     result.ReasoningLen,
+		ReasoningSamples: result.ReasoningSamples,
 		FirstValidChunk:  result.FirstValidChunk,
 		LastValidChunk:   result.LastValidChunk,
 		Usage:            result.Usage,
