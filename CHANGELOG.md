@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/zhangsanfeng1094/spark/compare/v0.12.0...v0.13.0) (2026-06-16)
+
+
+### Features
+
+* add PromptsView component with presets and bindings management ([b7deb7a](https://github.com/zhangsanfeng1094/spark/commit/b7deb7abe9e310c118880b7306c520cbc02205e8))
+* 增加prompt ([3ddd945](https://github.com/zhangsanfeng1094/spark/commit/3ddd945f64f51914337619cc745c50dd5232ddd8))
+
 ## [0.12.0](https://github.com/zhangsanfeng1094/spark/compare/v0.11.0...v0.12.0) (2026-06-03)
 
 
