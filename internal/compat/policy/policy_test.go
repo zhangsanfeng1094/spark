@@ -99,6 +99,93 @@ func TestReasoningPolicyProviderSpecificControls(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatReasoningPolicyFieldPerUpstream(t *testing.T) {
+	tests := []struct {
+		name        string
+		upstream    string
+		model       string
+		wantField   string
+		wantEcho    bool
+	}{
+		{
+			name:      "deepseek uses reasoning_content and echoes",
+			upstream:  "https://api.deepseek.com/v1",
+			model:     "deepseek-chat",
+			wantField: "reasoning_content",
+			wantEcho:  true,
+		},
+		{
+			name:      "mimo uses reasoning_content and echoes",
+			upstream:  "https://gateway.example/v1",
+			model:     "mimo-v2.5-pro",
+			wantField: "reasoning_content",
+			wantEcho:  true,
+		},
+		{
+			name:      "copilot uses reasoning_text and does not echo",
+			upstream:  "https://api.githubcopilot.com",
+			model:     "gpt-5",
+			wantField: "reasoning_text",
+			wantEcho:  false,
+		},
+		{
+			name:      "qwen uses thought and does not echo",
+			upstream:  "https://dashscope.aliyuncs.com/v1",
+			model:     "qwen3-235b-a22b",
+			wantField: "thought",
+			wantEcho:  false,
+		},
+		{
+			name:      "generic openai uses reasoning_content and does not echo",
+			upstream:  "https://api.openai.com/v1",
+			model:     "gpt-4.1",
+			wantField: "reasoning_content",
+			wantEcho:  false,
+		},
+		{
+			name:      "strict generic uses reasoning_content and does not echo",
+			upstream:  "https://strict.example/v1",
+			model:     "generic-model",
+			wantField: "reasoning_content",
+			wantEcho:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := OpenAIChatReasoningPolicy(tt.upstream, tt.model)
+			if p.Field != tt.wantField {
+				t.Fatalf("field mismatch: want %q, got %q", tt.wantField, p.Field)
+			}
+			isEcho := p.Mode == ReasoningRequireForToolCalls
+			if isEcho != tt.wantEcho {
+				t.Fatalf("echo mismatch: want %v, got %v (mode=%q)",
+					tt.wantEcho, isEcho, p.Mode)
+			}
+			// ChatReasoningField() must agree with Field when Field is set.
+			if got := p.ChatReasoningField(); got != tt.wantField {
+				t.Fatalf("ChatReasoningField mismatch: want %q, got %q", tt.wantField, got)
+			}
+		})
+	}
+}
+
+func TestPreserveReasoningContentFieldIsReasoningContent(t *testing.T) {
+	// PreserveReasoningContent is the generic model-routed openai_chat
+	// fallback (used when upstreamBase==""), not an anthropic-protocol path,
+	// so it writes the DeepSeek-extension "reasoning_content" field.
+	p := PreserveReasoningContent()
+	if p.Field != "reasoning_content" {
+		t.Fatalf("PreserveReasoningContent field: want %q, got %q", "reasoning_content", p.Field)
+	}
+	if p.Mode != ReasoningPreserve {
+		t.Fatalf("PreserveReasoningContent mode: want %q, got %q", ReasoningPreserve, p.Mode)
+	}
+	if got := p.ChatReasoningField(); got != "reasoning_content" {
+		t.Fatalf("PreserveReasoningContent ChatReasoningField: want %q, got %q", "reasoning_content", got)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

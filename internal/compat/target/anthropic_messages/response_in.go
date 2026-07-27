@@ -27,23 +27,32 @@ func anthropicResponseContent(items []any) []ir.ContentBlock {
 				out = append(out, ir.Text(text))
 			}
 		case "thinking":
-			if text := stringValue(block["thinking"]); text != "" {
-				out = append(out, ir.ContentBlock{
-					Type: ir.BlockReasoning,
-					Reasoning: &ir.ReasoningBlock{
-						Text:       text,
-						Signature:  stringValue(block["signature"]),
-						Visibility: ir.ReasoningVisibilityInternal,
-					},
-					Raw: block,
-				})
+			// A thinking block carries encrypted reasoning signature for
+			// multi-turn continuity. The `thinking` text may be empty when
+			// display:"omitted" was requested; keep the block whenever a
+			// signature is present so the round-trip preserves it.
+			text := stringValue(block["thinking"])
+			sig := stringValue(block["signature"])
+			if text == "" && sig == "" {
+				continue
 			}
+			out = append(out, ir.ContentBlock{
+				Type: ir.BlockReasoning,
+				Reasoning: &ir.ReasoningBlock{
+					Text:       text,
+					Signature:  sig,
+					Display:    ir.ReasoningDisplay(stringValue(block["display"])),
+					Visibility: ir.ReasoningVisibilityInternal,
+				},
+				Raw: block,
+			})
 		case "redacted_thinking":
-			if text := stringValue(block["data"]); text != "" {
+			if data := stringValue(block["data"]); data != "" {
 				out = append(out, ir.ContentBlock{
 					Type: ir.BlockReasoning,
 					Reasoning: &ir.ReasoningBlock{
-						Text:       text,
+						Text:       data,
+						Redacted:   true,
 						Visibility: ir.ReasoningVisibilityInternal,
 					},
 					Raw: block,

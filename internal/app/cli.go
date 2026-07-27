@@ -873,12 +873,7 @@ func launchIntegration(name string, opts LaunchOptions) error {
 		if len(models) == 0 {
 			return fmt.Errorf("at least one model required")
 		}
-		fmt.Printf("This will modify %s:\n", r.String())
-		for _, p := range ed.Paths() {
-			fmt.Printf("  %s\n", p)
-		}
-		fmt.Printf("Backups directory: %s\n", config.BackupDir())
-		ok, err := tui.Confirm("Proceed", true)
+		ok, err := confirmEditorLaunch(r.String(), profileName, models, ed.Paths())
 		if err != nil {
 			return err
 		}
@@ -910,14 +905,25 @@ func launchIntegration(name string, opts LaunchOptions) error {
 		return fmt.Errorf("model cannot be empty")
 	}
 
-	cfg.UpsertModelHistory(models[0])
-	cfg.History.LastSelection = strings.ToLower(name)
+	cfg.RecordLaunch(name, profileName, models[0])
 	if err := config.Save(cfg); err != nil {
 		return err
 	}
 
 	if opts.ConfigOnly {
-		launchNow, err := tui.Confirm("Launch now", false)
+		launchNow, err := tui.ConfirmDetails(tui.ConfirmRequest{
+			Title:   "Config written — launch " + r.String() + "?",
+			Summary: "Spark already updated this integration's config for the selected model.",
+			Details: []string{
+				"Integration: " + r.String(),
+				"Profile:     " + profileName,
+				"Model:       " + models[0],
+			},
+			Footnote:       "Choose Launch to start the agent now, or Not now to stop after writing config.",
+			ConfirmLabel:   "Launch now",
+			CancelLabel:    "Not now",
+			DefaultConfirm: false,
+		})
 		if err != nil {
 			return err
 		}
@@ -955,6 +961,43 @@ func formatLaunchLine(integration, model, profileName string) string {
 		colorLaunchValue(launchModelValueSGR, model),
 		colorLaunchValue(launchProfileValueSGR, profileName),
 	)
+}
+
+// confirmEditorLaunch asks before Spark rewrites an integration's on-disk config.
+func confirmEditorLaunch(integration, profileName string, models, paths []string) (bool, error) {
+	return tui.ConfirmDetails(editorLaunchConfirmRequest(integration, profileName, models, paths, config.BackupDir()))
+}
+
+func editorLaunchConfirmRequest(integration, profileName string, models, paths []string, backupDir string) tui.ConfirmRequest {
+	details := make([]string, 0, len(paths)+6)
+	details = append(details,
+		"Integration: "+integration,
+		"Profile:     "+profileName,
+	)
+	if len(models) == 1 {
+		details = append(details, "Model:       "+models[0])
+	} else if len(models) > 1 {
+		details = append(details, "Models:      "+strings.Join(models, ", "))
+	}
+	if len(paths) > 0 {
+		details = append(details, "Files Spark will update:")
+		for _, p := range paths {
+			details = append(details, "  "+p)
+		}
+	}
+	details = append(details,
+		"Spark only touches its own managed entries (e.g. spark-* models).",
+		"Your other settings, logins, and defaults stay as they are.",
+	)
+	return tui.ConfirmRequest{
+		Title:          "Apply Spark config for " + integration + "?",
+		Summary:        "Before launching, Spark writes provider/model settings so this agent uses your selected profile.",
+		Details:        details,
+		Footnote:       "Backups (if any): " + backupDir + "  ·  Esc cancels without writing.",
+		ConfirmLabel:   "Write config & launch",
+		CancelLabel:    "Cancel",
+		DefaultConfirm: true,
+	}
 }
 
 func colorLaunchValue(sgr, value string) string {

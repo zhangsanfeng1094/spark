@@ -18,7 +18,13 @@ func (m *pmModel) runAction(action int) tea.Cmd {
 		m.copySelectedProfile()
 		return nil
 	case pmActDel:
-		m.deleteSelectedProfile()
+		if len(m.profileNames) <= 1 {
+			m.setUserStatus(pmStatusWarning, "Cannot delete the last profile.")
+			return nil
+		}
+		m.confirmDelete = true
+		name := m.currentProfileName()
+		m.setUserStatus(pmStatusWarning, fmt.Sprintf("Delete '%s'? Press Y to confirm or N to cancel.", name))
 		return nil
 	case pmActDefault:
 		m.setCurrentProfileDefault()
@@ -355,10 +361,6 @@ func (m *pmModel) confirmAPITypeSelection() {
 }
 
 func (m *pmModel) deleteSelectedProfile() {
-	if len(m.profileNames) <= 1 {
-		m.setUserStatus(pmStatusWarning, "Cannot delete the last profile.")
-		return
-	}
 	name := m.currentProfileName()
 	delete(m.cfg.Profiles, name)
 
@@ -380,7 +382,21 @@ func (m *pmModel) deleteSelectedProfile() {
 	}
 	m.loadSelectedProfileFields()
 	m.dirty = true
+	m.confirmDelete = false
 	m.setUserStatus(pmStatusInfo, fmt.Sprintf("Deleted '%s'.", name))
+}
+
+func (m *pmModel) handleConfirmDeleteKey(msg tea.KeyMsg) tea.Cmd {
+	switch strings.ToLower(msg.String()) {
+	case "y":
+		m.deleteSelectedProfile()
+		return nil
+	case "n", "esc":
+		m.confirmDelete = false
+		m.setUserStatus(pmStatusInfo, "Delete canceled.")
+		return nil
+	}
+	return nil
 }
 
 func (m *pmModel) copySelectedProfile() {

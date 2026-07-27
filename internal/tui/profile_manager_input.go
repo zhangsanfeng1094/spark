@@ -446,6 +446,10 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		m.actionIndex = pmActDefault
 		return m.runAction(pmActDefault), true
 	case "f7":
+		if len(m.profileNames) <= 1 {
+			m.setUserStatus(pmStatusWarning, "Cannot delete the last profile.")
+			return nil, true
+		}
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActDel
 		return m.runAction(pmActDel), true

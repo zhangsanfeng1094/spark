@@ -5,6 +5,7 @@ import { Header } from './Header';
 import { Field } from './Field';
 import { Badge } from './Badge';
 import { ModelsEditor } from './ModelsEditor';
+import { ConfirmModal } from './ConfirmModal';
 import {
   Select,
   SelectContent,
@@ -88,6 +89,7 @@ export function ProfilesView() {
   const [draft, setDraft] = useState<Profile | null>(null);
   const [oldName, setOldName] = useState('');
   const [error, setError] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     api.getProfiles().then((next) => {
@@ -125,10 +127,27 @@ export function ProfilesView() {
     }
   };
 
+  const deleteProfile = async () => {
+    const next = await api.deleteProfile(oldName);
+    setData(next);
+    selectAfterSave(next, next.default_profile, setSelected, setDraft, setOldName);
+  };
+
   if (!data || !draft) return <div className="p-8 text-sm text-slate-500 font-semibold">{error || 'Loading…'}</div>;
 
   return (
-    <section className="mx-auto grid max-w-7xl grid-cols-1 items-start gap-6 md:grid-cols-[260px_minmax(0,1fr)]">
+    <>
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={deleteProfile}
+        title="删除 Profile"
+        message={`确定要删除 "${draft.name}" 吗？此操作无法撤销。`}
+        confirmText="删除"
+        cancelText="取消"
+        variant="danger"
+      />
+      <section className="mx-auto grid max-w-7xl grid-cols-1 items-start gap-6 md:grid-cols-[260px_minmax(0,1fr)]">
       <div className="md:col-span-2">
         <Header title="Profiles" subtitle="Configure providers, models and API credentials" error={error} />
       </div>
@@ -232,11 +251,7 @@ export function ProfilesView() {
             <button
               className={dangerButton}
               type="button"
-              onClick={async () => {
-                const next = await api.deleteProfile(oldName);
-                setData(next);
-                selectAfterSave(next, next.default_profile, setSelected, setDraft, setOldName);
-              }}
+              onClick={() => setShowDeleteConfirm(true)}
               disabled={!oldName}
             >
               <Trash2 size={15} /> Delete
@@ -246,5 +261,6 @@ export function ProfilesView() {
         </form>
       </div>
     </section>
+    </>
   );
 }

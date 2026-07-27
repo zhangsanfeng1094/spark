@@ -255,3 +255,155 @@ func TestChatStreamEventsMapReasoningToolCallsAndUsage(t *testing.T) {
 		t.Fatalf("stop event mismatch: %#v", events[3])
 	}
 }
+
+func TestChatResponseReadsAlternateReasoningFields(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  any
+		want string
+	}{
+		{"reasoning_text string", "reasoning_text", "copilot think", "copilot think"},
+		{"thinking string", "thinking", "anthropic think", "anthropic think"},
+		{"thought string", "thought", "qwen3 think", "qwen3 think"},
+		{"reasoning_details array", "reasoning_details", []any{
+			map[string]any{"type": "summary_text", "text": "summary think"},
+		}, "summary think"},
+		{"reasoning_details multiple items", "reasoning_details", []any{
+			map[string]any{"type": "summary_text", "text": "first"},
+			map[string]any{"type": "summary_text", "text": "second"},
+		}, "first\nsecond"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := ChatResponse(map[string]any{
+				"choices": []any{
+					map[string]any{
+						"message": map[string]any{tc.key: tc.val},
+					},
+				},
+			})
+			if len(resp.Output) != 1 {
+				t.Fatalf("expected 1 output block, got %#v", resp.Output)
+			}
+			if resp.Output[0].Type != ir.BlockReasoning {
+				t.Fatalf("expected BlockReasoning, got %q", resp.Output[0].Type)
+			}
+			if resp.Output[0].Reasoning == nil || resp.Output[0].Reasoning.Text != tc.want {
+				t.Fatalf("reasoning text mismatch: %#v", resp.Output[0].Reasoning)
+			}
+		})
+	}
+}
+
+func TestChatStreamEventsReadsAlternateReasoningFields(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		val  any
+		want string
+	}{
+		{"reasoning_text string", "reasoning_text", "copilot think", "copilot think"},
+		{"thinking string", "thinking", "anthropic think", "anthropic think"},
+		{"thought string", "thought", "qwen3 think", "qwen3 think"},
+		{"reasoning_details array", "reasoning_details", []any{
+			map[string]any{"type": "summary_text", "text": "summary think"},
+		}, "summary think"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			events := ChatStreamEvents(map[string]any{
+				"choices": []any{
+					map[string]any{
+						"delta": map[string]any{tc.key: tc.val},
+					},
+				},
+			})
+			if len(events) != 1 {
+				t.Fatalf("expected 1 event, got %#v", events)
+			}
+			if events[0].Delta.Type != ir.BlockReasoning {
+				t.Fatalf("expected BlockReasoning delta, got %q", events[0].Delta.Type)
+			}
+			if events[0].Delta.Reasoning == nil || events[0].Delta.Reasoning.Text != tc.want {
+				t.Fatalf("reasoning text mismatch: %#v", events[0].Delta.Reasoning)
+			}
+		})
+	}
+}
+
+func TestChatResponseReasoningFieldPrecedence(t *testing.T) {
+	cases := []struct {
+		name    string
+		message map[string]any
+		want    string
+	}{
+		{
+			"reasoning_content beats thinking",
+			map[string]any{"reasoning_content": "first", "thinking": "second"},
+			"first",
+		},
+		{
+			"thinking beats thought",
+			map[string]any{"thinking": "first", "thought": "second"},
+			"first",
+		},
+		{
+			"reasoning beats reasoning_text",
+			map[string]any{"reasoning": "first", "reasoning_text": "second"},
+			"first",
+		},
+		{
+			"reasoning_text beats thinking",
+			map[string]any{"reasoning_text": "first", "thinking": "second"},
+			"first",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := ChatResponse(map[string]any{
+				"choices": []any{
+					map[string]any{"message": tc.message},
+				},
+			})
+			if len(resp.Output) != 1 || resp.Output[0].Reasoning == nil {
+				t.Fatalf("expected one reasoning block, got %#v", resp.Output)
+			}
+			if resp.Output[0].Reasoning.Text != tc.want {
+				t.Fatalf("precedence mismatch: want %q, got %q", tc.want, resp.Output[0].Reasoning.Text)
+			}
+		})
+	}
+}
+
+func TestExtractReasoningTextFromMapBroadened(t *testing.T) {
+	cases := []struct {
+		name string
+		m    map[string]any
+		want string
+		ok   bool
+	}{
+		{"reasoning_content", map[string]any{"reasoning_content": "a"}, "a", true},
+		{"reasoning", map[string]any{"reasoning": "b"}, "b", true},
+		{"reasoning_text", map[string]any{"reasoning_text": "c"}, "c", true},
+		{"thinking", map[string]any{"thinking": "d"}, "d", true},
+		{"thought", map[string]any{"thought": "e"}, "e", true},
+		{"reasoning_details array", map[string]any{"reasoning_details": []any{
+			map[string]any{"type": "summary_text", "text": "f"},
+		}}, "f", true},
+		{"empty map", map[string]any{}, "", false},
+		{"nil value falls through", map[string]any{"reasoning_content": nil, "thinking": "g"}, "g", true},
+		{"empty string falls through", map[string]any{"reasoning_content": "", "thought": "h"}, "h", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ExtractReasoningTextFromMap(tc.m)
+			if ok != tc.ok {
+				t.Fatalf("ok mismatch: want %v, got %v", tc.ok, ok)
+			}
+			if got != tc.want {
+				t.Fatalf("text mismatch: want %q, got %q", tc.want, got)
+			}
+		})
+	}
+}

@@ -43,14 +43,15 @@ const (
 )
 
 type ContentBlock struct {
-	Type       BlockType
-	Text       string
-	Reasoning  *ReasoningBlock
-	ToolCall   *ToolCall
-	ToolResult *ToolResult
-	Image      *ImageBlock
-	Document   *DocumentBlock
-	Raw        map[string]any
+	Type         BlockType
+	Text         string
+	Reasoning    *ReasoningBlock
+	ToolCall     *ToolCall
+	ToolResult   *ToolResult
+	Image        *ImageBlock
+	Document     *DocumentBlock
+	CacheControl map[string]any
+	Raw          map[string]any
 }
 
 type BlockType string
@@ -68,8 +69,23 @@ type ReasoningBlock struct {
 	Text           string
 	Signature      string
 	Visibility     ReasoningVisibility
-	ProviderFields map[string]any
+	// Redacted marks an Anthropic `redacted_thinking` block: the server
+	// returned only opaque `data`, with no plaintext `thinking` content.
+	// These blocks must be round-tripped unchanged on subsequent turns so
+	// the model can decrypt them server-side.
+	Redacted        bool
+	Display         ReasoningDisplay
+	ProviderFields  map[string]any
 }
+
+// ReasoningDisplay mirrors Anthropic's thinking `display` field.
+type ReasoningDisplay string
+
+const (
+	ReasoningDisplayUnspecified ReasoningDisplay = ""
+	ReasoningDisplaySummarized  ReasoningDisplay = "summarized"
+	ReasoningDisplayOmitted     ReasoningDisplay = "omitted"
+)
 
 type ReasoningVisibility string
 
@@ -95,9 +111,10 @@ type ToolResult struct {
 }
 
 type Tool struct {
-	Type     ToolType
-	Function FunctionTool
-	Raw      map[string]any
+	Type         ToolType
+	Function     FunctionTool
+	CacheControl map[string]any
+	Raw          map[string]any
 }
 
 type ToolType string

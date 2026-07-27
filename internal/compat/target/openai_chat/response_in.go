@@ -22,15 +22,7 @@ func ChatResponse(raw map[string]any) ir.Response {
 
 func chatMessageContent(message map[string]any) []ir.ContentBlock {
 	out := make([]ir.ContentBlock, 0, 4)
-	if reasoning := reasoningText(message["reasoning_content"]); reasoning != "" {
-		out = append(out, ir.ContentBlock{
-			Type: ir.BlockReasoning,
-			Reasoning: &ir.ReasoningBlock{
-				Text:       reasoning,
-				Visibility: ir.ReasoningVisibilityInternal,
-			},
-		})
-	} else if reasoning := reasoningText(message["reasoning"]); reasoning != "" {
+	if reasoning, ok := firstReasoningText(message); ok {
 		out = append(out, ir.ContentBlock{
 			Type: ir.BlockReasoning,
 			Reasoning: &ir.ReasoningBlock{

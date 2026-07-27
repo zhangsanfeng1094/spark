@@ -187,3 +187,160 @@ func TestMessageStreamEventsRecordsCachedUsage(t *testing.T) {
 		t.Fatalf("unexpected usage record: %#v", records[0])
 	}
 }
+
+func TestMessagesOutboundReplaysThinkingSignatureAndDisplay(t *testing.T) {
+	req := ir.Request{
+		Model: "claude-sonnet-4-6",
+		Messages: []ir.Message{
+			{Role: ir.RoleUser, Content: []ir.ContentBlock{ir.Text("hi")}},
+			{
+				Role: ir.RoleAssistant,
+				Content: []ir.ContentBlock{
+					{
+						Type: ir.BlockReasoning,
+						Reasoning: &ir.ReasoningBlock{
+							Text:      "plan only",
+							Signature: "sig_roundtrip",
+							Display:   ir.ReasoningDisplaySummarized,
+						},
+					},
+					{
+						Type: ir.BlockToolCall,
+						ToolCall: &ir.ToolCall{
+							ID:        "toolu_1",
+							Type:      ir.ToolTypeFunction,
+							Name:      "sum",
+							Arguments: `{"a":1}`,
+						},
+					},
+				},
+			},
+			{Role: ir.RoleTool, Content: []ir.ContentBlock{{
+				Type:       ir.BlockToolResult,
+				ToolResult: &ir.ToolResult{ToolCallID: "toolu_1", Output: `{"result":1}`},
+			}}},
+		},
+	}
+
+	out := MessagesOutbound{}.BuildRequest(req)
+	msgs := out["messages"].([]map[string]any)
+	// layout: [user, assistant, user(tool_result)]
+	assistantContent := msgs[1]["content"].([]map[string]any)
+	if len(assistantContent) != 2 {
+		t.Fatalf("expected thinking + tool_use blocks, got %#v", assistantContent)
+	}
+	want := map[string]any{
+		"type":      "thinking",
+		"thinking":  "plan only",
+		"signature": "sig_roundtrip",
+		"display":   "summarized",
+	}
+	got := assistantContent[0]
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("thinking field %q mismatch: got %#v want %#v (full: %#v)", k, got[k], v, got)
+		}
+	}
+}
+
+func TestMessagesOutboundReplaysOmittedThinkingEmptyText(t *testing.T) {
+	req := ir.Request{
+		Model: "claude-opus-4-7",
+		Messages: []ir.Message{
+			{Role: ir.RoleUser, Content: []ir.ContentBlock{ir.Text("hi")}},
+			{
+				Role: ir.RoleAssistant,
+				Content: []ir.ContentBlock{
+					{
+						Type: ir.BlockReasoning,
+						Reasoning: &ir.ReasoningBlock{
+							Text:      "",
+							Signature: "sig_omitted",
+							Display:   ir.ReasoningDisplayOmitted,
+						},
+					},
+					{
+						Type: ir.BlockToolCall,
+						ToolCall: &ir.ToolCall{
+							ID: "toolu_1", Type: ir.ToolTypeFunction, Name: "sum", Arguments: `{"a":1}`,
+						},
+					},
+				},
+			},
+			{Role: ir.RoleTool, Content: []ir.ContentBlock{{
+				Type:       ir.BlockToolResult,
+				ToolResult: &ir.ToolResult{ToolCallID: "toolu_1", Output: `{"result":1}`},
+			}}},
+		},
+	}
+
+	out := MessagesOutbound{}.BuildRequest(req)
+	msgs := out["messages"].([]map[string]any)
+	assistantContent := msgs[1]["content"].([]map[string]any)
+	if assistantContent[0]["type"] != "thinking" || assistantContent[0]["thinking"] != "" || assistantContent[0]["signature"] != "sig_omitted" {
+		t.Fatalf("omitted thinking block round-trip mismatch: %#v", assistantContent[0])
+	}
+}
+
+func TestMessagesOutboundReplaysRedactedThinkingVerbatim(t *testing.T) {
+	raw := map[string]any{"type": "redacted_thinking", "data": "opaque-bytes"}
+	req := ir.Request{
+		Model: "claude-sonnet-4-6",
+		Messages: []ir.Message{
+			{Role: ir.RoleUser, Content: []ir.ContentBlock{ir.Text("hi")}},
+			{
+				Role: ir.RoleAssistant,
+				Content: []ir.ContentBlock{
+					{
+						Type:      ir.BlockReasoning,
+						Reasoning: &ir.ReasoningBlock{Text: "opaque-bytes", Redacted: true},
+						Raw:       raw,
+					},
+					{
+						Type: ir.BlockToolCall,
+						ToolCall: &ir.ToolCall{
+							ID: "toolu_1", Type: ir.ToolTypeFunction, Name: "sum", Arguments: `{"a":1}`,
+						},
+					},
+				},
+			},
+			{Role: ir.RoleTool, Content: []ir.ContentBlock{{
+				Type:       ir.BlockToolResult,
+				ToolResult: &ir.ToolResult{ToolCallID: "toolu_1", Output: `{"result":1}`},
+			}}},
+		},
+	}
+
+	out := MessagesOutbound{}.BuildRequest(req)
+	msgs := out["messages"].([]map[string]any)
+	assistantContent := msgs[1]["content"].([]map[string]any)
+	if assistantContent[0]["type"] != "redacted_thinking" || assistantContent[0]["data"] != "opaque-bytes" {
+		t.Fatalf("redacted_thinking outbound mismatch: %#v", assistantContent[0])
+	}
+}
+
+func TestMessageResponseParsesRedactedThinking(t *testing.T) {
+	resp := MessageResponse(map[string]any{
+		"id":          "msg_1",
+		"model":       "claude-sonnet-4-6",
+		"stop_reason": "tool_use",
+		"usage":       map[string]any{"input_tokens": float64(1), "output_tokens": float64(1)},
+		"content": []any{
+			map[string]any{"type": "redacted_thinking", "data": "opaque-bytes"},
+			map[string]any{"type": "tool_use", "id": "toolu_1", "name": "sum", "input": map[string]any{"a": float64(1)}},
+		},
+	})
+
+	redacted := false
+	for _, b := range resp.Output {
+		if b.Type != ir.BlockReasoning || b.Reasoning == nil {
+			continue
+		}
+		if b.Reasoning.Redacted && b.Reasoning.Text == "opaque-bytes" {
+			redacted = true
+		}
+	}
+	if !redacted {
+		t.Fatalf("redacted_thinking block not parsed from response: %#v", resp.Output)
+	}
+}

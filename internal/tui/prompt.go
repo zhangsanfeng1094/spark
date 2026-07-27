@@ -99,17 +99,59 @@ func InputWithDefault(prompt, def string) (string, error) {
 	return line, nil
 }
 
-// Confirm 确认对话框
+// Confirm is a simple Yes/No dialog. Prefer ConfirmDetails when the action
+// needs context (paths, why, side effects).
 func Confirm(prompt string, def bool) (bool, error) {
-	choices := []string{"Yes", "No"}
+	return ConfirmDetails(ConfirmRequest{
+		Title:          prompt,
+		ConfirmLabel:   "Yes",
+		CancelLabel:    "No",
+		DefaultConfirm: def,
+	})
+}
+
+// ConfirmRequest describes a richer confirmation dialog.
+type ConfirmRequest struct {
+	Title          string
+	// Summary is a short lead line under the title (what is about to happen).
+	Summary string
+	// Details are bullet-style lines (paths, models, notes).
+	Details []string
+	// Footnote is a muted trailing note (e.g. backup location).
+	Footnote string
+	// ConfirmLabel / CancelLabel default to "Yes" / "No".
+	ConfirmLabel   string
+	CancelLabel    string
+	DefaultConfirm bool
+}
+
+// ConfirmDetails shows a structured confirm dialog and returns whether the
+// user chose the confirm action.
+func ConfirmDetails(req ConfirmRequest) (bool, error) {
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = "Confirm"
+	}
+	confirmLabel := strings.TrimSpace(req.ConfirmLabel)
+	if confirmLabel == "" {
+		confirmLabel = "Yes"
+	}
+	cancelLabel := strings.TrimSpace(req.CancelLabel)
+	if cancelLabel == "" {
+		cancelLabel = "No"
+	}
 	cursor := 1
-	if def {
+	if req.DefaultConfirm {
 		cursor = 0
 	}
 	m := &confirmModel{
-		title:   prompt,
-		options: choices,
-		cursor:  cursor,
+		title:        title,
+		summary:      strings.TrimSpace(req.Summary),
+		details:      append([]string(nil), req.Details...),
+		footnote:     strings.TrimSpace(req.Footnote),
+		options:      []string{confirmLabel, cancelLabel},
+		cursor:       cursor,
+		confirmLabel: confirmLabel,
 	}
 	p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	out, err := p.Run()
@@ -120,7 +162,7 @@ func Confirm(prompt string, def bool) (bool, error) {
 	if result.canceled {
 		return false, fmt.Errorf("aborted")
 	}
-	return result.choice == "Yes", nil
+	return result.choice == result.confirmLabel, nil
 }
 
 // InputCSV 输入CSV
@@ -250,14 +292,34 @@ func (m *inputModel) View() string {
 }
 
 type confirmModel struct {
-	title    string
-	options  []string
-	cursor   int
-	choice   string
-	canceled bool
+	title        string
+	summary      string
+	details      []string
+	footnote     string
+	options      []string
+	cursor       int
+	choice       string
+	confirmLabel string
+	canceled     bool
 }
 
 func (m *confirmModel) Init() tea.Cmd { return nil }
+
+func (m *confirmModel) bodyLineCount() int {
+	n := 0
+	if m.summary != "" {
+		n++
+	}
+	n += len(m.details)
+	if m.footnote != "" {
+		n++
+	}
+	// Blank line before options when any body content is present.
+	if n > 0 {
+		n++
+	}
+	return n
+}
 
 func (m *confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -274,13 +336,25 @@ func (m *confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.options)-1 {
 				m.cursor++
 			}
+		case "y", "Y":
+			if m.confirmLabel != "" {
+				m.choice = m.confirmLabel
+				return m, tea.Quit
+			}
+		case "n", "N":
+			if len(m.options) > 1 {
+				m.choice = m.options[len(m.options)-1]
+				return m, tea.Quit
+			}
 		case "enter":
 			m.choice = m.options[m.cursor]
 			return m, tea.Quit
 		}
 	case tea.MouseMsg:
 		if isPrimaryClick(msg.Type) {
-			clickY := msg.Y - 2 // 标题偏移
+			// Title (+ optional margin) occupies the first visual block; body
+			// content follows, then the option list.
+			clickY := msg.Y - 2 - m.bodyLineCount()
 			if clickY >= 0 && clickY < len(m.options) {
 				m.cursor = clickY
 				m.choice = m.options[m.cursor]
@@ -300,7 +374,24 @@ func isPrimaryClick(t tea.MouseEventType) bool {
 
 func (m *confirmModel) View() string {
 	var b strings.Builder
-	b.WriteString(titleStyle(m.title) + "\n\n")
+	b.WriteString(titleStyle(m.title) + "\n")
+	if m.summary != "" {
+		b.WriteString("\n" + confirmSummaryStyle(m.summary))
+	}
+	for _, line := range m.details {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		b.WriteString("\n" + confirmDetailStyle("  • "+line))
+	}
+	if m.footnote != "" {
+		b.WriteString("\n" + confirmFootnoteStyle(m.footnote))
+	}
+	if m.summary != "" || len(m.details) > 0 || m.footnote != "" {
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	for i, o := range m.options {
 		if i == m.cursor {
 			b.WriteString(selectedItemStyle("→ "+o) + "\n")
@@ -308,6 +399,21 @@ func (m *confirmModel) View() string {
 			b.WriteString(itemStyle("  "+o) + "\n")
 		}
 	}
-	b.WriteString("\n" + helpStyle("←/→ move • Enter confirm • q/esc cancel • 🖱️ click"))
+	b.WriteString("\n" + helpStyle("←/→ or j/k move • Enter confirm • y/n quick • esc cancel"))
 	return b.String()
 }
+
+var (
+	confirmSummaryStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#E8E8E8")).
+				Bold(true).
+				Render
+	confirmDetailStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#B8B8C8")).
+				Render
+	confirmFootnoteStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#7A7A8A")).
+				Italic(true).
+				MarginTop(1).
+				Render
+)

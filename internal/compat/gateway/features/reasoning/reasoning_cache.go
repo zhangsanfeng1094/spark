@@ -54,6 +54,12 @@ func chatReasoningSummary(chatReq map[string]any) chatReasoningStats {
 		if len(toolCallIDsFromChatMessage(msg)) > 0 {
 			stats.AssistantToolMessages++
 		}
+		// Diagnostic only: counts reasoning seen on the wire. Reads only the
+		// canonical DeepSeek field for a stable signal; per-upstream field
+		// variation (copilot reasoning_text / qwen thought / anthropic
+		// thinking) is handled by ApplyToChatRequest via policy.Field and is
+		// not reflected here — this stat is a coarse health probe, not an
+		// audit of which field was actually written.
 		if reasoning := stringValue(msg["reasoning_content"]); reasoning != "" {
 			stats.AssistantReasoningMessages++
 			stats.AssistantReasoningChars += len(reasoning)
@@ -66,7 +72,10 @@ func (c *ReasoningCache) ApplyToChatRequest(upstreamBase string, chatReq map[str
 	if chatReq == nil {
 		return
 	}
-	passReasoningContent := policy.RequiresOpenAIChatReasoningEcho(upstreamBase, stringValue(chatReq["model"]))
+	model := stringValue(chatReq["model"])
+	p := policy.OpenAIChatReasoningPolicy(upstreamBase, model)
+	field := p.ChatReasoningField()
+	passReasoningContent := policy.RequiresOpenAIChatReasoningEcho(upstreamBase, model)
 	for _, msg := range chatMessages(chatReq["messages"]) {
 		if stringValue(msg["role"]) != "assistant" {
 			continue
@@ -76,15 +85,15 @@ func (c *ReasoningCache) ApplyToChatRequest(upstreamBase string, chatReq map[str
 			continue
 		}
 		if reasoning, ok := c.ReasoningForToolCallIDs(ids); ok {
-			msg["reasoning_content"] = reasoning
+			msg[field] = reasoning
 			continue
 		}
 		if !passReasoningContent {
-			delete(msg, "reasoning_content")
+			delete(msg, field)
 			continue
 		}
-		if _, ok := msg["reasoning_content"]; !ok {
-			msg["reasoning_content"] = ""
+		if _, ok := msg[field]; !ok {
+			msg[field] = ""
 		}
 	}
 }

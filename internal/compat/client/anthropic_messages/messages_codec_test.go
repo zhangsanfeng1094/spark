@@ -180,3 +180,130 @@ func TestMessagesClientResponseMapsReasoningToThinkingBlock(t *testing.T) {
 		t.Fatalf("content order mismatch: %#v", content)
 	}
 }
+
+func TestMessagesInboundPreservesThinkingSignatureAndDisplay(t *testing.T) {
+	req := MessagesInbound(map[string]any{
+		"model": "claude-sonnet-4-6",
+		"messages": []any{
+			map[string]any{
+				"role": "assistant",
+				"content": []any{
+					map[string]any{
+						"type":      "thinking",
+						"thinking": "plan",
+						"signature": "sig_abc",
+						"display":   "summarized",
+					},
+					map[string]any{
+						"type": "tool_use",
+						"id":   "toolu_1",
+						"name": "sum",
+						"input": map[string]any{"a": float64(1)},
+					},
+				},
+			},
+		},
+	})
+
+	msg := req.Messages[0]
+	var reason *ir.ReasoningBlock
+	for _, b := range msg.Content {
+		if b.Type == ir.BlockReasoning && b.Reasoning != nil {
+			reason = b.Reasoning
+			break
+		}
+	}
+	if reason == nil {
+		t.Fatalf("expected reasoning block, got %#v", msg.Content)
+	}
+	if reason.Text != "plan" || reason.Signature != "sig_abc" || reason.Display != ir.ReasoningDisplaySummarized {
+		t.Fatalf("thinking block lost fields: %#v", reason)
+	}
+}
+
+func TestMessagesInboundPreservesEmptyThinkingWithSignature(t *testing.T) {
+	// display:"omitted" responses return an empty thinking field but keep
+	// the signature; subsequent turns must replay the block unchanged.
+	req := MessagesInbound(map[string]any{
+		"model": "claude-opus-4-7",
+		"messages": []any{
+			map[string]any{
+				"role": "assistant",
+				"content": []any{
+					map[string]any{
+						"type":      "thinking",
+						"thinking": "",
+						"signature": "sig_xyz",
+						"display":   "omitted",
+					},
+				},
+			},
+		},
+	})
+
+	msg := req.Messages[0]
+	var seen bool
+	for _, b := range msg.Content {
+		if b.Type == ir.BlockReasoning && b.Reasoning != nil {
+			if b.Reasoning.Text == "" && b.Reasoning.Signature == "sig_xyz" && b.Reasoning.Display == ir.ReasoningDisplayOmitted {
+				seen = true
+			}
+		}
+	}
+	if !seen {
+		t.Fatalf("empty thinking block with signature was dropped: %#v", msg.Content)
+	}
+}
+
+func TestMessagesInboundPreservesRedactedThinking(t *testing.T) {
+	raw := map[string]any{
+		"type": "redacted_thinking",
+		"data": "opaque-bytes",
+	}
+	req := MessagesInbound(map[string]any{
+		"model": "claude-sonnet-4-6",
+		"messages": []any{
+			map[string]any{
+				"role":    "assistant",
+				"content": []any{raw},
+			},
+		},
+	})
+
+	var seen bool
+	for _, b := range req.Messages[0].Content {
+		if b.Type != ir.BlockReasoning || b.Reasoning == nil {
+			continue
+		}
+		if b.Reasoning.Redacted && b.Reasoning.Text == "opaque-bytes" {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatalf("redacted_thinking block not preserved: %#v", req.Messages[0].Content)
+	}
+}
+
+func TestMessagesClientResponseMapsRedactedThinkingVerbatim(t *testing.T) {
+	raw := map[string]any{
+		"type": "redacted_thinking",
+		"data": "opaque-bytes",
+	}
+	msg := MessagesClientResponse(ir.Response{
+		ID:    "msg_1",
+		Model: "claude-sonnet-4-6",
+		Output: []ir.ContentBlock{{
+			Type:      ir.BlockReasoning,
+			Reasoning: &ir.ReasoningBlock{Text: "opaque-bytes", Redacted: true},
+			Raw:       raw,
+		}},
+	}, "")
+
+	content := msg["content"].([]map[string]any)
+	if len(content) != 1 {
+		t.Fatalf("content length mismatch: %#v", content)
+	}
+	if content[0]["type"] != "redacted_thinking" || content[0]["data"] != "opaque-bytes" {
+		t.Fatalf("redacted_thinking response block not verbatim: %#v", content[0])
+	}
+}

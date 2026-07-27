@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "command": "opencode --pure .",
+  "cwd": "../..",
+  "start": "home.build",
+  "states": [
+    {
+      "name": "commands.palette",
+      "include": ["Commands", "Suggested", "Switch session", "New session"],
+      "exclude": []
+    },
+    {
+      "name": "home.plan",
+      "include": ["Ask anything", "Plan", "tab agents", "ctrl+p commands"],
+      "exclude": ["Commands", "Suggested"]
+    },
+    {
+      "name": "home.build",
+      "include": ["Ask anything", "Build", "tab agents", "ctrl+p commands"],
+      "exclude": ["Commands", "Suggested"]
+    }
+  ],
+  "transitions": [
+    {
+      "from": "home.build",
+      "to": "home.plan",
+      "keys": ["Tab"],
+      "markers": ["tab agents", "ctrl+p commands"],
+      "selectedText": "Ask anything"
+    },
+    {
+      "from": "home.plan",
+      "to": "home.build",
+      "keys": ["Tab"],
+      "markers": ["tab agents", "ctrl+p commands"],
+      "selectedText": "Ask anything"
+    },
+    {
+      "from": "home.build",
+      "to": "commands.palette",
+      "keys": ["C-p"],
+      "markers": ["ctrl+p commands"],
+      "selectedText": "Ask anything"
+    },
+    {
+      "from": "home.plan",
+      "to": "commands.palette",
+      "keys": ["C-p"],
+      "markers": ["ctrl+p commands"],
+      "selectedText": "Ask anything"
+    }
+  ],
+  "candidates": {
+    "home.build": [["Tab"], ["C-p"]],
+    "home.plan": [["Tab"], ["C-p"]],
+    "default": [["Esc"], ["Tab"], ["C-p"]]
+  }
+}

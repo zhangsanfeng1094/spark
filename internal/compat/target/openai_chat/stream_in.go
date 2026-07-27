@@ -21,20 +21,7 @@ func ChatStreamEvents(chunk map[string]any) []ir.StreamEvent {
 	for choiceIndex, rawChoice := range listValue(chunk["choices"]) {
 		choice := mapValue(rawChoice)
 		delta := mapValue(choice["delta"])
-		if reasoning := reasoningText(delta["reasoning_content"]); reasoning != "" {
-			events = append(events, ir.StreamEvent{
-				Type:  ir.StreamEventContentDelta,
-				Index: choiceIndex,
-				Delta: ir.ContentBlock{
-					Type: ir.BlockReasoning,
-					Reasoning: &ir.ReasoningBlock{
-						Text:       reasoning,
-						Visibility: ir.ReasoningVisibilityInternal,
-					},
-				},
-				Raw: choice,
-			})
-		} else if reasoning := reasoningText(delta["reasoning"]); reasoning != "" {
+		if reasoning, ok := firstReasoningText(delta); ok {
 			events = append(events, ir.StreamEvent{
 				Type:  ir.StreamEventContentDelta,
 				Index: choiceIndex,

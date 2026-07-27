@@ -70,17 +70,43 @@ func contentBlockStartEvent(chunk map[string]any) ir.StreamEvent {
 			}
 		}
 	case "thinking":
-		if text := stringValue(block["thinking"]); text != "" {
+		// content_block_start opens a thinking block carrying the (possibly
+		// empty for display:omitted) thinking text and a signature slot
+		// that signature_delta fills later. Emit a delta with whatever we
+		// have so downstream can echo the block start; the signature is
+		// finalized in the signature_delta event.
+		text := stringValue(block["thinking"])
+		sig := stringValue(block["signature"])
+		if text == "" && sig == "" {
+			return ir.StreamEvent{}
+		}
+		return ir.StreamEvent{
+			Type:  ir.StreamEventContentDelta,
+			Index: index,
+			Delta: ir.ContentBlock{
+				Type: ir.BlockReasoning,
+				Reasoning: &ir.ReasoningBlock{
+					Text:       text,
+					Signature:  sig,
+					Display:   ir.ReasoningDisplay(stringValue(block["display"])),
+					Visibility: ir.ReasoningVisibilityInternal,
+				},
+			},
+			Raw: chunk,
+		}
+	case "redacted_thinking":
+		if data := stringValue(block["data"]); data != "" {
 			return ir.StreamEvent{
 				Type:  ir.StreamEventContentDelta,
 				Index: index,
 				Delta: ir.ContentBlock{
 					Type: ir.BlockReasoning,
 					Reasoning: &ir.ReasoningBlock{
-						Text:       text,
-						Signature:  stringValue(block["signature"]),
+						Text:       data,
+						Redacted:   true,
 						Visibility: ir.ReasoningVisibilityInternal,
 					},
+					Raw: block,
 				},
 				Raw: chunk,
 			}
