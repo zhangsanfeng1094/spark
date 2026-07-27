@@ -86,8 +86,8 @@ func outputConfigEffort(raw any) ir.ReasoningEffort {
 
 func anthropicMessages(req map[string]any) []ir.Message {
 	out := make([]ir.Message, 0, 8)
-	if sys := anthropicSystemToString(req["system"]); sys != "" {
-		out = append(out, ir.Message{Role: ir.RoleSystem, Content: []ir.ContentBlock{ir.Text(sys)}})
+	if sysBlocks := anthropicSystemBlocks(req["system"]); len(sysBlocks) > 0 {
+		out = append(out, ir.Message{Role: ir.RoleSystem, Content: sysBlocks})
 	}
 	items, _ := req["messages"].([]any)
 	for _, raw := range items {
@@ -112,12 +112,19 @@ func anthropicMessages(req map[string]any) []ir.Message {
 }
 
 func anthropicSystemToString(raw any) string {
+	return strings.Join(anthropicSystemTexts(raw), "\n")
+}
+
+func anthropicSystemTexts(raw any) []string {
 	if raw == nil {
-		return ""
+		return nil
 	}
 	switch v := raw.(type) {
 	case string:
-		return strings.TrimSpace(v)
+		if t := strings.TrimSpace(v); t != "" {
+			return []string{t}
+		}
+		return nil
 	case []any:
 		parts := make([]string, 0, len(v))
 		for _, item := range v {
@@ -131,9 +138,51 @@ func anthropicSystemToString(raw any) string {
 				}
 			}
 		}
-		return strings.Join(parts, "\n")
+		return parts
 	default:
-		return normalizeMessageContent(v)
+		if text := normalizeMessageContent(v); text != "" {
+			return []string{text}
+		}
+		return nil
+	}
+}
+
+func anthropicSystemBlocks(raw any) []ir.ContentBlock {
+	if raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case string:
+		if t := strings.TrimSpace(v); t != "" {
+			return []ir.ContentBlock{ir.Text(t)}
+		}
+		return nil
+	case []any:
+		blocks := make([]ir.ContentBlock, 0, len(v))
+		for _, item := range v {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if stringValue(m["type"]) != "text" {
+				continue
+			}
+			t := stringValue(m["text"])
+			if t == "" {
+				continue
+			}
+			block := ir.Text(t)
+			if cc := mapValue(m["cache_control"]); cc != nil {
+				block.CacheControl = cc
+			}
+			blocks = append(blocks, block)
+		}
+		return blocks
+	default:
+		if text := normalizeMessageContent(v); text != "" {
+			return []ir.ContentBlock{ir.Text(text)}
+		}
+		return nil
 	}
 }
 
@@ -166,15 +215,67 @@ func anthropicContentBlocks(raw any) []ir.ContentBlock {
 			switch stringValue(m["type"]) {
 			case "text", "input_text", "output_text":
 				if t := stringValue(m["text"]); t != "" {
-					blocks = append(blocks, ir.Text(t))
+					block := ir.Text(t)
+					if cc := mapValue(m["cache_control"]); cc != nil {
+						block.CacheControl = cc
+					}
+					blocks = append(blocks, block)
 				}
 			case "thinking":
-				if t := stringValue(m["thinking"]); t != "" {
-					blocks = append(blocks, ir.Reasoning(t))
+				// Anthropic `thinking` block: the assistant turn's reasoning.
+				// `signature` MUST be preserved unchanged across turns so the
+				// server can re-derive the full thinking on the next request.
+				// `display` (summarized|omitted) may also be replayed.
+				// Per Anthropic docs the block is returned even when
+				// `thinking` is empty (display:"omitted"); we keep it as long
+				// as a signature exists so multi-turn round-trip is safe.
+				text := stringValue(m["thinking"])
+				sig := stringValue(m["signature"])
+				if text == "" && sig == "" {
+					continue
 				}
+				block := ir.ContentBlock{
+					Type: ir.BlockReasoning,
+					Reasoning: &ir.ReasoningBlock{
+						Text:      text,
+						Signature: sig,
+						Display:   ir.ReasoningDisplay(stringValue(m["display"])),
+					},
+					Raw: m,
+				}
+				if cc := mapValue(m["cache_control"]); cc != nil {
+					block.CacheControl = cc
+				}
+				blocks = append(blocks, block)
+			case "redacted_thinking":
+				// Anthropic `redacted_thinking` block: opaque server-encrypted
+				// payload in `data`. We carry it verbatim via Raw and flag the
+				// block as redacted so the outbound side can emit the original
+				// `redacted_thinking` shape instead of a plain thinking block.
+				data := stringValue(m["data"])
+				if data == "" {
+					continue
+				}
+				block := ir.ContentBlock{
+					Type: ir.BlockReasoning,
+					Reasoning: &ir.ReasoningBlock{
+						Text:     data,
+						Redacted: true,
+					},
+					Raw: m,
+				}
+				if cc := mapValue(m["cache_control"]); cc != nil {
+					block.CacheControl = cc
+				}
+				blocks = append(blocks, block)
 			case "reasoning":
+				// Legacy/openai-style `reasoning` block; preserve text only.
 				if t := stringValue(m["text"]); t != "" {
-					blocks = append(blocks, ir.Reasoning(t))
+					block := ir.Reasoning(t)
+					if cc := mapValue(m["cache_control"]); cc != nil {
+						block.CacheControl = cc
+					}
+					blocks = append(blocks, block)
 				}
 			case "tool_use":
 				name := stringValue(m["name"])
@@ -189,7 +290,7 @@ func anthropicContentBlocks(raw any) []ir.ContentBlock {
 				if data, err := json.Marshal(m["input"]); err == nil && len(data) > 0 {
 					args = string(data)
 				}
-				blocks = append(blocks, ir.ContentBlock{
+				block := ir.ContentBlock{
 					Type: ir.BlockToolCall,
 					ToolCall: &ir.ToolCall{
 						ID:        id,
@@ -199,7 +300,11 @@ func anthropicContentBlocks(raw any) []ir.ContentBlock {
 						Raw:       m,
 					},
 					Raw: m,
-				})
+				}
+				if cc := mapValue(m["cache_control"]); cc != nil {
+					block.CacheControl = cc
+				}
+				blocks = append(blocks, block)
 			case "tool_result":
 				toolCallID := stringValue(m["tool_use_id"])
 				if toolCallID == "" {
@@ -209,7 +314,7 @@ func anthropicContentBlocks(raw any) []ir.ContentBlock {
 				if content == "" {
 					content = "{}"
 				}
-				blocks = append(blocks, ir.ContentBlock{
+				block := ir.ContentBlock{
 					Type: ir.BlockToolResult,
 					ToolResult: &ir.ToolResult{
 						ToolCallID: toolCallID,
@@ -217,7 +322,11 @@ func anthropicContentBlocks(raw any) []ir.ContentBlock {
 						Raw:        m,
 					},
 					Raw: m,
-				})
+				}
+				if cc := mapValue(m["cache_control"]); cc != nil {
+					block.CacheControl = cc
+				}
+				blocks = append(blocks, block)
 			}
 		}
 		return blocks
@@ -272,6 +381,9 @@ func anthropicTools(raw any) []ir.Tool {
 		}
 		if schema, ok := m["input_schema"]; ok {
 			tool.Function.Parameters = schema
+		}
+		if cc := mapValue(m["cache_control"]); cc != nil {
+			tool.CacheControl = cc
 		}
 		out = append(out, tool)
 	}

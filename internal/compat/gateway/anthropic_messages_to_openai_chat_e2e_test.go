@@ -448,3 +448,109 @@ func anthropicSSEEvents(t *testing.T, body string) []map[string]any {
 	}
 	return events
 }
+
+func TestAnthropicMessagesHandlerPreservesCacheControlBreakpoints(t *testing.T) {
+	var captured map[string]any
+	handler := NewAnthropicMessagesToOpenAIChatHandler(AnthropicMessagesOptions{
+		PreferredModel: "mimo-v2.5-pro",
+		UpstreamBase:  "https://gateway.example/v1",
+		Logf:          func(string, ...any) {},
+		PostChatCompletions: func(_ context.Context, chatReq map[string]any) (*http.Response, error) {
+			captured = chatReq
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"message":{"content":"ok"}}]}`)),
+			}, nil
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
+		"model":"mimo-v2.5-pro",
+		"max_tokens":128,
+		"system":[
+			{"type":"text","text":"base system"},
+			{"type":"text","text":"dynamic system","cache_control":{"type":"ephemeral"}}
+		],
+		"messages":[
+			{"role":"user","content":[
+				{"type":"text","text":"hello"},{"type":"text","text":"cached hint","cache_control":{"type":"ephemeral"}}
+			]},
+			{"role":"assistant","content":[{"type":"tool_use","id":"call_1","name":"sum","input":{"a":1}}]},
+			{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"{\"ok\":true}","cache_control":{"type":"ephemeral"}}]}
+		],
+		"tools":[{"name":"sum","input_schema":{"type":"object"},"cache_control":{"type":"ephemeral"}}]
+	}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	msgs, ok := captured["messages"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected messages array, got %#v", captured["messages"])
+	}
+	// Layout: [system, user, assistant, tool]. cache_control lives on the
+	// individual content blocks, mirroring Anthropic's explicit breakpoint
+	// format (see docs.claude.com prompt-caching).
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 chat messages, got %d: %#v", len(msgs), msgs)
+	}
+	if msgs[0]["role"] != "system" || msgs[1]["role"] != "user" || msgs[2]["role"] != "assistant" || msgs[3]["role"] != "tool" {
+		t.Fatalf("unexpected mapped message roles: %#v", msgs)
+	}
+
+	// system message: content is an array of text blocks with per-block cache_control
+	sysBlocks, ok := msgs[0]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected system content as block array (cache_control present), got %#v", msgs[0]["content"])
+	}
+	if len(sysBlocks) != 2 || sysBlocks[0]["text"] != "base system" || sysBlocks[1]["text"] != "dynamic system" {
+		t.Fatalf("unexpected system blocks: %#v", sysBlocks)
+	}
+	if sysBlocks[0]["cache_control"] != nil {
+		t.Fatalf("first system block had no cache_control in anthropic request, must stay absent: %#v", sysBlocks[0])
+	}
+	if sysBlocks[1]["cache_control"] == nil {
+		t.Fatalf("expected cache_control on second system block: %#v", sysBlocks[1])
+	}
+
+	// user message: content array with per-block cache_control
+	userBlocks, ok := msgs[1]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected user content as block array (cache_control present), got %#v", msgs[1]["content"])
+	}
+	if len(userBlocks) != 2 || userBlocks[0]["text"] != "hello" || userBlocks[1]["text"] != "cached hint" {
+		t.Fatalf("unexpected user blocks: %#v", userBlocks)
+	}
+	if userBlocks[1]["cache_control"] == nil {
+		t.Fatalf("expected cache_control on cached hint block: %#v", userBlocks[1])
+	}
+
+	// assistant message: string content (chat completions), never carries cache_control
+	if _, isStr := msgs[2]["content"].(string); !isStr {
+		t.Fatalf("assistant content should stay string (chat completions), got %#v", msgs[2]["content"])
+	}
+	if msgs[2]["cache_control"] != nil {
+		t.Fatalf("assistant message must not carry cache_control: %#v", msgs[2])
+	}
+
+	// tool message: array content with cache_control on the block
+	toolBlocks, ok := msgs[3]["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected tool content as block array (cache_control present), got %#v", msgs[3]["content"])
+	}
+	if len(toolBlocks) != 1 || toolBlocks[0]["cache_control"] == nil {
+		t.Fatalf("expected cache_control on tool result block: %#v", toolBlocks)
+	}
+
+	// tools carry cache_control
+	tools, ok := captured["tools"].([]map[string]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("expected one tool with cache_control, got %#v", captured["tools"])
+	}
+	if tools[0]["cache_control"] == nil {
+		t.Fatalf("expected cache_control on tool definition: %#v", tools[0])
+	}
+}

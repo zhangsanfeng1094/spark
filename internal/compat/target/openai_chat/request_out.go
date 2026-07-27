@@ -1,6 +1,8 @@
 package openai_chat
 
 import (
+	"encoding/json"
+
 	"spark/internal/compat/ir"
 	"spark/internal/compat/policy"
 )
@@ -87,8 +89,12 @@ func (o ChatOutbound) chatMessagesForIRMessage(msg ir.Message) []map[string]any 
 	}
 
 	chatMsg := map[string]any{
-		"role":    string(msg.Role),
-		"content": msg.Text(),
+		"role": string(msg.Role),
+	}
+	if msg.Role == ir.RoleAssistant {
+		chatMsg["content"] = msg.Text()
+	} else {
+		chatMsg["content"] = chatRequestContent(msg)
 	}
 	if msg.Role == ir.RoleAssistant {
 		if reasoning, ok := o.Reasoning.ChatReasoningContent(msg); ok {
@@ -101,17 +107,122 @@ func (o ChatOutbound) chatMessagesForIRMessage(msg ir.Message) []map[string]any 
 	return []map[string]any{chatMsg}
 }
 
+// chatRequestContent renders an IR message's content for OpenAI chat
+// completions. It returns a plain string when no block carries an Anthropic
+// cache_control breakpoint, and an array of typed blocks otherwise so the
+// cache hint survives the protocol hop for gateways that translate chat
+// completions back to Anthropic Messages (new-api/one-api/OpenRouter/...).
+//
+// Anthropic's explicit cache breakpoint format places `cache_control`
+// directly on individual content blocks in the content array (see
+// https://docs.claude.com/en/docs/build-with-claude/prompt-caching).
+// We mirror that structure so a chat->anthropic gateway can rebuild the
+// system/content arrays with block-level cache_control and keep cache keys
+// aligned with the native /v1/messages path.
+//
+// Per Anthropic docs, thinking blocks cannot be explicitly cached, so we
+// never emit cache_control on reasoning blocks (they are still cached
+// indirectly as part of an assistant turn when replayed in later requests).
+func chatRequestContent(msg ir.Message) any {
+	hasCacheControl := false
+	for _, block := range msg.Content {
+		if len(block.CacheControl) > 0 && block.Type != ir.BlockReasoning {
+			hasCacheControl = true
+			break
+		}
+	}
+	if !hasCacheControl {
+		return msg.Text()
+	}
+	blocksOut := make([]map[string]any, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		switch block.Type {
+		case ir.BlockText:
+			if block.Text == "" {
+				continue
+			}
+			entry := map[string]any{"type": "text", "text": block.Text}
+			if len(block.CacheControl) > 0 {
+				entry["cache_control"] = block.CacheControl
+			}
+			blocksOut = append(blocksOut, entry)
+		case ir.BlockToolResult:
+			if block.ToolResult == nil {
+				continue
+			}
+			entry := map[string]any{
+				"type": "tool_result",
+				"text": block.ToolResult.Output,
+			}
+			if block.ToolResult.ToolCallID != "" {
+				entry["tool_use_id"] = block.ToolResult.ToolCallID
+			}
+			if len(block.CacheControl) > 0 {
+				entry["cache_control"] = block.CacheControl
+			}
+			blocksOut = append(blocksOut, entry)
+		case ir.BlockReasoning:
+			if block.Reasoning == nil || block.Reasoning.Text == "" {
+				continue
+			}
+			// Thinking blocks are not cacheable per Anthropic spec; emit
+			// them without a cache_control marker so the gateway keeps
+			// them in the assistant turn (they're cached indirectly via
+			// the surrounding prefix that an explicit breakpoint covers).
+			blocksOut = append(blocksOut, map[string]any{
+				"type":     "thinking",
+				"thinking": block.Reasoning.Text,
+			})
+		case ir.BlockToolCall:
+			if block.ToolCall == nil {
+				continue
+			}
+			entry := map[string]any{
+				"type":  "tool_use",
+				"id":    block.ToolCall.ID,
+				"name":  block.ToolCall.Name,
+				"input": jsonArguments(block.ToolCall.Arguments),
+			}
+			if len(block.CacheControl) > 0 {
+				entry["cache_control"] = block.CacheControl
+			}
+			blocksOut = append(blocksOut, entry)
+		}
+	}
+	if len(blocksOut) == 0 {
+		return msg.Text()
+	}
+	return blocksOut
+}
+
+func jsonArguments(args string) any {
+	var parsed any
+	if err := json.Unmarshal([]byte(args), &parsed); err == nil {
+		return parsed
+	}
+	return map[string]any{}
+}
+
 func chatToolResultMessages(msg ir.Message) []map[string]any {
 	out := make([]map[string]any, 0, len(msg.Content))
 	for _, block := range msg.Content {
 		if block.Type != ir.BlockToolResult || block.ToolResult == nil {
 			continue
 		}
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"role":         "tool",
 			"tool_call_id": block.ToolResult.ToolCallID,
-			"content":      block.ToolResult.Output,
-		})
+		}
+		if len(block.CacheControl) > 0 {
+			entry["content"] = []map[string]any{{
+				"type":          "text",
+				"text":          block.ToolResult.Output,
+				"cache_control": block.CacheControl,
+			}}
+		} else {
+			entry["content"] = block.ToolResult.Output
+		}
+		out = append(out, entry)
 	}
 	return out
 }
@@ -165,10 +276,14 @@ func chatTools(tools []ir.Tool) []map[string]any {
 		if len(fn) == 0 {
 			continue
 		}
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"type":     "function",
 			"function": fn,
-		})
+		}
+		if len(tool.CacheControl) > 0 {
+			entry["cache_control"] = tool.CacheControl
+		}
+		out = append(out, entry)
 	}
 	return out
 }

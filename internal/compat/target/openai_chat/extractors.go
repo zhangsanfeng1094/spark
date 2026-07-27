@@ -147,12 +147,7 @@ func ExtractReasoningTextValue(resp map[string]any) (string, bool) {
 }
 
 func ExtractReasoningTextFromMap(m map[string]any) (string, bool) {
-	for _, key := range []string{"reasoning_content", "reasoning"} {
-		if raw, ok := m[key]; ok {
-			return NormalizeMessageContent(raw), true
-		}
-	}
-	return "", false
+	return firstReasoningText(m)
 }
 
 func StreamToolIndex(raw map[string]any, fallback int) int {

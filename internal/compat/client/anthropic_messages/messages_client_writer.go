@@ -64,15 +64,37 @@ func responseContentBlocks(blocks []ir.ContentBlock) []map[string]any {
 	for _, block := range blocks {
 		switch block.Type {
 		case ir.BlockReasoning:
-			if block.Reasoning == nil || block.Reasoning.Text == "" {
+			if block.Reasoning == nil {
+				continue
+			}
+			r := block.Reasoning
+			if r.Redacted {
+				// Anthropic `redacted_thinking` response block: preserve the
+				// original mapping if we have it (captured on inbound) so the
+				// client receives the exact server payload; otherwise rebuild
+				// the minimal wire shape from the IR fields.
+				if len(block.Raw) > 0 {
+					content = append(content, block.Raw)
+				} else {
+					content = append(content, map[string]any{
+						"type": "redacted_thinking",
+						"data": r.Text,
+					})
+				}
+				continue
+			}
+			if r.Text == "" && r.Signature == "" {
 				continue
 			}
 			thinking := map[string]any{
 				"type":     "thinking",
-				"thinking": block.Reasoning.Text,
+				"thinking": r.Text,
 			}
-			if block.Reasoning.Signature != "" {
-				thinking["signature"] = block.Reasoning.Signature
+			if r.Signature != "" {
+				thinking["signature"] = r.Signature
+			}
+			if r.Display != "" {
+				thinking["display"] = string(r.Display)
 			}
 			content = append(content, thinking)
 		case ir.BlockText:

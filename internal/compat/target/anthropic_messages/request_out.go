@@ -103,13 +103,42 @@ func anthropicContentBlocks(blocks []ir.ContentBlock, role ir.Role) []map[string
 		case ir.BlockText:
 			out = append(out, map[string]any{"type": "text", "text": block.Text})
 		case ir.BlockReasoning:
-			if role == ir.RoleAssistant && block.Reasoning != nil && block.Reasoning.Text != "" {
-				thinking := map[string]any{"type": "thinking", "thinking": block.Reasoning.Text}
-				if block.Reasoning.Signature != "" {
-					thinking["signature"] = block.Reasoning.Signature
-				}
-				out = append(out, thinking)
+			if role != ir.RoleAssistant || block.Reasoning == nil {
+				continue
 			}
+			r := block.Reasoning
+			if r.Redacted {
+				// Anthropic `redacted_thinking` block: must be passed back
+				// verbatim. The wire shape uses `type:"redacted_thinking"`
+				// and a `data` field; we stored the opaque payload in
+				// Reasoning.Text during inbound. Prefer the original raw
+				// mapping (captured on inbound) so the server sees the
+				// exact bytes it returned.
+				if len(block.Raw) > 0 {
+					out = append(out, block.Raw)
+				} else {
+					out = append(out, map[string]any{
+						"type": "redacted_thinking",
+						"data": r.Text,
+					})
+				}
+				continue
+			}
+			// Anthropic requires the thinking block on multi-turn tool use
+			// to be preserved with its signature; the `thinking` field may
+			// be empty when `display: "omitted"` was requested, but the
+			// block still needs to be returned.
+			if r.Text == "" && r.Signature == "" {
+				continue
+			}
+			thinking := map[string]any{"type": "thinking", "thinking": r.Text}
+			if r.Signature != "" {
+				thinking["signature"] = r.Signature
+			}
+			if r.Display != "" {
+				thinking["display"] = string(r.Display)
+			}
+			out = append(out, thinking)
 		case ir.BlockToolCall:
 			if role == ir.RoleAssistant && block.ToolCall != nil && block.ToolCall.Name != "" {
 				out = append(out, anthropicToolUseBlock(*block.ToolCall))

@@ -26,17 +26,43 @@ func OpenAIChatReasoningPolicy(upstreamBase, model string) ReasoningPolicy {
 	if RequiresOpenAIChatReasoningEcho(upstreamBase, model) {
 		return ReasoningPolicy{
 			Mode:                 ReasoningRequireForToolCalls,
-			Field:                "reasoning_content",
+			Field:                openAIChatReasoningField(upstreamBase, model),
 			AllowReasoningEffort: allowEffort,
 		}
 	}
 	return ReasoningPolicy{
 		Mode:                 ReasoningStrip,
-		Field:                "reasoning_content",
+		Field:                openAIChatReasoningField(upstreamBase, model),
 		AllowReasoningEffort: allowEffort,
 	}
 }
 
+// openAIChatReasoningField picks the reasoning-text field name to write back
+// for a given OpenAI-Chat upstream. Mirrors opencode's per-model
+// capabilities.interleaved.field: read side stays tolerant of many field
+// shapes (see openai_chat.reasoningContentKeys), write side only emits the
+// one field the upstream understands. Default "reasoning_content" is the
+// most widely-recognized DeepSeek-extension field.
+func openAIChatReasoningField(upstreamBase, model string) string {
+	target := strings.ToLower(upstreamBase + " " + model)
+	switch {
+	case strings.Contains(target, "copilot"):
+		return "reasoning_text"
+	case strings.Contains(target, "qwen"):
+		return "thought"
+	default:
+		return "reasoning_content"
+	}
+}
+
+// PreserveReasoningContent returns the generic bridge preserve policy used
+// when no per-upstream URL is configured (model-routed openai_chat fallback,
+// see anthropic_messages_handler.reasoningPolicy and bridge/registry). The
+// reasoning text is written back as "reasoning_content" — the most widely
+// recognized DeepSeek-extension field — NOT anthropic's "thinking", because
+// this path serves openai_chat models (mimo/gpt-4.1/etc.), not an
+// anthropic-protocol upstream. The per-upstream field selector
+// openAIChatReasoningField handles genuine provider-specific write-back.
 func PreserveReasoningContent() ReasoningPolicy {
 	return ReasoningPolicy{
 		Mode:                 ReasoningPreserve,

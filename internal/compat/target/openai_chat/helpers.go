@@ -126,6 +126,34 @@ func reasoningText(raw any) string {
 	return ""
 }
 
+// reasoningContentKeys lists the reasoning-text field keys the openai_chat
+// target understands, in precedence order. First non-empty match wins.
+// Covers DeepSeek (reasoning_content), Anthropic-via-chat-proxy and Qwen3
+// plain-text thinking (thinking/thought), Copilot/o-series-via-chat
+// (reasoning_text), and Responses-API-style arrays carried in a chat
+// envelope (reasoning_details).
+var reasoningContentKeys = []string{
+	"reasoning_content",
+	"reasoning",
+	"reasoning_text",
+	"thinking",
+	"thought",
+	"reasoning_details",
+}
+
+// firstReasoningText returns the text of the first key in reasoningContentKeys
+// that yields a non-empty reasoningText() value from m.
+func firstReasoningText(m map[string]any) (string, bool) {
+	for _, key := range reasoningContentKeys {
+		if raw, ok := m[key]; ok {
+			if text := reasoningText(raw); text != "" {
+				return text, true
+			}
+		}
+	}
+	return "", false
+}
+
 func normalizeContent(raw any) string {
 	if raw == nil {
 		return ""
