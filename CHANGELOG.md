@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.0](https://github.com/zhangsanfeng1094/spark/compare/v0.13.1...v0.14.0) (2026-07-27)
+
+
+### Features
+
+* add Grok Build integration with direct api_backend routing ([084e862](https://github.com/zhangsanfeng1094/spark/commit/084e862a23aca5ef3e47b74acf54e17f254623d0))
+* **compat:** preserve Anthropic thinking round-trip and cache_control ([6292097](https://github.com/zhangsanfeng1094/spark/commit/6292097e524f7c586ec00573a02973c6339da0ac))
+* drop pi, droid, and openclaw from launch entry ([7257814](https://github.com/zhangsanfeng1094/spark/commit/7257814e06d51afb76832c5915dcb57f38f13972))
+* **opencode:** normalize models and pass --model on launch ([0f654a3](https://github.com/zhangsanfeng1094/spark/commit/0f654a3bf8a0a2a2887464f5ba1f155fb1330077))
+* remember last launch integration, profile, and model ([562c5c1](https://github.com/zhangsanfeng1094/spark/commit/562c5c1c85188bf8c71f3d2c1be3cd49e8aea143))
+* require confirmation before deleting a profile ([b61b408](https://github.com/zhangsanfeng1094/spark/commit/b61b4086cebb128e43e8bcf1d5055a4ac44fc24e))
+* **tui:** clarify launch config confirmation dialog ([4e564be](https://github.com/zhangsanfeng1094/spark/commit/4e564bee588d0c22caf3dc5470f74ec073ef229e))
+
 ## [0.13.0](https://github.com/zhangsanfeng1094/spark/compare/v0.12.0...v0.13.0) (2026-06-16)
 
 
