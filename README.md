@@ -34,7 +34,6 @@ Spark 适合同时使用 Codex、Claude Code 等 AI coding agent 的开发者。
 ## 功能
 
 - 主要支持的 coding agent：`codex`、`claude`、`opencode`、`grok`。
-- 其他集成：`droid`、`openclaw`、`pi` 目前暂不可用，仅保留实验性配置入口。
 - 多 profile 管理：为不同供应商、模型列表、默认模型、API Key 和 Base URL 保存独立配置。
 - 兼容代理：支持 OpenAI Responses、OpenAI Chat Completions、Gemini `generateContent`、Anthropic Messages 等接口类型，并在需要时转换给 Codex 或 Claude 使用。
 - 交互式 TUI：启动 Codex / Claude / OpenCode / Grok、查看 token usage、管理 profile 和 MCP servers。
@@ -114,14 +113,6 @@ Profile 选择方式：
 | `claude` | 主要支持 | 配置并启动 Claude Code，支持 Anthropic 兼容代理 |
 | `opencode` | 支持 | 写入 OpenCode provider/model 配置并启动 `opencode`（OpenAI-compatible） |
 | `grok` | 支持 | 写入 Grok Build `config.toml` 自定义模型并启动 `grok`（别名 `grok-build`） |
-
-暂不可用或实验性入口：
-
-| 名称 | 状态 | 说明 |
-|------|------|------|
-| `droid` | 暂不可用 | 入口保留，暂不作为可用功能维护 |
-| `openclaw` | 暂不可用 | 入口保留，暂不作为可用功能维护 |
-| `pi` | 暂不可用 | 入口保留，暂不作为可用功能维护 |
 
 ### MCP servers
 

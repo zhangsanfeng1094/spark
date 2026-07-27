@@ -2,4 +2,4 @@
 [ ] 支持skills管理
 待定
 [x] 支持 opencode / grok
-
+[x] 入口移除 pi / droid / openclaw
