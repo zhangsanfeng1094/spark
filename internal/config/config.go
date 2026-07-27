@@ -231,6 +231,8 @@ type IntegrationConfig struct {
 
 type History struct {
 	LastSelection  string   `json:"last_selection,omitempty"`
+	LastProfile    string   `json:"last_profile,omitempty"`
+	LastModel      string   `json:"last_model,omitempty"`
 	LastModelInput string   `json:"last_model_input,omitempty"`
 	ModelInputs    []string `json:"model_inputs,omitempty"`
 }
@@ -347,6 +349,8 @@ func Normalize(cfg *RootConfig) {
 		p.DefaultModel = NormalizeModel(p.DefaultModel)
 	}
 	cfg.History.LastModelInput = NormalizeModel(cfg.History.LastModelInput)
+	cfg.History.LastProfile = strings.TrimSpace(cfg.History.LastProfile)
+	cfg.History.LastModel = NormalizeModel(cfg.History.LastModel)
 	cfg.History.ModelInputs = NormalizeModels(cfg.History.ModelInputs)
 }
 
@@ -442,6 +446,13 @@ func (c *RootConfig) UpsertModelHistory(model string) {
 		}
 	}
 	c.History.ModelInputs = out
+}
+
+func (c *RootConfig) RecordLaunch(integration, profile, model string) {
+	c.History.LastSelection = strings.ToLower(strings.TrimSpace(integration))
+	c.History.LastProfile = strings.TrimSpace(profile)
+	c.History.LastModel = NormalizeModel(model)
+	c.UpsertModelHistory(model)
 }
 
 func (c *RootConfig) SetDefaultProfile(name string) error {

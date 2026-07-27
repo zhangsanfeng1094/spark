@@ -141,6 +141,24 @@ func TestResolveQuickLaunchDefaultsUsesLastSelection(t *testing.T) {
 	}
 }
 
+func TestRecordLaunchStoresLastProfileAndModel(t *testing.T) {
+	cfg := testProfileConfig()
+	cfg.RecordLaunch(" Codex ", " work ", " gpt-5 ")
+
+	if cfg.History.LastSelection != "codex" {
+		t.Fatalf("LastSelection=%q", cfg.History.LastSelection)
+	}
+	if cfg.History.LastProfile != "work" {
+		t.Fatalf("LastProfile=%q", cfg.History.LastProfile)
+	}
+	if cfg.History.LastModel != "gpt-5" {
+		t.Fatalf("LastModel=%q", cfg.History.LastModel)
+	}
+	if cfg.History.LastModelInput != "gpt-5" {
+		t.Fatalf("LastModelInput=%q", cfg.History.LastModelInput)
+	}
+}
+
 func TestResolveQuickLaunchDefaultsUsesDefaultIntegrationBeforeHistory(t *testing.T) {
 	cfg := testProfileConfig()
 	cfg.DefaultIntegration = " Codex "

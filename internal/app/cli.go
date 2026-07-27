@@ -910,8 +910,7 @@ func launchIntegration(name string, opts LaunchOptions) error {
 		return fmt.Errorf("model cannot be empty")
 	}
 
-	cfg.UpsertModelHistory(models[0])
-	cfg.History.LastSelection = strings.ToLower(name)
+	cfg.RecordLaunch(name, profileName, models[0])
 	if err := config.Save(cfg); err != nil {
 		return err
 	}

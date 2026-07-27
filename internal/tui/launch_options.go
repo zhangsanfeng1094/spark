@@ -65,15 +65,19 @@ func newLaunchOptionsModel(integrationNames []string, cfg *config.RootConfig, de
 		integrations: append([]string(nil), integrationNames...),
 		profiles:     launchProfileNames(cfg),
 	}
-	m.integrationCursor = indexOfFold(m.integrations, defaultIntegration)
+	m.integrationCursor = indexOfFold(m.integrations, launchInitialIntegrationName(cfg, m.integrations, defaultIntegration))
 	if m.integrationCursor < 0 {
 		m.integrationCursor = 0
 	}
-	m.profileCursor = indexOf(m.profiles, defaultProfileName(cfg))
+	m.profileCursor = indexOf(m.profiles, launchInitialProfileName(cfg))
 	if m.profileCursor < 0 {
 		m.profileCursor = 0
 	}
 	m.refreshModels()
+	m.modelCursor = indexOf(m.models, launchInitialModelName(cfg, m.selectedProfile()))
+	if m.modelCursor < 0 {
+		m.modelCursor = 0
+	}
 	m.selected = m.currentSelection()
 	return m
 }
@@ -275,6 +279,51 @@ func defaultProfileName(cfg *config.RootConfig) string {
 		return ""
 	}
 	return cfg.DefaultProfile
+}
+
+func launchInitialIntegrationName(cfg *config.RootConfig, integrationNames []string, defaultIntegration string) string {
+	if cfg != nil {
+		if matched := launchFirstMatchingIntegration(cfg.History.LastSelection, integrationNames); matched != "" {
+			return matched
+		}
+	}
+	if matched := launchFirstMatchingIntegration(defaultIntegration, integrationNames); matched != "" {
+		return matched
+	}
+	if len(integrationNames) > 0 {
+		return integrationNames[0]
+	}
+	return ""
+}
+
+func launchFirstMatchingIntegration(want string, integrationNames []string) string {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return ""
+	}
+	for _, name := range integrationNames {
+		if strings.EqualFold(want, name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func launchInitialProfileName(cfg *config.RootConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	if strings.TrimSpace(cfg.History.LastProfile) != "" {
+		return strings.TrimSpace(cfg.History.LastProfile)
+	}
+	return defaultProfileName(cfg)
+}
+
+func launchInitialModelName(cfg *config.RootConfig, profileName string) string {
+	if cfg == nil || strings.TrimSpace(cfg.History.LastProfile) != profileName {
+		return ""
+	}
+	return config.NormalizeModel(cfg.History.LastModel)
 }
 
 func moveCursor(cursor, length, delta int) int {

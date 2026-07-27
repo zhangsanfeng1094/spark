@@ -20,6 +20,20 @@ func TestLaunchOptionsInitialSelectionUsesQuickLaunchDefaults(t *testing.T) {
 	}
 }
 
+func TestLaunchOptionsInitialSelectionUsesHistory(t *testing.T) {
+	cfg := testLaunchOptionsConfig()
+	cfg.History.LastSelection = "claude"
+	cfg.History.LastProfile = "default"
+	cfg.History.LastModel = "default-a"
+
+	m := newLaunchOptionsModel([]string{"claude", "codex"}, cfg, "codex")
+	selection := m.currentSelection()
+
+	if selection.Integration != "claude" || selection.Profile != "default" || selection.Model != "default-a" {
+		t.Fatalf("unexpected history-backed selection: %+v", selection)
+	}
+}
+
 func TestLaunchOptionsProfileSwitchRefreshesModels(t *testing.T) {
 	cfg := testLaunchOptionsConfig()
 	m := newLaunchOptionsModel([]string{"claude", "codex"}, cfg, "codex")
