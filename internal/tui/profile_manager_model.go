@@ -251,6 +251,8 @@ type pmModel struct {
 	lastTestOK      bool
 	runningTestSeq  uint64
 
+	confirmDelete bool
+
 	modalOpen   bool
 	modalCursor int
 	modalKind   int
@@ -371,6 +373,9 @@ func (m *pmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleMainMouse(msg)
 
 	case tea.KeyMsg:
+		if m.confirmDelete {
+			return m, m.handleConfirmDeleteKey(msg)
+		}
 		if m.modalOpen {
 			return m, m.handleModalKey(msg)
 		}
