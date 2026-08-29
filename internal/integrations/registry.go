@@ -11,6 +11,7 @@ var registry = map[string]Runner{
 	"codex":      &Codex{},
 	"grok":       &Grok{},
 	"grok-build": &Grok{},
+	"one":        &One{},
 	"opencode":   &OpenCode{},
 }
 

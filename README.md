@@ -33,10 +33,10 @@ Spark 适合同时使用 Codex、Claude Code 等 AI coding agent 的开发者。
 
 ## 功能
 
-- 主要支持的 coding agent：`codex`、`claude`、`opencode`、`grok`。
+- 主要支持的 coding agent：`codex`、`claude`、`opencode`、`grok`、`one`。
 - 多 profile 管理：为不同供应商、模型列表、默认模型、API Key 和 Base URL 保存独立配置。
 - 兼容代理：本地代理覆盖 Codex `POST /v1/responses` 与 Claude `/v1/messages` 路径，可对接到 OpenAI Chat Completions 等上游；profile 还可记录 Anthropic / Gemini 等接口类型用于配置与探测。
-- 交互式 TUI：启动 Codex / Claude / OpenCode / Grok、查看 token usage、管理 profile、MCP servers 和 Skills。
+- 交互式 TUI：启动 Codex / Claude / OpenCode / Grok / One、查看 token usage、管理 profile、MCP servers 和 Skills。
 - MCP 管理：添加、启用、禁用、导入、导出、同步 MCP server 到 Codex / Claude。
 - Skills 管理：本地/Git/目录安装，启用禁用，以及同步投影到 `.agents` / `.codex` / `.claude` skills 目录。
 - Token usage 记录：兼容代理请求会写入本地 `token_usage.jsonl`，可在 TUI 中按 Today / 7D / 30D / All 查看。
@@ -134,6 +134,7 @@ Profile 选择方式：
 | `claude` | 主要支持 | 配置并启动 Claude Code；需要时可启 Anthropic Messages 兼容代理 |
 | `opencode` | 支持 | 写入 OpenCode provider/model 配置并启动 `opencode`（OpenAI-compatible） |
 | `grok` | 支持 | 写入 Grok Build `config.toml` 自定义模型并启动 `grok`（别名 `grok-build`） |
+| `one` | 支持 | 隔离 HOME 启动 `one`（镜像真实 `~/.one`，不改用户默认 provider；按 profile 接口类型选择 wire 协议，直连无需兼容代理，密钥仅写入临时目录） |
 
 ### MCP servers
 
