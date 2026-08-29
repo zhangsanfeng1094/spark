@@ -167,9 +167,11 @@ func (m *skillManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *skillManagerModel) handleKey(msg tea.KeyMsg) tea.Cmd {
-	switch strings.ToLower(msg.String()) {
-	case "ctrl+c", "q":
-		return tea.Quit
+	key := strings.ToLower(msg.String())
+	if cmd, ok := quitOnScreenBack(key); ok {
+		return cmd
+	}
+	switch key {
 	case "tab":
 		m.moveBrowseFocus(1)
 	case "shift+tab":
@@ -664,7 +666,7 @@ func (m *skillManagerModel) renderStatusBar() string {
 
 func (m *skillManagerModel) contextHelpText() string {
 	if m.confirmDelete {
-		return "Y confirm • N cancel"
+		return "Y confirm • N/Esc/Q cancel"
 	}
 	if m.cataloging {
 		return "Type search • Enter search/install • Up/Down select • Esc cancel"
@@ -677,11 +679,11 @@ func (m *skillManagerModel) contextHelpText() string {
 	}
 	switch m.browseFocus {
 	case skillBrowseFocusQuickAdd:
-		return "Enter run action • Tab next zone • A install • / catalog • T transfer"
+		return "Enter run action • Tab next zone • A install • / catalog • T transfer • " + screenBackHelp
 	case skillBrowseFocusSkills:
-		return "Up/Down select • Space toggle • D delete • Tab next zone"
+		return "Up/Down select • Space toggle • D delete • Tab next zone • " + screenBackHelp
 	default:
-		return "Q quit"
+		return screenBackHelp
 	}
 }
 

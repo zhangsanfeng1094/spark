@@ -236,6 +236,13 @@ func TestWriteGrokLaunchHome(t *testing.T) {
 	if got := models["default"]; got != "spark-grok-4.5" {
 		t.Fatalf("launch default=%v", got)
 	}
+	if got := models["web_search"]; got != "spark-grok-4.5" {
+		t.Fatalf("launch web_search=%v", got)
+	}
+	ui := root["ui"].(map[string]any)
+	if got := ui["fork_secondary_model"]; got != "spark-grok-4.5" {
+		t.Fatalf("launch fork_secondary_model=%v", got)
+	}
 	if got := models["default_reasoning_effort"]; got != "high" {
 		t.Fatalf("reasoning effort not preserved: %v", got)
 	}

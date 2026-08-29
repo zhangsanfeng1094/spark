@@ -471,7 +471,7 @@ func styleStatusMain(s string) string {
 func (m *pmModel) helpText() string {
 	switch m.focusArea {
 	case pmFocusProfiles:
-		return "Tab Focus · Enter Edit · F3 Add · F4 Copy · F6 Default · F7 Del"
+		return "Tab Focus · Enter Edit · F3 Add · F4 Copy · F6 Default · F7 Del · " + screenBackHelp
 	case pmFocusFields:
 		return "Tab Focus · Enter Edit · F2 Save · Esc Back"
 	case pmFocusActions:

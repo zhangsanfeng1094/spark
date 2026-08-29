@@ -84,3 +84,81 @@ func TestCodexResponsesStreamE2ETranslatesRequestAndWritesResponsesSSE(t *testin
 		}
 	}
 }
+
+func TestCodexResponsesHandlerDropsUnsupportedReasoningEffort(t *testing.T) {
+	executor := &captureChatExecutor{body: `{"id":"chatcmpl_1","model":"glm-5.1","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`}
+	handler := NewCodexResponsesHandler(CodexResponsesOptions{
+		Mode:         ResponsesModeChatCompletionsOnly,
+		UpstreamBase: "https://litellm.example/v1",
+		Logf:         func(string, ...any) {},
+		Warnf:        func(string) {},
+		Executor:     executor,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
+		"model":"glm-5.1",
+		"stream":false,
+		"reasoning":{"effort":"high"},
+		"input":[{"role":"user","content":"hello"}]
+	}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d body=%s", rec.Code, rec.Body.String())
+	}
+	if executor.chatReq == nil {
+		t.Fatal("executor did not receive translated chat request")
+	}
+	if _, ok := executor.chatReq["reasoning_effort"]; ok {
+		t.Fatalf("did not expect reasoning_effort for GLM/LiteLLM upstream: %#v", executor.chatReq)
+	}
+}
+
+func TestCodexResponsesHandlerKeepsReasoningContentForDeepSeekTarget(t *testing.T) {
+	executor := &captureChatExecutor{body: `{"id":"chatcmpl_1","model":"deepseek-reasoner","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`}
+	handler := NewCodexResponsesHandler(CodexResponsesOptions{
+		Mode:         ResponsesModeChatCompletionsOnly,
+		UpstreamBase: "https://api.deepseek.com/v1",
+		Logf:         func(string, ...any) {},
+		Warnf:        func(string) {},
+		Executor:     executor,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
+		"model":"deepseek-reasoner",
+		"stream":false,
+		"input":[
+			{"role":"user","content":[{"type":"input_text","text":"add one"}]},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"plan first"}]},
+			{"type":"function_call","call_id":"call_1","name":"sum","arguments":"{\"a\":1}"},
+			{"type":"function_call_output","call_id":"call_1","output":"{\"ok\":true}"}
+		]
+	}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d body=%s", rec.Code, rec.Body.String())
+	}
+	if executor.chatReq == nil {
+		t.Fatal("executor did not receive translated chat request")
+	}
+	msgs, ok := executor.chatReq["messages"].([]map[string]any)
+	if !ok || len(msgs) == 0 {
+		t.Fatalf("expected chat messages, got %#v", executor.chatReq["messages"])
+	}
+	var assistant map[string]any
+	for _, msg := range msgs {
+		if msg["role"] == "assistant" {
+			assistant = msg
+			break
+		}
+	}
+	if assistant == nil {
+		t.Fatalf("expected assistant message, got %#v", msgs)
+	}
+	if assistant["reasoning_content"] != "plan first" {
+		t.Fatalf("expected reasoning_content for DeepSeek target: %#v", assistant)
+	}
+}

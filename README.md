@@ -8,7 +8,7 @@ Spark 是一个面向 AI coding agent 的终端启动器和配置中心。它把
 
 Spark 适合同时使用 Codex、Claude Code 等 AI coding agent 的开发者。它把原本分散在各个工具里的模型、供应商、API Key、Base URL、MCP Server 和 Skills 配置收拢到一个终端界面中，通过 profile 切换即可复用不同环境。
 
-在启动 agent 时，Spark 会按当前 profile 自动写入目标工具所需的配置；当上游 API 与 agent 期望的协议不一致时，也可以通过本地兼容代理在 OpenAI Responses、Chat Completions、Anthropic Messages、Gemini `generateContent` 等接口之间做转换。它的目标不是替代 Codex 或 Claude，而是让这些工具在多模型、多供应商、多协议环境里更容易统一管理和启动。
+在启动 agent 时，Spark 会按当前 profile 自动写入目标工具所需的配置；当上游 API 与 agent 期望的协议不一致时，也可以通过本地兼容代理做转换（Codex 的 Responses 路径、Claude 的 Messages 路径等）。Profile 还可配置 Gemini `generateContent` 等接口类型用于探测与模型管理。它的目标不是替代 Codex 或 Claude，而是让这些工具在多模型、多供应商、多协议环境里更容易统一管理和启动。
 
 ## 截图
 
@@ -26,19 +26,19 @@ Spark 适合同时使用 Codex、Claude Code 等 AI coding agent 的开发者。
 > TODO: 将 Profile 管理截图保存为 `docs/images/profile-manager.png` 后取消下一行注释。
 ![Profile 管理](./docs/images/profile-manager.png)
 
-### MCP 管理 / Skills（暂不可用）
+### MCP 管理 / Skills
 
-> TODO: 将 MCP 管理截图保存为 `docs/images/mcp-skills.png` 后取消下一行注释。
-<!-- ![MCP 管理](./docs/images/mcp-skills.png) -->
+> TODO: 将 MCP / Skills 管理截图保存为 `docs/images/mcp-skills.png` 后取消下一行注释。
+<!-- ![MCP 管理 / Skills](./docs/images/mcp-skills.png) -->
 
 ## 功能
 
 - 主要支持的 coding agent：`codex`、`claude`、`opencode`、`grok`。
 - 多 profile 管理：为不同供应商、模型列表、默认模型、API Key 和 Base URL 保存独立配置。
-- 兼容代理：支持 OpenAI Responses、OpenAI Chat Completions、Gemini `generateContent`、Anthropic Messages 等接口类型，并在需要时转换给 Codex 或 Claude 使用。
-- 交互式 TUI：启动 Codex / Claude / OpenCode / Grok、查看 token usage、管理 profile 和 MCP servers。
+- 兼容代理：本地代理覆盖 Codex `POST /v1/responses` 与 Claude `/v1/messages` 路径，可对接到 OpenAI Chat Completions 等上游；profile 还可记录 Anthropic / Gemini 等接口类型用于配置与探测。
+- 交互式 TUI：启动 Codex / Claude / OpenCode / Grok、查看 token usage、管理 profile、MCP servers 和 Skills。
 - MCP 管理：添加、启用、禁用、导入、导出、同步 MCP server 到 Codex / Claude。
-- Skills 管理：暂不可用，相关命令和界面入口仍在建设中。
+- Skills 管理：本地/Git/目录安装，启用禁用，以及同步投影到 `.agents` / `.codex` / `.claude` skills 目录。
 - Token usage 记录：兼容代理请求会写入本地 `token_usage.jsonl`，可在 TUI 中按 Today / 7D / 30D / All 查看。
 
 ## 安装
@@ -97,7 +97,28 @@ spark config [integration] [--model <model>] [--profile <profile> | --select-pro
 spark profile
 spark --version
 spark version
+spark version --check
+spark update
+spark update --check
 ```
+
+### 更新
+
+```bash
+# 检查是否有新版本
+spark update --check
+# 或
+spark version --check
+
+# 安装最新版（自动识别安装方式）
+spark update
+```
+
+`spark update` 行为：
+
+- 通过 npm / bun / pnpm 全局安装时：重新执行对应的全局安装命令（例如 `npm install -g @ngominhbinh708/spark@latest`）
+- 通过 GitHub Release 二进制或本地拷贝运行时：下载当前平台的 release 资产并原地替换可执行文件（校验 `checksums.txt`）
+- 更新成功后请重新打开终端或再执行一次 `spark`
 
 Profile 选择方式：
 
@@ -109,8 +130,8 @@ Profile 选择方式：
 
 | 名称 | 状态 | 说明 |
 |------|------|------|
-| `codex` | 主要支持 | 配置并启动 Codex，支持 Responses / Chat Completions / Anthropic / Gemini 兼容路由 |
-| `claude` | 主要支持 | 配置并启动 Claude Code，支持 Anthropic 兼容代理 |
+| `codex` | 主要支持 | 配置并启动 Codex；需要时可启本地 Responses 兼容代理（对接到 Chat Completions 等上游） |
+| `claude` | 主要支持 | 配置并启动 Claude Code；需要时可启 Anthropic Messages 兼容代理 |
 | `opencode` | 支持 | 写入 OpenCode provider/model 配置并启动 `opencode`（OpenAI-compatible） |
 | `grok` | 支持 | 写入 Grok Build `config.toml` 自定义模型并启动 `grok`（别名 `grok-build`） |
 
@@ -133,8 +154,6 @@ spark mcp export claude
 
 ### Skills
 
-> Skills 暂不可用，以下命令仅表示保留中的 CLI 入口，不建议作为当前可用功能使用。
-
 ```bash
 spark skill
 spark skill list
@@ -151,7 +170,13 @@ spark skill import
 spark skill upgrade
 ```
 
-默认会把 skill 投影到 `agents,codex,claude`，可用 `--target` / `--targets` 调整。
+常用流程：
+
+1. `spark skill install <name> --source <path> --source-type local`（或 catalog / git）
+2. `spark skill sync` 把已启用 skill 投影到 agent 可见目录
+3. 在 Codex / Claude / agents 中使用该 skill
+
+默认投影目标是 `agents,codex,claude`，可用 `--target` / `--targets` 调整。目录搜索依赖网络与 `npx skills find`（有本地 cache 时可离线复用）。
 
 ## 配置
 
