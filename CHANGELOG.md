@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.0](https://github.com/zhangsanfeng1094/spark/compare/v0.14.0...v0.15.0) (2026-08-30)
+
+
+### Features
+
+* add One agent integration ([e6e37e5](https://github.com/zhangsanfeng1094/spark/commit/e6e37e5a924cbbfdd601f1499c7198e3f50fa483))
+* enhance profile manager input handling and update help text ([3d053d5](https://github.com/zhangsanfeng1094/spark/commit/3d053d57d63f0f407e35380360c9079dd59790e5))
+
 ## [0.14.0](https://github.com/zhangsanfeng1094/spark/compare/v0.13.1...v0.14.0) (2026-07-27)
 
 
