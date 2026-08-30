@@ -1,0 +1,80 @@
+---
+---
+
+<section class="relative overflow-hidden pt-16 pb-20 lg:pt-24 lg:pb-28 bg-gradient-to-b from-white via-slate-50 to-slate-100/70 border-b border-slate-200/60">
+  <!-- Gradient Glow -->
+  <div class="absolute inset-0 pointer-events-none overflow-hidden">
+    <div class="absolute top-1/4 left-1/2 -translate-x-1/2 w-[650px] h-[350px] bg-gradient-to-tr from-indigo-500/15 via-purple-500/10 to-emerald-500/10 blur-3xl rounded-full"></div>
+  </div>
+
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
+    <!-- Tagline Badge -->
+    <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-indigo-200 bg-indigo-50/90 text-indigo-700 text-xs font-semibold mb-6 shadow-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <span>面向 AI Coding Agent 的下一代配置与协议调度中枢</span>
+    </div>
+
+    <!-- Main Heading -->
+    <h1 class="text-4xl sm:text-6xl font-black tracking-tight text-slate-900 max-w-4xl mx-auto leading-tight sm:leading-[1.15]">
+      连接任意模型与工具，<br />
+      <span class="bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 bg-clip-text text-transparent">
+        让 Coding Agent 真正为你所用
+      </span>
+    </h1>
+
+    <!-- Subtitle -->
+    <p class="mt-6 text-lg sm:text-xl text-slate-600 max-w-2xl mx-auto leading-relaxed">
+      Spark 统一管理 Codex、Claude Code、OpenCode、Grok Build 与 One 的模型端点、API Key、MCP 插件与 Skills，配合本地高保真协议网关与环境隔离，一键自由穿梭于多服务商。
+    </p>
+
+    <!-- CTA & Copy Command -->
+    <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 max-w-md mx-auto">
+      <div class="w-full sm:w-auto relative group">
+        <div class="flex items-center justify-between gap-3 px-4 py-3 bg-slate-900 text-white rounded-xl shadow-lg shadow-slate-900/15 font-mono text-sm border border-slate-800">
+          <span class="text-indigo-400 select-none">$</span>
+          <span class="text-slate-200 select-all font-semibold">npm i -g @ngominhbinh708/spark</span>
+          <button id="hero-copy-btn" class="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors" title="复制命令">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          </button>
+        </div>
+      </div>
+      <a href="#download" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-sm transition-all hover:border-slate-300">
+        <span>快速安装</span>
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </a>
+    </div>
+
+    <!-- Metrics Matrix -->
+    <div class="mt-14 pt-8 border-t border-slate-200/60 max-w-4xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+      <div class="p-3">
+        <div class="text-3xl font-black text-slate-900">5+</div>
+        <div class="text-xs text-slate-500 font-medium mt-1">深度支持 Agent</div>
+      </div>
+      <div class="p-3">
+        <div class="text-3xl font-black text-indigo-600">4 种</div>
+        <div class="text-xs text-slate-500 font-medium mt-1">Wire 协议智能转换</div>
+      </div>
+      <div class="p-3">
+        <div class="text-3xl font-black text-emerald-600">100%</div>
+        <div class="text-xs text-slate-500 font-medium mt-1">沙盒隔离无污染</div>
+      </div>
+      <div class="p-3">
+        <div class="text-3xl font-black text-purple-600">TUI + Web</div>
+        <div class="text-xs text-slate-500 font-medium mt-1">双模态管理架构</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const copyBtn = document.getElementById('hero-copy-btn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText('npm i -g @ngominhbinh708/spark');
+      copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+      setTimeout(() => {
+        copyBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+      }, 2000);
+    });
+  }
+</script>

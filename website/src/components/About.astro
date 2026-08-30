@@ -1,0 +1,95 @@
+---
+const agents = [
+  {
+    name: 'Codex',
+    tag: 'OpenAI Responses / Chat',
+    badge: '主要支持',
+    badgeClass: 'bg-emerald-100 text-emerald-800',
+    desc: '支持官方 POST /v1/responses 协议直连；若上游为第三方 Chat Completions，Spark 自动起用本地兼容代理，透明转接并保留完整流式响应。',
+    cmd: 'spark launch codex',
+    iconColor: 'bg-emerald-50 text-emerald-600 border-emerald-200'
+  },
+  {
+    name: 'Claude Code',
+    tag: 'Anthropic Messages',
+    badge: '主要支持',
+    badgeClass: 'bg-amber-100 text-amber-800',
+    desc: '专为 Claude Code 定制的配置注入与 Messages 代理，保留 thinking 思考过程无损往返，并无缝适配 prompt cache_control 缓存机制。',
+    cmd: 'spark launch claude',
+    iconColor: 'bg-amber-50 text-amber-600 border-amber-200'
+  },
+  {
+    name: 'Grok Build',
+    tag: 'xAI Build & Custom Backends',
+    badge: '支持',
+    badgeClass: 'bg-purple-100 text-purple-800',
+    desc: '智能生成 config.toml 自定义模型配置并在独立临时 GROK_HOME 中启动，隔离 OAuth JWT 避免请求第三方网关时触发 401。',
+    cmd: 'spark launch grok',
+    iconColor: 'bg-purple-50 text-purple-600 border-purple-200'
+  },
+  {
+    name: 'One Agent',
+    tag: '四 Wire 协议直连',
+    badge: '新特性',
+    badgeClass: 'bg-rose-100 text-rose-800',
+    desc: '通过 HOME 隔离镜像启动，原生支持 Responses、Chat Completions、Messages、Gemini 四种 Wire 协议，纯直连零代理额外开销。',
+    cmd: 'spark launch one',
+    iconColor: 'bg-rose-50 text-rose-600 border-rose-200'
+  },
+  {
+    name: 'OpenCode',
+    tag: 'OpenAI-compatible Agent',
+    badge: '支持',
+    badgeClass: 'bg-blue-100 text-blue-800',
+    desc: '一键写入 OpenCode 的 provider 和 model 映射结构，自动规范化模型名并透传给 --model 启动参数。',
+    cmd: 'spark launch opencode',
+    iconColor: 'bg-blue-50 text-blue-600 border-blue-200'
+  }
+];
+---
+
+<section id="about" class="py-20 bg-white">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="text-center max-w-3xl mx-auto mb-16">
+      <h2 class="text-xs uppercase tracking-widest font-bold text-indigo-600 mb-2">About Spark</h2>
+      <p class="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">面向多 Agent 时代的统一启动器</p>
+      <p class="mt-3 text-slate-600 text-sm sm:text-base">
+        Spark 并不是为了替代 Codex 或 Claude，而是为了解决多工具、多服务商并存时的配置碎片化、凭据冲突与协议割裂难题。
+      </p>
+    </div>
+
+    <!-- Agent Cards Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {agents.map((agent) => (
+        <div class="group rounded-2xl border border-slate-200/80 bg-slate-50/50 p-6 flex flex-col justify-between hover:border-indigo-300 hover:bg-white hover:shadow-md transition-all">
+          <div>
+            <div class="flex items-center justify-between mb-4">
+              <div class={`h-10 w-10 rounded-xl border flex items-center justify-center font-bold ${agent.iconColor}`}>
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 8 6 4-6 4Z"/></svg>
+              </div>
+              <span class={`px-2.5 py-0.5 text-xs font-semibold rounded-full ${agent.badgeClass}`}>{agent.badge}</span>
+            </div>
+            <h3 class="text-lg font-bold text-slate-900">{agent.name}</h3>
+            <p class="text-xs text-slate-400 font-medium mt-0.5 mb-3">{agent.tag}</p>
+            <p class="text-sm text-slate-600 leading-relaxed">{agent.desc}</p>
+          </div>
+          <div class="mt-6 pt-4 border-t border-slate-200/60 font-mono text-xs text-slate-500 flex items-center justify-between">
+            <code>{agent.cmd}</code>
+            <span class="text-indigo-600 font-semibold group-hover:translate-x-0.5 transition-transform">启动 &rarr;</span>
+          </div>
+        </div>
+      ))}
+
+      <!-- Integration Philosophy Card -->
+      <div class="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/30 p-6 flex flex-col justify-center text-center">
+        <div class="h-10 w-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center mx-auto mb-3">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+        </div>
+        <h3 class="text-base font-bold text-slate-900">零侵入设计理念</h3>
+        <p class="text-xs text-slate-600 mt-2 leading-relaxed">
+          不魔改各 Agent 二进制，通过临时沙盒注入、标准 Wire 协议桥接与动态参数挂载，实现 100% 的原生体验。
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
