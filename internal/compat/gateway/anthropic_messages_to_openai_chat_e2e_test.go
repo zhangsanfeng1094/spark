@@ -554,3 +554,41 @@ func TestAnthropicMessagesHandlerPreservesCacheControlBreakpoints(t *testing.T) 
 		t.Fatalf("expected cache_control on tool definition: %#v", tools[0])
 	}
 }
+
+func TestAnthropicMessagesHandlerKeepsReasoningContentForDeepSeekTarget(t *testing.T) {
+	var captured map[string]any
+	handler := NewAnthropicMessagesToOpenAIChatHandler(AnthropicMessagesOptions{
+		PreferredModel: "deepseek-reasoner",
+		UpstreamBase:   "https://api.deepseek.com/v1",
+		Logf:           func(string, ...any) {},
+		PostChatCompletions: func(_ context.Context, chatReq map[string]any) (*http.Response, error) {
+			captured = chatReq
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_1","model":"deepseek-reasoner","choices":[{"message":{"content":"ok"}}]}`)),
+			}, nil
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
+		"model":"deepseek-reasoner",
+		"max_tokens":128,
+		"messages":[
+			{"role":"assistant","content":[
+				{"type":"thinking","thinking":"think first"},
+				{"type":"tool_use","id":"call_1","name":"sum","input":{"a":1}}
+			]}
+		]
+	}`))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d body=%s", rec.Code, rec.Body.String())
+	}
+	msgs := captured["messages"].([]map[string]any)
+	if msgs[0]["reasoning_content"] != "think first" {
+		t.Fatalf("expected reasoning_content for DeepSeek target: %#v", msgs[0])
+	}
+}

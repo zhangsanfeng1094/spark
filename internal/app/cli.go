@@ -53,6 +53,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newHTTPServerCmd())
 	root.AddCommand(newDebugCmd())
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newUpdateCmd())
 	return root
 }
 

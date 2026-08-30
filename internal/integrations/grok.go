@@ -238,7 +238,15 @@ func writeGrokLaunchConfig(launchHome, realHome string, profile *config.Profile,
 		modelsSection = map[string]any{}
 	}
 	modelsSection["default"] = modelKey
+	modelsSection["web_search"] = modelKey
 	root["models"] = modelsSection
+
+	uiSection, _ := root["ui"].(map[string]any)
+	if uiSection == nil {
+		uiSection = map[string]any{}
+	}
+	uiSection["fork_secondary_model"] = modelKey
+	root["ui"] = uiSection
 
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(root); err != nil {

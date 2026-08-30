@@ -38,8 +38,12 @@
 
 ## Phase 5: Follow-on Targets
 
-- [ ] Add Anthropic Messages as a clearly named client or target package when
-  needed.
-- [ ] Add Gemini GenerateContent as a clearly named client or target package
-  when needed.
-- [ ] Do not broaden these paths until the Codex/OpenAI Chat path is clean.
+- [x] Anthropic Messages exists as client (`client/anthropic_messages`) and
+  target (`target/anthropic_messages`); live local proxy route is Claude
+  Messages → OpenAI Chat (and related gateway handlers).
+- [x] Gemini GenerateContent exists as client codec under
+  `client/gemini_generate_content` (profile/probe); **no** local HTTP proxy
+  route yet.
+- [ ] Optional: Gemini as a full gateway client/target route if product needs it.
+- [x] Codex/OpenAI Chat path is the primary clean route; keep adding contract
+  tests for reasoning policy (GLM drop effort, DeepSeek echo, etc.).

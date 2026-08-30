@@ -20,7 +20,7 @@ flowchart TD
     TUI --> Skills
 
     Integrations --> Config
-    Integrations --> LocalAgent[本地 agent CLI<br/>claude / codex / droid / opencode / openclaw / pi]
+    Integrations --> LocalAgent[本地 agent CLI<br/>claude / codex / opencode / grok]
     Integrations --> CompatProxy[兼容代理<br/>Codex Responses / Claude Messages]
 
     CompatProxy --> ClientCodex[internal/compat/client/codex<br/>Responses 请求/响应/SSE]
@@ -49,7 +49,7 @@ flowchart TD
 | --- | --- | --- |
 | `internal/app` | CLI 命令层。定义 `spark` 根命令、`launch/config/mcp/skill/profile/debug/version` 等子命令，连接 TUI、配置、集成和技能模块。 | `cli.go`, `mcp_cmd.go`, `mcp_sync.go`, `skill_cmd.go`, `version.go` |
 | `internal/config` | Spark 自身配置模型和持久化；管理 profiles、integrations、MCP servers；读写 Codex TOML 和 Claude JSON；从旧配置迁移。 | `config.go`, `mcp.go`, `toml.go`, `claude_json.go`, `files.go`, `migrate.go` |
-| `internal/integrations` | 各 agent 的启动/配置适配层。把 profile/model 写入目标 agent 配置或环境变量，必要时启动 `internal/compat/proxy` 的本地兼容代理。 | `registry.go`, `types.go`, `claude.go`, `codex.go`, `droid.go`, `opencode.go`, `openclaw.go`, `pi.go`, `compatio.go` |
+| `internal/integrations` | 各 agent 的启动/配置适配层。把 profile/model 写入目标 agent 配置或环境变量，必要时启动 `internal/compat/proxy` 的本地兼容代理。正式注册：`claude` / `codex` / `opencode` / `grok`（`droid` / `pi` / `openclaw` 源码保留但未注册）。 | `registry.go`, `types.go`, `claude.go`, `codex.go`, `opencode.go`, `grok.go`, `compatio.go` |
 | `internal/compat/ir` | 协议中间表示（IR）。抽象 Request、Message、ContentBlock、ReasoningBlock、ToolCall、ToolResult、Response、StreamEvent、Usage。 | `model.go`, `stream.go`, `usage.go` |
 | `internal/compat/client/codex` | OpenAI Responses caller 协议适配。把 Responses 请求转 IR，或把 IR/Chat 结果写回 Responses 客户端格式和 SSE。 | `request_in.go`, `response_out.go`, `stream_out.go` |
 | `internal/compat/client/anthropic_messages` | Anthropic Messages caller 协议适配。把 Messages 请求转 IR，或把结果写回 Anthropic Messages 响应和 SSE。 | `messages_inbound.go`, `messages_client_writer.go`, `messages_stream_writer.go` |
@@ -63,7 +63,7 @@ flowchart TD
 | `internal/compat/logutil` | compat 协议日志工具。负责对 request/response/IR 结构做字段级脱敏和结构化摘要，供 gateway/proxy 共享。 | `structure.go` |
 | `internal/compat/policy` | 协议转换策略。处理 reasoning 可见性/归一化、tool call/tool result 兼容规则。 | `reasoning.go`, `tools.go` |
 | `internal/skills` | 本地技能系统。管理技能根目录、registry、manifest、安装、同伴 agent 技能导入/导出。 | `types.go`, `roots.go`, `registry.go`, `manifest.go`, `install.go`, `catalog.go`, `peer.go`, `files.go` |
-| `internal/tui` | 终端交互 UI。提供选择、输入、确认、dashboard、profile/MCP/skill 管理界面和模型连通性测试 UI。 | `prompt.go`, `dashboard_*`, `profile_manager_*`, `mcp_manager_*`, `skill_manager_model.go`, `model_connection.go` |
+| `internal/tui` | 终端交互 UI。提供选择、输入、确认、dashboard、profile/MCP/skill 管理界面和模型连通性测试 UI。返回上级统一为 manager 根界面 `Esc/Q Back`（见 `nav_back.go`）。 | `prompt.go`, `dashboard_*`, `profile_manager_*`, `mcp_manager_{model,input,view,actions,helpers,probe,editor}.go`, `skill_manager_model.go`, `nav_back.go`, `model_connection.go` |
 | `internal/version` | 版本元信息、缓存和更新检查。 | `version.go` |
 
 ## LLM API 转换逻辑

@@ -43,3 +43,21 @@ type testingT interface {
 	Helper()
 	Fatalf(format string, args ...any)
 }
+
+type captureChatExecutor struct {
+	chatReq map[string]any
+	body    string
+}
+
+func (e *captureChatExecutor) Do(_ context.Context, chatReq map[string]any) (*http.Response, error) {
+	e.chatReq = chatReq
+	body := e.body
+	if body == "" {
+		body = `{"id":"chatcmpl_1","choices":[{"message":{"content":"ok"}}]}`
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, nil
+}

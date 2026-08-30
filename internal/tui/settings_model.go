@@ -176,7 +176,7 @@ func (m *settingsModel) View() string {
 	footer := pmStatusBarStyle.Width(width - 4).Render(
 		lipgloss.JoinHorizontal(lipgloss.Top,
 			lipgloss.NewStyle().Foreground(colorText).Render(status),
-			lipgloss.NewStyle().Width(max(0, width-lipgloss.Width(status)-8)).Align(lipgloss.Right).Foreground(colorMuted).Render("Tab Section | Up/Down Field | Enter Change | F2/Ctrl+S Save | Esc Back"),
+			lipgloss.NewStyle().Width(max(0, width-lipgloss.Width(status)-8)).Align(lipgloss.Right).Foreground(colorMuted).Render("Tab Section | Up/Down Field | Enter Change | F2/Ctrl+S Save | Esc/Q Back"),
 		),
 	)
 

@@ -9,10 +9,7 @@ import (
 	"spark/internal/version"
 )
 
-const (
-	githubRepo = "zhangsanfeng1094/spark"
-	cacheAge   = 24 * time.Hour
-)
+const cacheAge = 24 * time.Hour
 
 func newVersionCmd() *cobra.Command {
 	var checkFlag bool
@@ -22,10 +19,10 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print version information",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			v := version.Get()
-			fmt.Println(v.String())
+			fmt.Fprintln(cmd.OutOrStdout(), v.String())
 
 			if checkFlag {
-				return checkForUpdate()
+				return checkForUpdate(cmd)
 			}
 			return nil
 		},
@@ -36,30 +33,31 @@ func newVersionCmd() *cobra.Command {
 	return cmd
 }
 
-func checkForUpdate() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func checkForUpdate(cmd *cobra.Command) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	latest, err := version.CheckLatestVersion(ctx, githubRepo)
+	latest, err := version.CheckLatestVersion(ctx, version.DefaultGitHubRepo)
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
 
+	out := cmd.OutOrStdout()
 	current := version.Get().Version
-	fmt.Printf("Current: %s\n", current)
-	fmt.Printf("Latest:  %s\n", latest)
+	fmt.Fprintf(out, "Current: %s\n", current)
+	fmt.Fprintf(out, "Latest:  %s\n", latest)
 
 	if version.IsUpdateAvailable(current, latest) {
-		fmt.Printf("\n✨ Update available! Run: npm i -g spark-agent-launcher\n")
+		fmt.Fprintf(out, "\n✨ Update available! Run: spark update\n")
 	} else {
-		fmt.Println("\n✓ You're up to date!")
+		fmt.Fprintln(out, "\n✓ You're up to date!")
 	}
 
 	return nil
 }
 
-// CheckVersionStartup checks for version updates on startup (non-blocking)
-// Returns update message if available, otherwise empty string
+// CheckVersionStartup checks for version updates on startup (non-blocking).
+// Returns update message if available, otherwise empty string.
 func CheckVersionStartup() string {
 	cache, err := version.LoadCache()
 	if err != nil {
@@ -79,7 +77,7 @@ func CheckVersionStartup() string {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			latest, err := version.CheckLatestVersion(ctx, githubRepo)
+			latest, err := version.CheckLatestVersion(ctx, version.DefaultGitHubRepo)
 			if err != nil {
 				return
 			}
@@ -92,7 +90,7 @@ func CheckVersionStartup() string {
 
 	// Check if update is available
 	if cache.LatestVersion != "" && version.IsUpdateAvailable(current, cache.LatestVersion) {
-		return fmt.Sprintf("✨ Update available: %s → %s (run: spark version --check)", current, cache.LatestVersion)
+		return fmt.Sprintf("✨ Update available: %s → %s (run: spark update)", current, cache.LatestVersion)
 	}
 
 	return ""

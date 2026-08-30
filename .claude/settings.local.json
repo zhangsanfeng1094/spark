@@ -5,7 +5,8 @@
       "mcp__augment-context-engine__codebase-retrieval",
       "mcp__context-mode__ctx_execute",
       "mcp__codegraph__codegraph_explore",
-      "mcp__deepwiki__read_wiki_structure"
+      "mcp__deepwiki__read_wiki_structure",
+      "mcp__context-mode__ctx_execute_file"
     ]
   }
 }

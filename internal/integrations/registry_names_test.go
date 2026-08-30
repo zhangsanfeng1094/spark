@@ -13,7 +13,7 @@ func TestNamesExcludeRemoved(t *testing.T) {
 			t.Fatalf("unexpected %q in Names: %v", n, names)
 		}
 	}
-	for _, want := range []string{"claude", "codex", "grok", "opencode"} {
+	for _, want := range []string{"claude", "codex", "grok", "one", "opencode"} {
 		found := false
 		for _, n := range names {
 			if n == want {

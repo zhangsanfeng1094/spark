@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -20,7 +20,7 @@ var (
 	BuildDate = "unknown"
 )
 
-// GitHubRelease represents a GitHub release
+// GitHubRelease represents a GitHub release (legacy shape kept for compatibility).
 type GitHubRelease struct {
 	TagName string `json:"tag_name"`
 	HTMLURL string `json:"html_url"`
@@ -52,41 +52,14 @@ func (v VersionInfo) Short() string {
 	return v.Version
 }
 
-// CheckLatestVersion checks GitHub releases for the latest version
-// Returns the latest version and an error if the check fails
+// CheckLatestVersion checks GitHub releases for the latest version.
+// Returns the latest version and an error if the check fails.
 func CheckLatestVersion(ctx context.Context, repo string) (string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
-	
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	release, err := FetchLatestRelease(ctx, repo)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "spark-agent-launcher")
-	
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to check version: status %d", resp.StatusCode)
-	}
-	
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", err
-	}
-	
-	// Strip the 'v' prefix if present
-	version := release.TagName
-	if len(version) > 0 && version[0] == 'v' {
-		version = version[1:]
-	}
-	
-	return version, nil
+	return release.Version(), nil
 }
 
 // Cache represents a version check cache
@@ -111,7 +84,7 @@ func LoadCache() (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -119,12 +92,12 @@ func LoadCache() (*Cache, error) {
 		}
 		return nil, err
 	}
-	
+
 	var cache Cache
 	if err := json.Unmarshal(data, &cache); err != nil {
 		return nil, err
 	}
-	
+
 	return &cache, nil
 }
 
@@ -134,18 +107,18 @@ func SaveCache(cache *Cache) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Ensure directory exists
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	
+
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return err
 	}
-	
+
 	return os.WriteFile(path, data, 0644)
 }
 
@@ -166,36 +139,57 @@ func IsDismissed(cache *Cache, version string) bool {
 	return cache.DismissedUntil == version
 }
 
-// CompareVersions compares two semantic versions
-// Returns: -1 if a < b, 0 if a == b, 1 if a > b
+// CompareVersions compares two semantic versions.
+// Returns: -1 if a < b, 0 if a == b, 1 if a > b.
+// Non-semver values like "dev" compare as older than any numeric release.
 func CompareVersions(a, b string) int {
-	// Simple comparison - assumes valid semver
-	// For production, consider using a proper semver library
-	var aMajor, aMinor, aPatch int
-	var bMajor, bMinor, bPatch int
-	
-	fmt.Sscanf(a, "%d.%d.%d", &aMajor, &aMinor, &aPatch)
-	fmt.Sscanf(b, "%d.%d.%d", &bMajor, &bMinor, &bPatch)
-	
-	if aMajor != bMajor {
-		if aMajor < bMajor {
-			return -1
-		}
+	a = stripVPrefix(a)
+	b = stripVPrefix(b)
+
+	aParts, aOK := parseSemverCore(a)
+	bParts, bOK := parseSemverCore(b)
+	if !aOK && !bOK {
+		return strings.Compare(a, b)
+	}
+	if !aOK {
+		return -1
+	}
+	if !bOK {
 		return 1
 	}
-	if aMinor != bMinor {
-		if aMinor < bMinor {
+	for i := 0; i < 3; i++ {
+		if aParts[i] < bParts[i] {
 			return -1
 		}
-		return 1
-	}
-	if aPatch != bPatch {
-		if aPatch < bPatch {
-			return -1
+		if aParts[i] > bParts[i] {
+			return 1
 		}
-		return 1
 	}
 	return 0
+}
+
+func parseSemverCore(v string) ([3]int, bool) {
+	var out [3]int
+	v = strings.TrimSpace(v)
+	if v == "" || strings.EqualFold(v, "dev") || strings.EqualFold(v, "unknown") {
+		return out, false
+	}
+	// Drop pre-release / build metadata: 1.2.3-rc.1+build -> 1.2.3
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	n, err := fmt.Sscanf(v, "%d.%d.%d", &out[0], &out[1], &out[2])
+	if err != nil || n < 2 {
+		// Allow major.minor
+		n, err = fmt.Sscanf(v, "%d.%d", &out[0], &out[1])
+		if err != nil || n < 2 {
+			n, err = fmt.Sscanf(v, "%d", &out[0])
+			if err != nil || n < 1 {
+				return out, false
+			}
+		}
+	}
+	return out, true
 }
 
 // IsUpdateAvailable checks if an update is available

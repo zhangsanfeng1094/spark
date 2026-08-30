@@ -422,6 +422,12 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch msg.String() {
 	case "ctrl+c":
 		return tea.Quit, true
+	case "q":
+		// Leave manager from profile list; nested field/action focus uses Esc to pop first.
+		if m.focusArea == pmFocusProfiles {
+			return tea.Quit, true
+		}
+		return nil, false
 	case "esc":
 		switch m.focusArea {
 		case pmFocusFields, pmFocusActions:
