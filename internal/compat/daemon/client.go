@@ -257,9 +257,7 @@ func startBackgroundDaemon(logf func(string, ...any), current BinaryIdentity) (*
 
 	logf("launching spark shared daemon in background...")
 	cmd := exec.Command(exePath, "daemon", "run", "--addr", DefaultDaemonAddr)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	setDaemonProcAttr(cmd)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
