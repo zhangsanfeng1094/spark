@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0](https://github.com/zhangsanfeng1094/spark/compare/v0.15.0...v0.16.0) (2026-09-16)
+
+
+### Features
+
+* add Astro-based showcase website and GitHub Pages deploy workflow ([f86f684](https://github.com/zhangsanfeng1094/spark/commit/f86f684e4272d004a894acd7b1ecceb255a45025))
+* add auth and daemon CLI with profile credential bindings ([cde774e](https://github.com/zhangsanfeng1094/spark/commit/cde774ea9483c3e1a9c9a71b2f9d35fcbf0e590f))
+* **auth:** add CPA auth store and OAuth refresh ([b6e8dff](https://github.com/zhangsanfeng1094/spark/commit/b6e8dff7210ee0b86f9113af7c0971a37822c1f1))
+* **compat:** replace custom gateway with Bifrost ingress ([893aa1f](https://github.com/zhangsanfeng1094/spark/commit/893aa1f1fcf395668f011defebb51bffb34c96ff))
+* integrate Bifrost ingress, CPA auth store, and showcase website ([680e6b5](https://github.com/zhangsanfeng1094/spark/commit/680e6b5b45884305a343fe2083b1a5d9ec5b023c))
+* **integrations:** add Agy and skip unchanged editor writes ([89ad6c6](https://github.com/zhangsanfeng1094/spark/commit/89ad6c631018ec3cd62a1e88dbea458c47265e44))
+* **tui:** add auth login flow and profile credential UI ([818d855](https://github.com/zhangsanfeng1094/spark/commit/818d855fdc61f7aa212c6eb7b450d256c7b97efb))
+
 ## [0.15.0](https://github.com/zhangsanfeng1094/spark/compare/v0.14.0...v0.15.0) (2026-08-30)
 
 
