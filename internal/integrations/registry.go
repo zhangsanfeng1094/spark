@@ -7,6 +7,7 @@ import (
 )
 
 var registry = map[string]Runner{
+	"agy":        &Agy{},
 	"claude":     &Claude{},
 	"codex":      &Codex{},
 	"grok":       &Grok{},

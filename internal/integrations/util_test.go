@@ -1,6 +1,9 @@
 package integrations
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"spark/internal/config"
@@ -151,5 +154,103 @@ func TestProfileOpenAIAPIType(t *testing.T) {
 				t.Fatalf("profileOpenAIAPIType(%+v)=%q want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCreateLaunchTempDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	dir, err := createLaunchTempDir("spark-test-*")
+	if err != nil {
+		t.Fatalf("createLaunchTempDir failed: %v", err)
+	}
+	defer os.RemoveAll(dir)
+
+	// Ensure directory was created inside ~/.spark/launch
+	wantPrefix := filepath.Join(tmpDir, ".spark", "launch")
+	if !strings.HasPrefix(dir, wantPrefix) {
+		t.Fatalf("expected path to start with %q, got %q", wantPrefix, dir)
+	}
+
+	// Verify directory exists on disk
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	if !fi.IsDir() {
+		t.Fatalf("expected directory at %s", dir)
+	}
+}
+
+func TestSymlinkEntries_BasicAndFallback(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(src, "file1.txt"), []byte("hello file1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	subDir := filepath.Join(src, "subdir")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "file2.txt"), []byte("hello file2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := symlinkEntries(src, dst, func(name string) bool { return name == "file1.txt" }); err != nil {
+		t.Fatalf("symlinkEntries failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "file1.txt")); !os.IsNotExist(err) {
+		t.Fatalf("file1.txt should have been skipped")
+	}
+	if data, err := os.ReadFile(filepath.Join(dst, "subdir", "file2.txt")); err != nil || string(data) != "hello file2" {
+		t.Fatalf("failed reading mirrored file: data=%s, err=%v", string(data), err)
+	}
+}
+
+func TestMirrorEntryFallback_CopyAndLink(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+
+	fileSrc := filepath.Join(src, "test.txt")
+	fileDst := filepath.Join(dst, "test.txt")
+	if err := os.WriteFile(fileSrc, []byte("fallback data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mirrorEntryFallback(fileSrc, fileDst); err != nil {
+		t.Fatalf("mirrorEntryFallback for file failed: %v", err)
+	}
+	if data, err := os.ReadFile(fileDst); err != nil || string(data) != "fallback data" {
+		t.Fatalf("unexpected content in fallback file: %s", string(data))
+	}
+
+	dirSrc := filepath.Join(src, "nested")
+	dirDst := filepath.Join(dst, "nested")
+	if err := os.MkdirAll(dirSrc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirSrc, "inner.txt"), []byte("inner data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := mirrorEntryFallback(dirSrc, dirDst); err != nil {
+		t.Fatalf("mirrorEntryFallback for dir failed: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dirDst, "inner.txt")); err != nil || string(data) != "inner data" {
+		t.Fatalf("unexpected content in fallback dir: %s", string(data))
+	}
+}
+
+func TestDaemonProfileTokenCarriesThinkingOverride(t *testing.T) {
+	budget := 8192
+	got := daemonProfileToken(&config.Profile{
+		RuntimeName:     "work",
+		SessionThinking: &config.ThinkingConfig{Mode: "force", BudgetTokens: &budget},
+	})
+	if got != "spark-profile:work?think=8192" {
+		t.Fatalf("token=%q", got)
 	}
 }

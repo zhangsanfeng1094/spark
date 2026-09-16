@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"spark/internal/auth"
+	"spark/internal/compat/daemon"
 	"spark/internal/config"
 )
 
@@ -31,8 +34,8 @@ const (
 // Grok Build speaks responses / chat_completions / messages natively, so Spark
 // picks api_backend + base_url instead of starting a local compat proxy.
 type grokLaunchRoute struct {
-	APIBackend     string
-	BaseURL        string
+	APIBackend string
+	BaseURL    string
 	// ExtraHeaders are static request headers (no secrets).
 	ExtraHeaders map[string]string
 	// EnvHTTPHeaders maps header name → env var name (secrets stay out of TOML).
@@ -40,6 +43,11 @@ type grokLaunchRoute struct {
 	Reason         string
 	Degraded       bool
 }
+
+var (
+	_ Editor      = (*Grok)(nil)
+	_ EditChecker = (*Grok)(nil)
+)
 
 type Grok struct{}
 
@@ -51,6 +59,22 @@ func (g *Grok) Paths() []string {
 }
 
 func (g *Grok) Models() []string { return nil }
+
+func (g *Grok) NeedsEdit(profile *config.Profile, models []string) (bool, error) {
+	normalized := normalizeGrokModels(models)
+	if len(normalized) == 0 {
+		return false, fmt.Errorf("no models selected")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	root, err := loadGrokConfigMap(filepath.Join(home, ".grok", "config.toml"))
+	if err != nil {
+		return false, err
+	}
+	return grokConfigNeedsSparkEdit(root, profile, normalized), nil
+}
 
 func (g *Grok) Edit(profile *config.Profile, models []string) error {
 	normalized := normalizeGrokModels(models)
@@ -69,6 +93,9 @@ func (g *Grok) Edit(profile *config.Profile, models []string) error {
 	root, err := loadGrokConfigMap(path)
 	if err != nil {
 		return err
+	}
+	if !grokConfigNeedsSparkEdit(root, profile, normalized) {
+		return nil
 	}
 
 	modelTable, _ := root["model"].(map[string]any)
@@ -115,10 +142,12 @@ func (g *Grok) Run(profile *config.Profile, model string, args []string) error {
 	if modelID == "" {
 		return fmt.Errorf("model cannot be empty")
 	}
-	// Keep the user's ~/.grok catalog in sync (and fix a spark-* default if any).
-	if err := g.Edit(profile, []string{modelID}); err != nil {
+	launchProfile, err := grokLaunchProfile(profile)
+	if err != nil {
 		return err
 	}
+	// Persistent ~/.grok/config.toml spark-* entries are owned by Editor
+	// (spark launch confirm-and-write). Run only builds the isolated GROK_HOME.
 
 	// Launch in an isolated GROK_HOME without auth.json. When ~/.grok/auth.json
 	// is present, Grok Build's agent harness often prefers the OAuth session JWT
@@ -128,26 +157,62 @@ func (g *Grok) Run(profile *config.Profile, model string, args []string) error {
 	// The launch home mirrors the real ~/.grok (skills, MCP credentials, plugins,
 	// sessions, marketplace, …) via symlinks, and reuses the real config.toml
 	// with only the spark model default overridden for this process.
-	launchHome, err := os.MkdirTemp("", "spark-grok-home-*")
+	launchHome, err := createLaunchTempDir("spark-grok-home-*")
 	if err != nil {
 		return fmt.Errorf("create grok launch home: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(launchHome) }()
 
 	modelKey := grokModelKey(modelID)
-	if err := writeGrokLaunchHome(launchHome, profile, modelID, modelKey); err != nil {
+	if err := writeGrokLaunchHome(launchHome, launchProfile, modelID, modelKey); err != nil {
 		return err
 	}
 
-	route := grokLaunchRouteForProfile(profile)
-	logGrokLaunchRoute(profile, route)
+	route := grokLaunchRouteForProfile(launchProfile)
+	logGrokLaunchRoute(launchProfile, route)
 
 	cmdArgs := append([]string{}, args...)
 	if !cliArgsHasModelFlag(cmdArgs) {
 		cmdArgs = append([]string{"--model", modelKey}, cmdArgs...)
 	}
-	env := append(grokEnv(profile), "GROK_HOME="+launchHome)
+	env := append(grokEnv(launchProfile), "GROK_HOME="+launchHome)
 	return runCmd(bin, cmdArgs, env)
+}
+
+// grokLaunchProfile routes normal Spark launches through the daemon. Grok uses
+// its native Responses wire format, while the daemon resolves the original
+// profile from the routing token and applies its Thinking policy before Bifrost.
+func grokLaunchProfile(profile *config.Profile) (*config.Profile, error) {
+	if os.Getenv("SPARK_DIRECT") == "1" {
+		return profile, nil
+	}
+	dInfo, err := daemon.EnsureDaemon(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("start shared Spark daemon: %w", err)
+	}
+	if dInfo == nil {
+		return nil, fmt.Errorf("start shared Spark daemon: no daemon information returned")
+	}
+	return grokProfileForDaemon(profile, dInfo.BaseURL), nil
+}
+
+func grokProfileForDaemon(profile *config.Profile, daemonBaseURL string) *config.Profile {
+	if profile == nil {
+		profile = &config.Profile{}
+	}
+	copy := *profile
+	token := daemonProfileToken(profile)
+	copy.Endpoint = strings.TrimRight(daemonBaseURL, "/") + "/v1"
+	copy.OpenAIBaseURL = copy.Endpoint
+	copy.AnthropicBaseURL = ""
+	copy.Protocol = config.ProtocolOpenAIResponses
+	copy.OpenAIAPIType = config.OpenAIAPITypeResponses
+	copy.APIKey = token
+	copy.OpenAIAPIKey = token
+	copy.AnthropicAuthToken = ""
+	copy.Credential.APIKey = token
+	copy.Credential.Mode = config.CredentialModeAPIKey
+	return &copy
 }
 
 // writeGrokLaunchHome builds a launch-time GROK_HOME that:
@@ -179,30 +244,7 @@ func realGrokHome() (string, error) {
 // mirrorGrokHome symlinks every entry from the real GROK home into the launch
 // home, except auth artifacts and config.toml (which is rewritten for BYOK).
 func mirrorGrokHome(src, dst string) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read grok home: %w", err)
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if shouldSkipGrokMirror(name) {
-			continue
-		}
-		srcPath := filepath.Join(src, name)
-		dstPath := filepath.Join(dst, name)
-		// Prefer absolute symlink targets so the launch home is relocatable.
-		absSrc, err := filepath.Abs(srcPath)
-		if err != nil {
-			absSrc = srcPath
-		}
-		if err := os.Symlink(absSrc, dstPath); err != nil {
-			return fmt.Errorf("link %s: %w", name, err)
-		}
-	}
-	return nil
+	return symlinkEntries(src, dst, shouldSkipGrokMirror)
 }
 
 func shouldSkipGrokMirror(name string) bool {
@@ -248,6 +290,20 @@ func writeGrokLaunchConfig(launchHome, realHome string, profile *config.Profile,
 	uiSection["fork_secondary_model"] = modelKey
 	root["ui"] = uiSection
 
+	// Injects enabled MCP servers from Spark config into mcp_servers table.
+	if sparkCfg, _ := config.Load(); sparkCfg != nil && len(sparkCfg.McpServers) > 0 {
+		mcpTable, _ := root["mcp_servers"].(map[string]any)
+		if mcpTable == nil {
+			mcpTable = map[string]any{}
+		}
+		for name, srv := range sparkCfg.McpServers {
+			if srv != nil && srv.Enabled {
+				mcpTable[name] = config.EncodeCodexServerMap(srv)
+			}
+		}
+		root["mcp_servers"] = mcpTable
+	}
+
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(root); err != nil {
 		return err
@@ -258,6 +314,13 @@ func writeGrokLaunchConfig(launchHome, realHome string, profile *config.Profile,
 // grokEnv injects the profile API key for spark-managed models (env_key).
 func grokEnv(profile *config.Profile) []string {
 	key := strings.TrimSpace(profileKey(profile))
+	if key == "" {
+		if store, err := auth.DefaultStore(); err == nil && store != nil {
+			if a, err := store.Get(auth.ProviderGrok); err == nil && a != nil && a.AccessToken != "" && !a.Expired(0) {
+				key = a.AccessToken
+			}
+		}
+	}
 	if key == "" {
 		return []string{}
 	}
@@ -281,6 +344,71 @@ func findGrokBinary() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("grok is not installed, install from https://x.ai/cli")
+}
+
+func grokConfigNeedsSparkEdit(root map[string]any, profile *config.Profile, normalized []string) bool {
+	if root == nil {
+		root = map[string]any{}
+	}
+	intended := make(map[string]any, len(normalized))
+	route := grokLaunchRouteForProfile(profile)
+	for _, mdl := range normalized {
+		intended[grokModelKey(mdl)] = grokSparkModelEntry(mdl, route)
+	}
+	if !grokAnyEqual(grokSparkModelSubset(root), intended) {
+		return true
+	}
+	if modelsSection, ok := root["models"].(map[string]any); ok {
+		if def, _ := modelsSection["default"].(string); strings.HasPrefix(strings.TrimSpace(def), grokSparkModelPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func grokSparkModelSubset(root map[string]any) map[string]any {
+	out := map[string]any{}
+	modelTable, _ := root["model"].(map[string]any)
+	for key, val := range modelTable {
+		if strings.HasPrefix(key, grokSparkModelPrefix) {
+			out[key] = val
+		}
+	}
+	return out
+}
+
+func grokAnyEqual(a, b any) bool {
+	switch av := a.(type) {
+	case map[string]any:
+		bv, ok := b.(map[string]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for key, val := range av {
+			if !grokAnyEqual(val, bv[key]) {
+				return false
+			}
+		}
+		return true
+	case string:
+		bv, ok := b.(string)
+		return ok && av == bv
+	case []any:
+		bv, ok := b.([]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for i := range av {
+			if !grokAnyEqual(av[i], bv[i]) {
+				return false
+			}
+		}
+		return true
+	case nil:
+		return b == nil
+	default:
+		return fmt.Sprint(a) == fmt.Sprint(b)
+	}
 }
 
 func loadGrokConfigMap(path string) (map[string]any, error) {
