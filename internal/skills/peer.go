@@ -207,7 +207,14 @@ func materializeProjection(path string, entry *SkillEntry, scope, target string)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		return os.Symlink(entry.InstalledPath, path)
+		if err := os.Symlink(entry.InstalledPath, path); err == nil {
+			return nil
+		}
+		// Fallback for Windows or environments lacking symlink creation privilege
+		if err := copyDir(entry.InstalledPath, path); err != nil {
+			return err
+		}
+		return writeProjectionMarker(path, entry, scope, target)
 	default:
 		if err := copyDir(entry.InstalledPath, path); err != nil {
 			return err

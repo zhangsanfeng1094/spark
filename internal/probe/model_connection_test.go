@@ -183,3 +183,31 @@ func TestParseCurlResponse(t *testing.T) {
 		t.Fatalf("unexpected response: %#v", resp)
 	}
 }
+
+func TestModelConnectionUsesStoredAuthToken(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	authDir := filepath.Join(tempDir, ".spark", "auth")
+	_ = os.MkdirAll(authDir, 0o755)
+	_ = os.WriteFile(filepath.Join(authDir, "commandcode.json"), []byte(`{"provider":"commandcode","kind":"oauth","access_token":"user_stored_key_999"}`), 0o600)
+
+	poster := &fakePoster{status: 200, body: []byte(`{"id":"chatcmpl-1"}`)}
+	profile := &config.Profile{
+		OpenAIBaseURL: "http://localhost:3050/v1",
+		AuthProvider:  "commandcode",
+		OpenAIAPIType: config.OpenAIAPITypeChatCompletions,
+		DefaultModel:  "claude-3-5-sonnet",
+	}
+
+	res := testModelConnection(profile, "claude-3-5-sonnet", poster)
+	if !res.Success {
+		t.Fatalf("expected success, got message: %s", res.Message)
+	}
+	if len(poster.requests) == 0 {
+		t.Fatalf("expected at least 1 request")
+	}
+	if poster.requests[0].APIKey != "user_stored_key_999" {
+		t.Fatalf("expected APIKey 'user_stored_key_999', got %q", poster.requests[0].APIKey)
+	}
+}

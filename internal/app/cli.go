@@ -13,6 +13,7 @@ import (
 	"spark/internal/httpserver"
 	"spark/internal/integrations"
 	"spark/internal/skills"
+	"spark/internal/thinking"
 	"spark/internal/tui"
 	"spark/internal/usage"
 	"spark/internal/version"
@@ -51,6 +52,10 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newUsageCmd())
 	root.AddCommand(newProfileCmd())
 	root.AddCommand(newHTTPServerCmd())
+	root.AddCommand(newDaemonCmd())
+	root.AddCommand(newLoginCmd())
+	root.AddCommand(newLogoutCmd())
+	root.AddCommand(newAuthCmd())
 	root.AddCommand(newDebugCmd())
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newUpdateCmd())
@@ -111,6 +116,7 @@ func newUsageCmd() *cobra.Command {
 func newLaunchCmd() *cobra.Command {
 	var modelFlag string
 	var profileFlag string
+	var thinkFlag string
 	var selectProfileFlag bool
 	var configOnly bool
 
@@ -157,12 +163,14 @@ Rule: Arguments before -- are for spark, arguments after -- are passed to the in
 				Profile:       profileFlag,
 				SelectProfile: selectProfileFlag,
 				ConfigOnly:    configOnly,
+				Think:         thinkFlag,
 				PassArgs:      passArgs,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model name")
 	cmd.Flags().StringVar(&profileFlag, "profile", "", "Profile name")
+	cmd.Flags().StringVar(&thinkFlag, "think", "", "Thinking override: off, low, medium, high, xhigh, max, or token budget (for example 8k)")
 	cmd.Flags().BoolVar(&selectProfileFlag, "select-profile", false, "Select profile before launching")
 	cmd.Flags().BoolVar(&configOnly, "config", false, "Configure without launching")
 	return cmd
@@ -222,20 +230,30 @@ const (
 )
 
 func interactiveMenuOptions() []string {
-	return []string{interactiveActionQuickLaunch, interactiveActionLaunchOptions, interactiveActionManageSettings, "Token usage", "Manage profiles", "Manage MCP servers", "Manage skills", "Show config file", "Quit"}
+	return []string{
+		interactiveActionQuickLaunch,
+		interactiveActionLaunchOptions,
+		"Manage profiles",
+		"Manage MCP servers",
+		"Manage skills",
+		"Manage logins",
+		"Token usage",
+		interactiveActionManageSettings,
+		"Quit",
+	}
 }
 
 func interactiveMenuDescriptions() map[string]string {
 	return map[string]string{
-		interactiveActionQuickLaunch:    "Start Spark immediately with the quick launch integration, default profile, and default model.",
-		interactiveActionLaunchOptions:  "Choose the integration, profile, and configured model for this launch.",
-		interactiveActionManageSettings: "Manage global defaults, prompt injection, Codex model catalog, and launch history.",
-		"Token usage":                   "Review recorded compat proxy token usage with fixed time filters.",
-		"Manage profiles":               "Edit provider profiles, base URLs, API keys, API type behavior, and model defaults.",
-		"Manage MCP servers":            "Manage MCP server entries, health probes, and transport settings.",
-		"Manage skills":                 "Browse installed skills, add new ones, and toggle them on or off.",
-		"Show config file":              "Print the active Spark config path after leaving the dashboard.",
-		"Quit":                          "Exit Spark without making additional changes.",
+		interactiveActionQuickLaunch:    "Start Spark immediately with the default integration, profile, and model.",
+		interactiveActionLaunchOptions:  "Choose client integration, gateway profile, and model before launching.",
+		"Manage profiles":               "Configure AI provider endpoints, API keys, base URLs, and model aliases.",
+		"Manage MCP servers":            "Manage Model Context Protocol servers, transport types, and health probes.",
+		"Manage skills":                 "Browse, install, and manage extensible agent skills and tools.",
+		"Manage logins":                 "Manage upstream OAuth & Device login sessions (Claude, Codex, Gemini, Grok).",
+		"Token usage":                   "Inspect recorded proxy token usage across models and time windows.",
+		interactiveActionManageSettings: "Manage global defaults, prompt injection, Codex catalog, and history.",
+		"Quit":                          "Exit Spark CLI.",
 	}
 }
 
@@ -321,6 +339,19 @@ func applyDashboardConfigSummary(summary *tui.DashboardSummary, cfg *config.Root
 	summary.DefaultProfile = cfg.DefaultProfile
 	summary.CurrentProfile = cfg.DefaultProfile
 	summary.DefaultModel = defaultProfileModel(cfg)
+	summary.TotalProfiles = len(cfg.Profiles)
+	summary.TotalMCPServers = len(cfg.McpServers)
+	enabledMCP := 0
+	for _, s := range cfg.McpServers {
+		if s != nil && s.Enabled {
+			enabledMCP++
+		}
+	}
+	summary.EnabledMCPServers = enabledMCP
+	summary.PromptEnabled = cfg.Prompts.IsEnabled()
+	if reg, err := skills.LoadRegistry(); err == nil && reg != nil {
+		summary.TotalSkills = len(reg.Skills)
+	}
 }
 
 func newDebugTokenUsageSnapshotCmd() *cobra.Command {
@@ -522,9 +553,10 @@ func runInteractive() error {
 			if err := manageSkills(); err != nil {
 				return err
 			}
-		case "Show config file":
-			path, _ := config.ConfigPath()
-			fmt.Println(path)
+		case "Manage logins":
+			if err := tui.ManageAuthDashboard(); err != nil {
+				return err
+			}
 		case "Quit":
 			return nil
 		}
@@ -751,6 +783,7 @@ func tokenUsageHeavyRequests(rows []usage.HeavyRequest) []tui.TokenUsageRequest 
 type LaunchOptions struct {
 	Model         string
 	Profile       string
+	Think         string
 	SelectProfile bool
 	ConfigOnly    bool
 	PassArgs      []string
@@ -861,6 +894,18 @@ func launchIntegration(name string, opts LaunchOptions) error {
 	if err != nil {
 		return err
 	}
+	// Keep launch-only routing metadata off disk while making every integration
+	// identify the selected profile to the shared daemon.
+	profileCopy := *profile
+	profileCopy.RuntimeName = profileName
+	if value := strings.TrimSpace(opts.Think); value != "" {
+		policy, ok := thinking.ParseShorthand(value)
+		if !ok {
+			return fmt.Errorf("invalid --think value %q (use off, an effort, or a positive token budget such as 8k)", value)
+		}
+		profileCopy.SessionThinking = policy
+	}
+	profile = &profileCopy
 
 	models := resolveModels(opts.Model, profile)
 
@@ -874,15 +919,12 @@ func launchIntegration(name string, opts LaunchOptions) error {
 		if len(models) == 0 {
 			return fmt.Errorf("at least one model required")
 		}
-		ok, err := confirmEditorLaunch(r.String(), profileName, models, ed.Paths())
+		continueLaunch, err := applyEditorIfNeeded(r, ed, profile, profileName, models, confirmEditorLaunch)
 		if err != nil {
 			return err
 		}
-		if !ok {
+		if !continueLaunch {
 			return nil
-		}
-		if err := ed.Edit(profile, models); err != nil {
-			return err
 		}
 	} else {
 		model := ""
@@ -934,6 +976,17 @@ func launchIntegration(name string, opts LaunchOptions) error {
 	}
 
 	fmt.Println(formatLaunchLine(r.String(), models[0], profileName))
+	enabledMcpCount := config.CountEnabledMcpServers(cfg.McpServers)
+	if enabledMcpCount > 0 {
+		var names []string
+		for name, srv := range cfg.McpServers {
+			if srv != nil && srv.Enabled {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		fmt.Printf("✓ MCP servers: %d injected (%s)\n", enabledMcpCount, strings.Join(names, ", "))
+	}
 	prompt, err := cfg.ResolvePromptInjection(strings.ToLower(name), models[0])
 	if err != nil {
 		return err
@@ -964,12 +1017,40 @@ func formatLaunchLine(integration, model, profileName string) string {
 	)
 }
 
-// confirmEditorLaunch asks before Spark rewrites an integration's on-disk config.
-func confirmEditorLaunch(integration, profileName string, models, paths []string) (bool, error) {
-	return tui.ConfirmDetails(editorLaunchConfirmRequest(integration, profileName, models, paths, config.BackupDir()))
+type editorConfirmFn func(integration, profileName string, models, paths []string) (bool, error)
+
+// applyEditorIfNeeded writes integration config only when Spark-managed
+// settings would actually change. Editors that implement EditChecker can skip
+// both the confirm dialog and Edit when the on-disk config already matches.
+// continueLaunch is false when the user cancels the write confirmation.
+func applyEditorIfNeeded(r integrations.Runner, ed integrations.Editor, profile *config.Profile, profileName string, models []string, confirm editorConfirmFn) (bool, error) {
+	needsEdit := true
+	if checker, ok := r.(integrations.EditChecker); ok {
+		needs, err := checker.NeedsEdit(profile, models)
+		if err != nil {
+			return false, err
+		}
+		needsEdit = needs
+	}
+	if !needsEdit {
+		return true, nil
+	}
+	ok, err := confirm(r.String(), profileName, models, ed.Paths())
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	return true, ed.Edit(profile, models)
 }
 
-func editorLaunchConfirmRequest(integration, profileName string, models, paths []string, backupDir string) tui.ConfirmRequest {
+// confirmEditorLaunch asks before Spark rewrites an integration's on-disk config.
+func confirmEditorLaunch(integration, profileName string, models, paths []string) (bool, error) {
+	return tui.ConfirmDetails(editorLaunchConfirmRequest(integration, profileName, models, paths))
+}
+
+func editorLaunchConfirmRequest(integration, profileName string, models, paths []string) tui.ConfirmRequest {
 	details := make([]string, 0, len(paths)+6)
 	details = append(details,
 		"Integration: "+integration,
@@ -994,7 +1075,7 @@ func editorLaunchConfirmRequest(integration, profileName string, models, paths [
 		Title:          "Apply Spark config for " + integration + "?",
 		Summary:        "Before launching, Spark writes provider/model settings so this agent uses your selected profile.",
 		Details:        details,
-		Footnote:       "Backups (if any): " + backupDir + "  ·  Esc cancels without writing.",
+		Footnote:       "This write overwrites the listed files in place and does not create a backup. Esc cancels without writing.",
 		ConfirmLabel:   "Write config & launch",
 		CancelLabel:    "Cancel",
 		DefaultConfirm: true,
