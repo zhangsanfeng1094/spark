@@ -27,7 +27,7 @@ Spark 是一个面向 AI coding agent 的终端启动器、协议代理与多 Pr
 
 ## 项目介绍
 
-Spark 适合同时使用 Codex、Claude Code、OpenCode、Grok Build、One 等 AI coding agent 的开发者。它把原本分散在各个工具里的模型、供应商、API Key、Base URL、MCP Server 和 Skills 配置收拢到一个终端界面或 Web 控制台中，通过 Profile 切换即可复用不同环境。
+Spark 适合同时使用 Codex、Claude Code、OpenCode、Grok Build、One、Antigravity（`agy`）等 AI coding agent 的开发者。它把原本分散在各个工具里的模型、供应商、API Key、Base URL、MCP Server 和 Skills 配置收拢到一个终端界面或 Web 控制台中，通过 Profile 切换即可复用不同环境。
 
 在启动 agent 时，Spark 会按当前 Profile 自动写入目标工具所需的配置；当上游 API 与 agent 期望的协议不一致时，会自动通过本地兼容代理做转换（例如 Codex 的 Responses 路径、Claude 的 Messages 路径等），同时支持 Gemini `generateContent` 与 OpenAI Chat Completions 等协议。
 
@@ -37,7 +37,7 @@ Spark 的目标不是替代 Codex 或 Claude，而是让这些工具在多模型
 
 ## 核心特性
 
-- **多 Agent 启动与配置注入**：支持 `codex`、`claude`、`opencode`、`grok`、`one`，自动生成对应工具的配置。
+- **多 Agent 启动与配置注入**：支持 `codex`、`claude`、`opencode`、`grok`、`one`、`agy`，自动生成对应工具的配置。
 - **透明兼容代理 (Compat Gateway)**：本地代理覆盖 Codex `POST /v1/responses` 与 Claude `/v1/messages` 路径，可无缝对接到 OpenAI Chat Completions 等第三方上游。
 - **多 Profile 与沙盒隔离**：为不同供应商、模型列表、默认模型、API Key 和 Base URL 保存独立配置；在启动 Grok 或 One 等 Agent 时通过临时 HOME 镜像隔离，避免全局凭据泄露或 OAuth 冲突。
 - **双模体验 (TUI + Web Console)**：交互式终端 TUI 与浏览器 Web 管理控制台自由选择。
@@ -135,9 +135,10 @@ spark launch codex --model gpt-4o -- --no-auto-approve
 # 启动 Claude Code 并指定临时 Profile
 spark launch claude --profile anthropic-official
 
-# 启动 Grok Build 或 One
+# 启动 Grok Build、One 或 Antigravity（agy）
 spark launch grok --model spark-grok-4.5
 spark launch one --model gpt-4o
+spark launch agy --model gemini-3.7-flash
 ```
 
 > `--` 之后的参数会原样传给目标集成工具。

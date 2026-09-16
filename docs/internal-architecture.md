@@ -1,6 +1,6 @@
 # internal 技术架构说明
 
-本文梳理 `internal/` 下各包职责、主要文件用途和运行时调用关系。当前项目是一个 Go CLI：`cmd/spark/main.go` 只负责启动 `app.NewRootCmd()`，真实业务都在 `internal/`。
+本文梳理 `internal/` 下各包职责、主要文件用途和运行时调用关系。当前项目是一个 Go CLI：`cmd/spark/main.go` 只负责启动 `app.NewRootCmd()`，业务逻辑都在 `internal/`。
 
 ## 总体架构图
 
@@ -13,308 +13,62 @@ flowchart TD
     App --> Config[internal/config<br/>~/.spark/config.json<br/>Codex TOML / Claude JSON MCP 配置]
     App --> Skills[internal/skills<br/>技能目录、manifest、安装/同步]
     App --> Version[internal/version<br/>版本信息和 GitHub release 检查]
-    App --> Integrations[internal/integrations<br/>agent runner / editor 启动]
+    App --> Integrations[internal/integrations<br/>agent runner / 启动器]
+    App --> Daemon[internal/compat/daemon<br/>共享代理守护进程]
 
     TUI --> Config
     TUI --> Integrations
     TUI --> Skills
 
     Integrations --> Config
-    Integrations --> LocalAgent[本地 agent CLI<br/>claude / codex / opencode / grok]
-    Integrations --> CompatProxy[兼容代理<br/>Codex Responses / Claude Messages]
+    Integrations --> LocalAgent[本地 agent CLI<br/>claude / codex / opencode / grok / one / agy]
+    Integrations --> Daemon
+    Integrations --> CompatProxy[internal/compat/proxy<br/>In-process 兼容代理降级]
 
-    CompatProxy --> ClientCodex[internal/compat/client/codex<br/>Responses 请求/响应/SSE]
-    CompatProxy --> ClientAnthropic[internal/compat/client/anthropic_messages<br/>Messages 请求/响应/SSE]
-    CompatProxy --> ClientGemini[internal/compat/client/gemini_generate_content<br/>GenerateContent 请求/响应]
-    CompatProxy --> Gateway[internal/compat/gateway<br/>路由和流/非流编排]
-    CompatProxy --> TargetOpenAI[internal/compat/target/openai_chat<br/>OpenAI Chat Completions 目标协议]
-    CompatProxy --> Policy[internal/compat/policy<br/>reasoning / tools 策略]
+    Daemon --> IngressCodex[internal/compat/ingress/codex<br/>Responses 请求解析 / SSE 流转发]
+    Daemon --> IngressClaude[internal/compat/ingress/claude<br/>Messages 请求解析 / SSE 流转发]
+    Daemon --> IngressGemini[internal/compat/ingress/gemini<br/>generateContent 请求解析 / SSE 流转发]
+    CompatProxy --> IngressCodex
+    CompatProxy --> IngressClaude
+    CompatProxy --> IngressGemini
 
-    ClientCodex --> IR[internal/compat/ir<br/>协议中间表示]
-    ClientAnthropic --> IR
-    ClientGemini --> IR
-    Gateway --> ClientCodex
-    Gateway --> ClientAnthropic
-    Gateway --> TargetOpenAI
-    TargetOpenAI --> IR
-    TargetOpenAI --> Policy
-    Policy --> IR
+    IngressCodex --> Engine[internal/compat/engine<br/>Bifrost Core 驱动引擎]
+    IngressClaude --> Engine
+    IngressGemini --> Engine
 
-    CompatProxy --> Upstream[OpenAI-compatible upstream API]
+    IngressCodex --> Usage[internal/usage<br/>Token 计量持久化 SQLite]
+    IngressClaude --> Usage
+    IngressGemini --> Usage
+
+    Engine --> Upstream[上游 LLM Provider<br/>OpenAI, Anthropic, Gemini, Bedrock, DeepSeek, etc.]
 ```
 
 ## 包职责
 
 | 包 | 主要职责 | 关键文件 |
 | --- | --- | --- |
-| `internal/app` | CLI 命令层。定义 `spark` 根命令、`launch/config/mcp/skill/profile/debug/version` 等子命令，连接 TUI、配置、集成和技能模块。 | `cli.go`, `mcp_cmd.go`, `mcp_sync.go`, `skill_cmd.go`, `version.go` |
-| `internal/config` | Spark 自身配置模型和持久化；管理 profiles、integrations、MCP servers；读写 Codex TOML 和 Claude JSON；从旧配置迁移。 | `config.go`, `mcp.go`, `toml.go`, `claude_json.go`, `files.go`, `migrate.go` |
-| `internal/integrations` | 各 agent 的启动/配置适配层。把 profile/model 写入目标 agent 配置或环境变量，必要时启动 `internal/compat/proxy` 的本地兼容代理。正式注册：`claude` / `codex` / `opencode` / `grok`（`droid` / `pi` / `openclaw` 源码保留但未注册）。 | `registry.go`, `types.go`, `claude.go`, `codex.go`, `opencode.go`, `grok.go`, `compatio.go` |
-| `internal/compat/ir` | 协议中间表示（IR）。抽象 Request、Message、ContentBlock、ReasoningBlock、ToolCall、ToolResult、Response、StreamEvent、Usage。 | `model.go`, `stream.go`, `usage.go` |
-| `internal/compat/client/codex` | OpenAI Responses caller 协议适配。把 Responses 请求转 IR，或把 IR/Chat 结果写回 Responses 客户端格式和 SSE。 | `request_in.go`, `response_out.go`, `stream_out.go` |
-| `internal/compat/client/anthropic_messages` | Anthropic Messages caller 协议适配。把 Messages 请求转 IR，或把结果写回 Anthropic Messages 响应和 SSE。 | `messages_inbound.go`, `messages_client_writer.go`, `messages_stream_writer.go` |
-| `internal/compat/client/gemini_generate_content` | Gemini GenerateContent caller 协议适配。当前覆盖请求入站和客户端响应写出。 | `generate_content_inbound.go`, `generate_content_client_writer.go` |
-| `internal/compat/target/openai_chat` | OpenAI Chat Completions target 协议适配。把 IR 转 Chat 请求，并把 Chat 响应/流转换回 IR 事件；保存 Chat target 专属 fallback extraction helper。 | `request_out.go`, `response_in.go`, `stream_in.go`, `extractors.go` |
-| `internal/compat/gateway/core` | 兼容网关核心类型。负责 route key、route 默认值、unsupported-route error 和 translated-chat 执行管道。 | `route.go`, `pipeline.go` |
-| `internal/compat/gateway/features/reasoning` | gateway reasoning 特性。负责 assistant tool-call reasoning echo/cache 和 request adapter。 | `reasoning_cache.go` |
-| `internal/compat/gateway/bridge` | gateway 协议桥接层。负责 route selection，并用 `ClientCodec` + `TargetCodec` 组合 `client/* -> ir -> target/*` 和 `target/* -> ir -> client/*`，避免按每个 client-target 组合复制字段映射。 | `registry.go`, `types.go`, `translators.go`, `stream.go`, `nonstream.go` |
-| `internal/compat/gateway` | 兼容网关编排层。负责 HTTP handler、上游执行、stream/non-stream HTTP 转发和 gateway-level HTTP support。 | `codex_responses_handler.go`, `anthropic_messages_handler.go`, `codex_responses_forward.go` |
-| `internal/compat/httpjson` | compat HTTP JSON 工具。负责普通 JSON 请求解码和 OpenAI-compatible JSON error envelope 写回。 | `json.go` |
-| `internal/compat/logutil` | compat 协议日志工具。负责对 request/response/IR 结构做字段级脱敏和结构化摘要，供 gateway/proxy 共享。 | `structure.go` |
-| `internal/compat/policy` | 协议转换策略。处理 reasoning 可见性/归一化、tool call/tool result 兼容规则。 | `reasoning.go`, `tools.go` |
+| `internal/app` | CLI 命令层。定义 `spark` 根命令、`launch/daemon/config/mcp/skill/profile/debug/version/usage` 等子命令，连接 TUI、配置、集成和技能模块。 | `cli.go`, `daemon_cmd.go`, `mcp_cmd.go`, `skill_cmd.go`, `version.go` |
+| `internal/config` | Spark 自身配置模型和持久化；管理 profiles、integrations、MCP servers；读写 Codex TOML 和 Claude JSON。 | `config.go`, `mcp.go`, `toml.go`, `claude_json.go`, `files.go` |
+| `internal/integrations` | 各 agent 的启动/配置适配层。把 profile/model 写入目标 agent 配置或环境变量，优先连接共享 daemon，回退到 in-process 代理；AGY 在 `gemini_generate_content` Profile 上直连，否则走 Gemini generateContent 兼容入口。正式注册：`agy` / `claude` / `codex` / `opencode` / `grok` / `one`。 | `registry.go`, `types.go`, `agy.go`, `claude.go`, `codex.go`, `opencode.go`, `grok.go`, `one.go`, `compatio.go` |
+| `internal/compat/engine` | Bifrost Core 核心驱动引擎与插件管理。封装 `github.com/maximhq/bifrost/core` 单例、Profile 到 Provider 映射、动态 API Key 绑定与 Spark LLM 插件。 | `bifrost.go`, `profile.go`, `plugin.go` |
+| `internal/compat/ingress/codex` | Codex Ingress 适配。将 Codex `POST /v1/responses` 转换为 `schemas.BifrostChatRequest`，并将 Bifrost 响应流转换为 Codex Responses SSE 事件。 | `handler.go`, `request.go`, `stream.go` |
+| `internal/compat/ingress/claude` | Claude Ingress 适配。将 Anthropic `POST /v1/messages` 转换为 `schemas.BifrostChatRequest`，并将 Bifrost 响应流转换为 Anthropic Messages SSE 事件。 | `handler.go`, `request.go`, `stream.go` |
+| `internal/compat/ingress/gemini` | Gemini Ingress 适配。将 `POST /v1beta/models/{model}:generateContent` / `streamGenerateContent` 转换为 `schemas.BifrostChatRequest`，并将 Bifrost 响应流转换为 Gemini SSE 事件。 | `handler.go`, `request.go`, `stream.go`, `response.go` |
+| `internal/compat/daemon` | 共享 background daemon 服务（默认监听 `127.0.0.1:42337`）。支持多客户端并发接入、连接池复用与动态 profile 路由。 | `daemon.go`, `client.go` |
+| `internal/compat/proxy` | In-process 兼容代理运行时（监听随机端口）。在不启用 daemon 时作为降级方案。 | `server.go`, `codex_compat_proxy.go`, `claude_compat_proxy.go`, `gemini_compat_proxy.go` |
+| `internal/compat/proxyutil` | 代理流式 HTTP client、日志脱敏与滚动日志工具。 | `compatio.go` |
+| `internal/usage` | Token 消耗 SQLite 记录与统计。提供今日/7天/30天/全量窗口聚合查询与模型/Client 过滤。 | `store.go`, `query.go` |
 | `internal/skills` | 本地技能系统。管理技能根目录、registry、manifest、安装、同伴 agent 技能导入/导出。 | `types.go`, `roots.go`, `registry.go`, `manifest.go`, `install.go`, `catalog.go`, `peer.go`, `files.go` |
-| `internal/tui` | 终端交互 UI。提供选择、输入、确认、dashboard、profile/MCP/skill 管理界面和模型连通性测试 UI。返回上级统一为 manager 根界面 `Esc/Q Back`（见 `nav_back.go`）。 | `prompt.go`, `dashboard_*`, `profile_manager_*`, `mcp_manager_{model,input,view,actions,helpers,probe,editor}.go`, `skill_manager_model.go`, `nav_back.go`, `model_connection.go` |
+| `internal/tui` | 终端交互 UI。提供选择、输入、确认、dashboard、profile/MCP/skill 管理界面和模型连通性测试 UI。 | `prompt.go`, `dashboard_*`, `profile_manager_*`, `mcp_manager_*.go`, `skill_manager_model.go`, `nav_back.go`, `model_connection.go` |
 | `internal/version` | 版本元信息、缓存和更新检查。 | `version.go` |
 
 ## LLM API 转换逻辑
 
-这部分是 `internal/` 里最核心的协议层：Spark 让不同 agent 继续以自己熟悉的 API 形态发请求，但内部统一转成一个中间表示，再打到 OpenAI-compatible Chat Completions 上游。
+1. **Codex CLI 路径**：
+   `Codex CLI` -> `POST /v1/responses` -> `ingress/codex` -> 转为 `schemas.BifrostChatRequest` -> `Bifrost Core` -> 上游 Provider -> 流式响应由 `ingress/codex.ForwardStream` 写回 Codex SSE -> 记录 Usage 至 SQLite。
 
-```mermaid
-flowchart LR
-    Client[客户端协议<br/>Codex Responses<br/>Claude Messages<br/>Gemini GenerateContent]
-    Proxy[integrations<br/>*_compat_proxy.go]
-    Inbound[codec inbound<br/>请求 -> ir.Request]
-    Policy[compat/policy<br/>reasoning/tools 策略]
-    ChatOut[target/openai_chat<br/>ir.Request -> /chat/completions]
-    Upstream[OpenAI-compatible API]
-    ChatIn[target/openai_chat<br/>chat response/stream -> ir]
-    Writer[codec writer<br/>ir -> 原客户端响应/SSE]
+2. **Claude Code 路径**：
+   `Claude Code` -> `POST /v1/messages` -> `ingress/claude` -> 转为 `schemas.BifrostChatRequest` -> `Bifrost Core` -> 上游 Provider -> 流式响应由 `ingress/claude.ForwardStream` 写回 Anthropic SSE -> 记录 Usage 至 SQLite。
 
-    Client --> Proxy --> Inbound --> Policy --> ChatOut --> Upstream
-    Upstream --> ChatIn --> Writer --> Client
-```
-
-### 转换边界
-
-| 阶段 | 代码位置 | 输入 | 输出 | 责任 |
-| --- | --- | --- | --- | --- |
-| HTTP 入口 | `internal/integrations/*_compat_proxy.go` | Codex/Claude 发来的 HTTP 请求 | 原始 `map[string]any` 请求或上游响应流 | 路由、日志、错误处理、fallback/retry、转发非转换请求 |
-| 入站 client | `internal/compat/client/codex/request_in.go` | OpenAI Responses 请求 | `ir.Request` | 解析 `input/tools/tool_choice/max_output_tokens/stream`，补默认 user 消息 |
-| 入站 client | `internal/compat/client/anthropic_messages/messages_inbound.go` | Anthropic Messages 请求 | `ir.Request` | 解析 `system/messages/content/tool_use/tool_result/thinking/max_tokens` |
-| 入站 client | `internal/compat/client/gemini_generate_content/generate_content_inbound.go` | Gemini GenerateContent 请求 | `ir.Request` | 解析 `contents/parts/functionCall/functionResponse/inlineData/generationConfig` |
-| 中间表示 | `internal/compat/ir` | 各协议结构 | `Request/Message/ContentBlock/ToolCall/ToolResult/Response/StreamEvent/Usage` | 把文本、reasoning、工具调用、工具结果、图片、文档统一成稳定模型 |
-| 策略层 | `internal/compat/policy` | `ir` blocks | 规范化后的 blocks/config | 控制 reasoning 是否保留、tool call/tool result 怎么兼容 |
-| 上游请求 | `internal/compat/target/openai_chat/request_out.go` | `ir.Request` | OpenAI Chat Completions 请求 | 映射 role、messages、tools、tool_choice、generation 参数 |
-| 上游响应 | `internal/compat/target/openai_chat/response_in.go` | Chat Completions 非流式响应 | `ir.Response` | 提取 assistant text、reasoning、tool_calls、usage、stop reason |
-| 上游流 | `internal/compat/target/openai_chat/stream_in.go` | Chat Completions chunk | `[]ir.StreamEvent` | 把 delta 拆成 text/reasoning/tool_call/usage 事件 |
-| 出站 writer | `internal/compat/client/codex/*writer.go` | `ir.Response` 或 stream events | Responses JSON/SSE | 写 `response.created`、reasoning item、message item、tool_call item、usage、completed |
-| 出站 writer | `internal/compat/client/anthropic_messages/*writer.go` | `ir.Response` 或 stream events | Messages JSON/SSE | 写 `message_start`、`content_block_*`、`message_delta`、`message_stop` |
-| 出站 writer | `internal/compat/client/gemini_generate_content/*writer.go` | `ir.Response` | GenerateContent JSON | 写 `candidates/content/parts/usageMetadata` |
-
-### 非流式路径
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant P as compat proxy
-    participant I as codec Inbound
-    participant O as target/openai_chat ChatOutbound
-    participant U as Upstream /chat/completions
-    participant R as target/openai_chat ChatResponse
-    participant W as codec ClientResponse
-
-    C->>P: Responses / Messages / GenerateContent JSON
-    P->>I: parse request
-    I-->>P: ir.Request
-    P->>O: BuildRequest(irReq)
-    O-->>P: Chat Completions JSON
-    P->>U: POST /chat/completions
-    U-->>P: Chat response JSON
-    P->>R: ChatResponse(chatResp)
-    R-->>P: ir.Response
-    P->>W: protocol-specific response writer
-    W-->>C: 原客户端协议 JSON
-```
-
-### 流式路径
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant P as compat proxy
-    participant U as Upstream stream
-    participant S as target/openai_chat ChatStreamEvents
-    participant W as codec stream writer
-
-    C->>P: stream=true
-    P->>U: Chat Completions stream=true
-    U-->>P: chat.completion.chunk
-    P->>S: parse chunk
-    S-->>P: usage/content_delta/tool_delta/reasoning_delta
-    P->>W: protocol-specific SSE events
-    W-->>C: Responses SSE 或 Anthropic Messages SSE
-```
-
-流式转换不是简单转发字符串。`target/openai_chat.ChatStreamEvents` 先把上游 chunk 解析成 `ir.StreamEvent`，再由具体 writer 决定事件序列。Responses 会输出 `response.created -> item/delta events -> response.completed`；Anthropic 会输出 `message_start -> content_block_* -> message_delta -> message_stop`。
-
-### 关键字段映射
-
-| 语义 | Responses | Anthropic Messages | Gemini | ir | OpenAI Chat upstream |
-| --- | --- | --- | --- | --- | --- |
-| 输入文本 | `input[].content[].text` / string input | `messages[].content[].text` | `contents[].parts[].text` | `ContentBlock{Type: text}` | `messages[].content` |
-| reasoning | `reasoning` item / summary | `thinking` / `reasoning` block | thought part | `ContentBlock{Type: reasoning}` | `reasoning_content` 或兼容字段 |
-| 工具定义 | `tools` | `tools` | `tools.functionDeclarations` | `[]Tool` | `tools` |
-| 工具选择 | `tool_choice` | `tool_choice` | generation/tool config | `ToolChoice` | `tool_choice` |
-| 工具调用 | function call item | `tool_use` | `functionCall` | `ToolCall` | `assistant.tool_calls` |
-| 工具结果 | function call output | `tool_result` | `functionResponse` | `ToolResult` | `tool` role message |
-| 最大 token | `max_output_tokens` | `max_tokens` | `generationConfig.maxOutputTokens` | `Generation.MaxTokens` | `max_tokens` |
-| usage | `usage` | `usage` | `usageMetadata` | `Usage` | `usage` |
-| stop reason | `status/details` | `stop_reason` | `finishReason` | `StopReason` | `finish_reason` |
-
-### 兼容代理中的旧/新边界
-
-`internal/integrations` 根包只保留 agent 启动和配置接线；兼容代理运行时外壳在 `internal/compat/proxy`：
-
-- `internal/compat/proxy/codex_compat_proxy.go` / `internal/compat/proxy/claude_compat_proxy.go`: 负责本地 HTTP server、上游 URL/key、日志、重试和本地代理状态。
-- `internal/compat/proxy/compat_executors.go`: `codexChatExecutor` 负责 Codex fallback 路径的上游请求和 provider-specific retry；Anthropic Messages 兼容路径由 `gateway.NewAnthropicMessagesToOpenAIChatHandler` 返回的 handler 直接调用 `postChatCompletions`。
-- `internal/compat/proxyutil/compatio.go`: 保留 integration runtime 需要的日志截断、请求 body 解码、rolling log 和 streaming HTTP client 工具。
-
-协议字段转换、route selection、stream/non-stream 写回已经落在 `internal/compat/ir`、`internal/compat/client/*`、`internal/compat/target/*` 和 `internal/compat/gateway`。
-
-## 关键运行链路
-
-### 1. 启动 agent
-
-```mermaid
-sequenceDiagram
-    participant U as 用户
-    participant A as internal/app
-    participant C as internal/config
-    participant T as internal/tui
-    participant I as internal/integrations
-    participant R as 本地 agent CLI
-
-    U->>A: spark launch <integration> --model ...
-    A->>C: Load()
-    A->>T: 缺少参数时交互选择 integration/profile/model
-    A->>I: registry.Get(name)
-    A->>C: 保存历史选择和模型
-    A->>I: Runner.Run(profile, model, args)
-    I->>R: 写配置/设置环境/启动 CLI
-```
-
-`internal/integrations/types.go` 定义了两个核心接口：
-
-- `Runner`: 有 `Run(profile, model, args)`，用于启动 agent。
-- `Editor`: 有 `Edit(profile, models)` 和 `Models()`，用于修改目标 agent 配置。
-
-`registry.go` 把 `claude/codex/droid/opencode/openclaw/pi` 注册成可选择的集成。
-
-### 2. MCP 导入/导出
-
-```mermaid
-flowchart LR
-    AppMCP[internal/app<br/>mcp_cmd.go / mcp_sync.go]
-    SparkConfig[internal/config<br/>RootConfig.McpServers]
-    CodexTOML[Codex config.toml]
-    ClaudeJSON[Claude claude.json]
-
-    CodexTOML -->|import| AppMCP
-    ClaudeJSON -->|import| AppMCP
-    AppMCP --> SparkConfig
-    SparkConfig -->|export/sync| CodexTOML
-    SparkConfig -->|export/sync| ClaudeJSON
-```
-
-`internal/config/mcp.go` 是 Spark 内部 MCP 数据模型；`toml.go` 和 `claude_json.go` 是和 Codex/Claude 配置文件互转的边界。
-
-### 3. 协议兼容代理
-
-```mermaid
-flowchart TD
-    Client[Codex / Claude 客户端请求]
-    Proxy[internal/integrations<br/>*_compat_proxy.go]
-    Inbound[codec inbound<br/>Responses / Messages -> ir.Request]
-    Policy[compat/policy<br/>reasoning/tools 规则]
-    Outbound[target/openai_chat<br/>ir.Request -> Chat Completions]
-    Upstream[OpenAI-compatible upstream]
-    Response[target/openai_chat<br/>Chat response/stream -> ir]
-    Writer[codec writer<br/>ir -> 客户端协议响应/SSE]
-
-    Client --> Proxy --> Inbound --> Policy --> Outbound --> Upstream
-    Upstream --> Response --> Writer --> Client
-```
-
-这一层的设计意图是把不同客户端协议先转成 `ir`，再统一打到 OpenAI Chat Completions 目标协议，最后按原客户端期望格式写回。这样 Responses、Anthropic Messages、Gemini 等协议差异不会散落在 runner 里。
-
-## 文件级速查
-
-### `internal/app`
-
-- `cli.go`: Cobra 根命令、launch/config/profile/debug 交互流程、`launchIntegration` 主入口。
-- `mcp_cmd.go`: MCP 子命令入口和命令参数处理。
-- `mcp_sync.go`: Spark MCP 配置和 Codex/Claude 配置之间的 import/export 逻辑。
-- `skill_cmd.go`: skill 子命令，调用 `internal/skills` 做列表、安装、搜索、同步、启停。
-- `version.go`: version 子命令和启动时异步更新检查。
-
-### `internal/config`
-
-- `config.go`: `RootConfig`、`Profile`、`IntegrationConfig`、模型解析、Load/Save/Normalize。
-- `mcp.go`: `McpServerConfig` 及增删改查、启停、合并导入。
-- `toml.go`: 读写 Codex 的 TOML MCP 配置。
-- `claude_json.go`: 读写 Claude 的 JSON MCP 配置。
-- `files.go`: 带备份写文件。
-- `migrate.go`: 从 legacy/ollama 风格配置迁移。
-
-### `internal/integrations`
-
-- `types.go`: `Runner` / `Editor` 接口。
-- `registry.go`: 集成注册表和名称列表。
-- `claude.go`, `codex.go`, `droid.go`, `opencode.go`, `openclaw.go`, `pi.go`: 各 agent 的配置写入和启动逻辑。
-- `compatio.go`: `integrations` 根包保留的 launch route 日志薄封装。
-
-### `internal/compat*`
-
-- `ir`: 中间协议模型，是 codec 和 target 的共同语言。
-- `compat/codec/*`: 面向客户端协议的入站解析和出站写回。
-- `compat/target/openai_chat`: 面向上游 OpenAI Chat Completions 的请求/响应/流转换。
-- `compat/policy`: reasoning 和 tool 行为策略。
-
-### `internal/tui`
-
-- `prompt.go`: 通用 Select/Input/Confirm。
-- `dashboard_*`: 首页 dashboard。
-- `profile_manager_*`: profile 管理界面。
-- `mcp_manager_*`: MCP 管理界面。
-- `skill_manager_model.go`: skill 管理界面。
-- `model_connection.go`: 模型连通性测试 UI。
-
-### `internal/skills`
-
-- `types.go`: skill 元数据结构。
-- `roots.go`: skill 存放路径。
-- `registry.go`: skill registry 读写和启停。
-- `manifest.go`: manifest 解析。
-- `install.go`: 安装/升级 skill。
-- `catalog.go`: skill catalog。
-- `peer.go`: 和其他 agent 的 skill 配置互导。
-- `files.go`: 目录复制和备份写入。
-
-### `internal/version`
-
-- `version.go`: 构建版本、GitHub release 检查、本地 cache、语义版本比较。
-
-## 当前依赖关系
-
-```text
-internal/app -> internal/config, internal/integrations, internal/skills, internal/tui, internal/version
-internal/tui -> internal/config, internal/skills
-internal/integrations -> internal/config, internal/compat/proxy
-internal/compat/client/codex -> internal/compat/ir, internal/compat/target/openai_chat
-internal/compat/client/anthropic_messages -> internal/compat/ir, internal/compat/target/openai_chat
-internal/compat/client/gemini_generate_content -> internal/compat/ir
-internal/compat/gateway -> internal/compat/client/codex, internal/compat/client/anthropic_messages,
-                           internal/compat/target/openai_chat
-internal/compat/target/openai_chat -> internal/compat/ir, internal/compat/policy
-internal/compat/policy -> internal/compat/ir
-```
-
-## 测试覆盖分布
-
-- `internal/app`: CLI、交互流程、MCP 同步。
-- `internal/config`: JSON/TOML 配置读写、规范化、迁移边界。
-- `internal/integrations`: Claude/Codex/OpenClaw runner、兼容代理 runtime、API probe、兼容 IR 清理。
-- `internal/compat/*`: OpenAI Responses、Anthropic Messages、Gemini、OpenAI Chat 转换和 golden SSE。
-- `internal/skills`: catalog、安装、peer 同步、registry。
-- `internal/tui`: dashboard、profile/MCP/skill 管理视图和交互辅助。
+3. **AGY 路径**：
+   `AGY` 在 Gemini `generateContent` Profile 上直连；否则 `POST /v1beta/models/{model}:streamGenerateContent` -> `ingress/gemini` -> 转为 `schemas.BifrostChatRequest` -> `Bifrost Core` -> 上游 Provider -> 流式响应由 `ingress/gemini.ForwardStream` 写回 Gemini SSE -> 记录 Usage 至 SQLite。
