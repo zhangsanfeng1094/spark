@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.1](https://github.com/zhangsanfeng1094/spark/compare/v0.16.0...v0.16.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **daemon:** abstract SysProcAttr setsid for windows cross-compilation ([4763eac](https://github.com/zhangsanfeng1094/spark/commit/4763eac7b9c96a84834380bf1bfd5be56fddc99b))
+* **daemon:** fix Windows cross-compilation failure & add CI multi-platform build gate ([da0d75d](https://github.com/zhangsanfeng1094/spark/commit/da0d75de1de58cb88b7ec42d296ad2b6a020a9bc))
+
 ## [0.16.0](https://github.com/zhangsanfeng1094/spark/compare/v0.15.0...v0.16.0) (2026-09-16)
 
 
