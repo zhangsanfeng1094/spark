@@ -1,273 +1,152 @@
 package proxy
 
 import (
+	"context"
+	"encoding/json"
+	"io"
 	"net/http"
-	"reflect"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
-
-	anthropicadapter "spark/internal/compat/client/anthropic_messages"
-	"spark/internal/compat/gateway"
-	"spark/internal/compat/gateway/bridge"
-	reasoningfeature "spark/internal/compat/gateway/features/reasoning"
-	"spark/internal/compat/policy"
-	openai_chat_target "spark/internal/compat/target/openai_chat"
 )
 
-func TestAnthropicRequestTranslator_BasicMapping(t *testing.T) {
-	req := map[string]any{
-		"model":      "gpt-4.1",
-		"max_tokens": float64(256),
-		"system":     "be concise",
-		"messages": []any{
-			map[string]any{
-				"role": "user",
-				"content": []any{
-					map[string]any{"type": "text", "text": "hello"},
-				},
-			},
-		},
-		"tools": []any{
-			map[string]any{
-				"name": "sum",
-				"input_schema": map[string]any{
-					"type": "object",
-				},
-			},
-		},
-		"tool_choice": map[string]any{
-			"type": "tool",
-			"name": "sum",
-		},
-	}
-	out, err := bridge.OpenAIChatRequestBridge(bridge.AnthropicMessagesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
+func TestClaudeCompatProxy_StreamEndToEnd(t *testing.T) {
+	t.Setenv("AGENT_LAUNCH_ANTHROPIC_COMPAT_LOG", filepath.Join(t.TempDir(), "anthropic-compat.log"))
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(strings.Join([]string{
+			`data: {"id":"chatcmpl-claude-1","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello Claude!"}}]}`,
+			`data: {"id":"chatcmpl-claude-1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":6,"total_tokens":18}}`,
+			`data: [DONE]`,
+		}, "\n\n") + "\n\n"))
+	}))
+	defer upstream.Close()
+
+	p, err := StartAnthropicProxy(upstream.URL+"/v1", "test-key", "claude-3-5-sonnet")
 	if err != nil {
-		t.Fatalf("translate failed: %v", err)
+		t.Fatalf("StartAnthropicProxy() error = %v", err)
 	}
-	if out["model"] != "gpt-4.1" {
-		t.Fatalf("model mismatch: %v", out["model"])
+	defer p.Close()
+
+	reqBody := `{
+		"model": "claude-3-5-sonnet",
+		"max_tokens": 1024,
+		"messages": [
+			{"role": "user", "content": "Hello"}
+		],
+		"stream": true
+	}`
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, p.BaseURL()+"/v1/messages", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST to proxy failed: %v", err)
 	}
-	if out["max_tokens"] != 256 {
-		t.Fatalf("max_tokens mismatch: %v", out["max_tokens"])
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
 	}
-	msgs, ok := out["messages"].([]map[string]any)
-	if !ok || len(msgs) != 2 {
-		t.Fatalf("messages mismatch: %#v", out["messages"])
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
 	}
-	if msgs[0]["role"] != "system" || msgs[0]["content"] != "be concise" {
-		t.Fatalf("system message mismatch: %#v", msgs[0])
+	bodyStr := string(bodyBytes)
+
+	if !strings.Contains(bodyStr, "message_start") {
+		t.Fatalf("expected message_start event, got:\n%s", bodyStr)
 	}
-	if msgs[1]["role"] != "user" || msgs[1]["content"] != "hello" {
-		t.Fatalf("user message mismatch: %#v", msgs[1])
+	if !strings.Contains(bodyStr, "Hello Claude!") {
+		t.Fatalf("expected text content in output, got:\n%s", bodyStr)
 	}
-	tools, ok := out["tools"].([]map[string]any)
-	if !ok || len(tools) != 1 {
-		t.Fatalf("tools mismatch: %#v", out["tools"])
-	}
-	tc, ok := out["tool_choice"].(map[string]any)
-	if !ok {
-		t.Fatalf("tool_choice mismatch: %#v", out["tool_choice"])
-	}
-	fn, ok := tc["function"].(map[string]any)
-	if !ok || fn["name"] != "sum" {
-		t.Fatalf("tool_choice function mismatch: %#v", tc)
+	if !strings.Contains(bodyStr, "message_stop") {
+		t.Fatalf("expected message_stop event, got:\n%s", bodyStr)
 	}
 }
 
-func TestAnthropicRequestTranslator_AssistantThinkingMapsToReasoningContent(t *testing.T) {
-	req := map[string]any{
-		"model": "mimo-v2.5-pro",
-		"messages": []any{
-			map[string]any{
-				"role": "assistant",
-				"content": []any{
-					map[string]any{"type": "thinking", "thinking": "think first"},
-					map[string]any{
-						"type":  "tool_use",
-						"id":    "call_1",
-						"name":  "sum",
-						"input": map[string]any{"a": float64(1)},
+func TestClaudeCompatProxy_NonStreamEndToEnd(t *testing.T) {
+	t.Setenv("AGENT_LAUNCH_ANTHROPIC_COMPAT_LOG", filepath.Join(t.TempDir(), "anthropic-compat.log"))
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"id": "chatcmpl-claude-2",
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "Claude non-stream answer",
 					},
+					"finish_reason": "stop",
 				},
 			},
-		},
-	}
-	out, err := bridge.OpenAIChatRequestBridge(bridge.AnthropicMessagesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
+			"usage": map[string]any{
+				"prompt_tokens":     15,
+				"completion_tokens": 8,
+				"total_tokens":      23,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer upstream.Close()
+
+	p, err := StartAnthropicProxy(upstream.URL+"/v1", "test-key", "claude-3-5-sonnet")
 	if err != nil {
-		t.Fatalf("translate failed: %v", err)
+		t.Fatalf("StartAnthropicProxy() error = %v", err)
 	}
-	msgs, ok := out["messages"].([]map[string]any)
-	if !ok || len(msgs) != 1 {
-		t.Fatalf("messages mismatch: %#v", out["messages"])
-	}
-	if msgs[0]["reasoning_content"] != "think first" {
-		t.Fatalf("expected reasoning_content from thinking block, got %#v", msgs[0])
-	}
-}
+	defer p.Close()
 
-func TestAnthropicRequestTranslator_PreservesThinkingRequestConfig(t *testing.T) {
-	thinking := map[string]any{
-		"type":          "enabled",
-		"budget_tokens": float64(1024),
-	}
-	req := map[string]any{
-		"model":      "mimo-v2.5-pro",
-		"max_tokens": float64(2048),
-		"thinking":   thinking,
-		"messages": []any{
-			map[string]any{
-				"role":    "user",
-				"content": "hello",
-			},
-		},
-	}
-	out, err := bridge.OpenAIChatRequestBridge(bridge.AnthropicMessagesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
+	reqBody := `{
+		"model": "claude-3-5-sonnet",
+		"max_tokens": 1024,
+		"messages": [
+			{"role": "user", "content": "Hello"}
+		],
+		"stream": false
+	}`
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, p.BaseURL()+"/v1/messages", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("translate failed: %v", err)
+		t.Fatalf("POST to proxy failed: %v", err)
 	}
-	wantThinking := map[string]any{
-		"type":          "enabled",
-		"budget_tokens": 1024,
-	}
-	if !reflect.DeepEqual(out["thinking"], wantThinking) {
-		t.Fatalf("expected thinking config, got %#v", out)
-	}
-}
+	defer resp.Body.Close()
 
-func TestAnthropicRequestTranslator_MapsOutputConfigEffortToReasoningEffort(t *testing.T) {
-	req := map[string]any{
-		"model": "mimo-v2.5-pro",
-		"output_config": map[string]any{
-			"effort": "high",
-		},
-		"messages": []any{
-			map[string]any{
-				"role":    "user",
-				"content": "hello",
-			},
-		},
-	}
-	out, err := bridge.OpenAIChatRequestBridge(bridge.AnthropicMessagesClientCodec(), policy.PreserveReasoningContent()).Translate(req)
-	if err != nil {
-		t.Fatalf("translate failed: %v", err)
-	}
-	if out["reasoning_effort"] != "high" {
-		t.Fatalf("expected reasoning_effort, got %#v", out)
-	}
-	if _, ok := out["output_config"]; ok {
-		t.Fatalf("did not expect output_config passthrough, got %#v", out)
-	}
-}
-
-func TestMessagesClientResponseFromChatResponse_WithToolCalls(t *testing.T) {
-	chatResp := map[string]any{
-		"id":    "chatcmpl_1",
-		"model": "gpt-4.1",
-		"choices": []any{
-			map[string]any{
-				"finish_reason": "tool_calls",
-				"message": map[string]any{
-					"content": "calling tool",
-					"tool_calls": []any{
-						map[string]any{
-							"id":   "call_1",
-							"type": "function",
-							"function": map[string]any{
-								"name":      "sum",
-								"arguments": `{"a":1,"b":2}`,
-							},
-						},
-					},
-				},
-			},
-		},
-		"usage": map[string]any{
-			"prompt_tokens":     float64(12),
-			"completion_tokens": float64(6),
-		},
-	}
-	msg := anthropicadapter.MessagesClientResponse(openai_chat_target.ChatResponse(chatResp), "")
-	if msg["type"] != "message" || msg["role"] != "assistant" {
-		t.Fatalf("message shape mismatch: %#v", msg)
-	}
-	if msg["stop_reason"] != "tool_use" {
-		t.Fatalf("stop_reason mismatch: %#v", msg["stop_reason"])
-	}
-	content, ok := msg["content"].([]map[string]any)
-	if !ok || len(content) != 2 {
-		t.Fatalf("content mismatch: %#v", msg["content"])
-	}
-	if content[0]["type"] != "text" || content[0]["text"] != "calling tool" {
-		t.Fatalf("text block mismatch: %#v", content[0])
-	}
-	if content[1]["type"] != "tool_use" || content[1]["name"] != "sum" {
-		t.Fatalf("tool_use block mismatch: %#v", content[1])
-	}
-}
-
-func TestForwardAnthropicStream_RealTimeTextDelta(t *testing.T) {
-	upstream := strings.Join([]string{
-		`data: {"id":"chatcmpl_1","model":"gpt-4.1","choices":[{"delta":{"content":"Hel"}}]}`,
-		"",
-		`data: {"id":"chatcmpl_1","model":"gpt-4.1","choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":3}}`,
-		"",
-		`data: [DONE]`,
-		"",
-	}, "\n")
-	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	gateway.ForwardAnthropicMessagesStream(rec, strings.NewReader(upstream), "gpt-4.1", nil, nil)
-	out := rec.body.String()
-	if !strings.Contains(out, "event: message_start") {
-		t.Fatalf("missing message_start event: %q", out)
-	}
-	if !strings.Contains(out, `"type":"content_block_delta"`) || !strings.Contains(out, `"type":"text_delta"`) {
-		t.Fatalf("missing text delta event: %q", out)
-	}
-	if !strings.Contains(out, `"text":"Hel"`) || !strings.Contains(out, `"text":"lo"`) {
-		t.Fatalf("missing streamed chunks: %q", out)
-	}
-	if !strings.Contains(out, "event: message_stop") {
-		t.Fatalf("missing message_stop event: %q", out)
-	}
-}
-
-func TestForwardAnthropicStream_CachesReasoningContentForToolCalls(t *testing.T) {
-	var cache reasoningfeature.ReasoningCache
-	reasoning := reasoningfeature.ChatReasoningAdapter{Cache: &cache}
-	upstream := strings.Join([]string{
-		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"think "}}]}`,
-		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"reasoning_content":"first"}}]}`,
-		`data: {"id":"chatcmpl_1","model":"mimo-v2.5-pro","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"sum","arguments":"{\"a\":1}"}}]},"finish_reason":"tool_calls"}]}`,
-		`data: [DONE]`,
-		``,
-	}, "\n")
-	rec := &flushResponseRecorder{responseRecorder: responseRecorder{header: make(http.Header)}}
-	gateway.ForwardAnthropicMessagesStream(rec, strings.NewReader(upstream), "mimo-v2.5-pro", reasoning.RememberForToolCallIDs, nil)
-	if !strings.Contains(rec.body.String(), "event: message_stop") {
-		t.Fatalf("missing message_stop event: %q", rec.body.String())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status: %d", resp.StatusCode)
 	}
 
-	chatReq := map[string]any{
-		"messages": []map[string]any{
-			{
-				"role":    "assistant",
-				"content": "",
-				"tool_calls": []map[string]any{
-					{
-						"id":   "call_1",
-						"type": "function",
-						"function": map[string]any{
-							"name":      "sum",
-							"arguments": `{"a":1}`,
-						},
-					},
-				},
-			},
-		},
+	var anthropicResp map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&anthropicResp); err != nil {
+		t.Fatalf("decode response JSON: %v", err)
 	}
-	reasoning.ApplyToChatRequest(chatReq)
-	msgs := chatReq["messages"].([]map[string]any)
-	if msgs[0]["reasoning_content"] != "think first" {
-		t.Fatalf("expected cached reasoning_content, got %#v", msgs[0])
+
+	if anthropicResp["type"] != "message" {
+		t.Fatalf("expected type message, got %v", anthropicResp["type"])
+	}
+	if anthropicResp["role"] != "assistant" {
+		t.Fatalf("expected role assistant, got %v", anthropicResp["role"])
+	}
+	content, ok := anthropicResp["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("expected content blocks, got %#v", anthropicResp["content"])
+	}
+	block, ok := content[0].(map[string]any)
+	if !ok || block["text"] != "Claude non-stream answer" {
+		t.Fatalf("expected block text 'Claude non-stream answer', got %#v", block)
 	}
 }

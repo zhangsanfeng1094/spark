@@ -29,7 +29,6 @@ type compatProxyServer struct {
 	logPrefix    string
 	closeOnce    sync.Once
 	closeErr     error
-	restore      func()
 }
 
 func newCompatProxyServer(openLogFile func() (io.WriteCloser, string, error), logPrefix string, quietStderr bool) (*compatProxyServer, error) {
@@ -80,10 +79,6 @@ func (s *compatProxyServer) Close() error {
 		return nil
 	}
 	s.closeOnce.Do(func() {
-		if s.restore != nil {
-			s.restore()
-			s.restore = nil
-		}
 		if s.server != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			s.closeErr = s.server.Shutdown(ctx)
