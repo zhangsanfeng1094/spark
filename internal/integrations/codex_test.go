@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -373,6 +374,112 @@ func TestGetCodexHome(t *testing.T) {
 			t.Errorf("expected path to end with '.codex', got %q", got)
 		}
 	})
+}
+
+func TestWriteCodexLaunchHome(t *testing.T) {
+	tmpDir := t.TempDir()
+	realCodex := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(filepath.Join(realCodex, "skills"), 0o755); err != nil {
+		t.Fatalf("create skills: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(realCodex, "sessions"), 0o755); err != nil {
+		t.Fatalf("create sessions: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(realCodex, "config.toml"), []byte("[model_providers]\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(realCodex, "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("CODEX_HOME", "")
+
+	launchHome := filepath.Join(tmpDir, "launch-codex")
+	profile := &config.Profile{
+		OpenAIBaseURL: "https://api.example.com/v1",
+		APIKey:        "sk-test-key",
+	}
+
+	err := writeCodexLaunchHome(launchHome, profile, "https://api.example.com/v1", "sk-test-key", nil, "gpt-4o")
+	if err != nil {
+		t.Fatalf("writeCodexLaunchHome failed: %v", err)
+	}
+
+	// Verify skills is symlinked
+	skillsLink := filepath.Join(launchHome, "skills")
+	fi, err := os.Lstat(skillsLink)
+	if err != nil {
+		t.Fatalf("skills link missing: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("skills should be a symlink")
+	}
+
+	// Verify auth.json is excluded
+	if _, err := os.Lstat(filepath.Join(launchHome, "auth.json")); err == nil {
+		t.Fatalf("auth.json should not be mirrored")
+	}
+
+	// Verify config.toml was generated with Spark provider
+	data, err := os.ReadFile(filepath.Join(launchHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `model_provider = "spark"`) {
+		t.Fatalf("expected model_provider = spark, got: %s", content)
+	}
+}
+
+func TestCodexHookTrustStateMapping(t *testing.T) {
+	tmpDir := t.TempDir()
+	realCodex := filepath.Join(tmpDir, ".codex")
+	t.Setenv("CODEX_HOME", realCodex)
+	if err := os.MkdirAll(realCodex, 0o755); err != nil {
+		t.Fatalf("create real codex: %v", err)
+	}
+	realConfig := `
+[hooks.state]
+"` + realCodex + `/hooks.json:pre_tool_use:0:0" = { enabled = true, trusted_hash = "sha256:12345" }
+`
+	if err := os.WriteFile(filepath.Join(realCodex, "config.toml"), []byte(realConfig), 0o644); err != nil {
+		t.Fatalf("write real config: %v", err)
+	}
+
+	launchHome := filepath.Join(tmpDir, "launch-codex")
+	profile := &config.Profile{}
+	if err := writeCodexLaunchHome(launchHome, profile, "https://api.example.com", "key", nil, "model"); err != nil {
+		t.Fatalf("writeCodexLaunchHome failed: %v", err)
+	}
+
+	launchData, err := os.ReadFile(filepath.Join(launchHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read launch config: %v", err)
+	}
+	launchContent := string(launchData)
+	wantKey := launchHome + `/hooks.json:pre_tool_use:0:0`
+	if !strings.Contains(launchContent, wantKey) {
+		t.Fatalf("expected mapped hook trust key %q in launch config, got:\n%s", wantKey, launchContent)
+	}
+}
+
+func TestShouldSkipCodexMirror(t *testing.T) {
+	if !shouldSkipCodexMirror("config.toml") {
+		t.Errorf("config.toml should be skipped")
+	}
+	if !shouldSkipCodexMirror("auth.json") {
+		t.Errorf("auth.json should be skipped")
+	}
+	if !shouldSkipCodexMirror("auth.json.lock") {
+		t.Errorf("auth.json.lock should be skipped")
+	}
+	if shouldSkipCodexMirror("skills") {
+		t.Errorf("skills should not be skipped")
+	}
+	if shouldSkipCodexMirror("sessions") {
+		t.Errorf("sessions should not be skipped")
+	}
 }
 
 func containsEnvKey(env []string, key string) bool {

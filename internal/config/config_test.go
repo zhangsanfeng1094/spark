@@ -22,6 +22,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		ModelListURL:  "https://example.com/custom/models",
 		Models:        []string{"gpt-4.1-mini", "gpt-4.1"},
 		DefaultModel:  "gpt-4.1",
+		Thinking:      &ThinkingConfig{Mode: "force", Effort: "high"},
 	}
 	cfg.Integrations["codex"] = &IntegrationConfig{
 		Profile:          "work",
@@ -57,6 +58,9 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got.Profiles["work"].ModelListURL != "https://example.com/custom/models" {
 		t.Fatalf("work profile model list url mismatch: %q", got.Profiles["work"].ModelListURL)
+	}
+	if got.Profiles["work"].Thinking == nil || got.Profiles["work"].Thinking.Mode != "force" || got.Profiles["work"].Thinking.Effort != "high" {
+		t.Fatalf("thinking policy not persisted: %#v", got.Profiles["work"].Thinking)
 	}
 	if got.Integration("codex").Profile != "work" {
 		t.Fatalf("integration profile mismatch, got %q", got.Integration("codex").Profile)
@@ -196,6 +200,32 @@ func TestSetDefaultProfileRequiresExistingProfile(t *testing.T) {
 	}
 }
 
+func TestEnsureProfileForAuthProvider(t *testing.T) {
+	cfg := defaultConfig()
+
+	// Ensure commandcode
+	name, created := cfg.EnsureProfileForAuthProvider("commandcode")
+	if !created || name != "command-code" {
+		t.Fatalf("expected created 'command-code', got name=%q created=%t", name, created)
+	}
+	p := cfg.Profiles["command-code"]
+	if p == nil || p.AuthProvider != "commandcode" || p.OpenAIBaseURL != "https://api.commandcode.ai/provider/v1" {
+		t.Fatalf("invalid commandcode profile: %#v", p)
+	}
+
+	// Second time: already exists
+	name2, created2 := cfg.EnsureProfileForAuthProvider("commandcode")
+	if created2 || name2 != "command-code" {
+		t.Fatalf("expected not created, got name=%q created=%t", name2, created2)
+	}
+
+	// Ensure claude
+	cName, cCreated := cfg.EnsureProfileForAuthProvider("claude")
+	if !cCreated || cName != "claude" {
+		t.Fatalf("expected created 'claude', got name=%q created=%t", cName, cCreated)
+	}
+}
+
 func TestNormalizeOpenAIAPIType(t *testing.T) {
 	tests := []struct {
 		in   string
@@ -289,4 +319,56 @@ func TestSupportsOpenAIAPIType(t *testing.T) {
 func homeDirFromTest(t *testing.T) string {
 	t.Helper()
 	return os.Getenv("HOME")
+}
+
+func TestProfileV2_ProtocolAndCredential(t *testing.T) {
+	// Test legacy JSON parsing
+	legacyJSON := []byte(`{
+		"openai_base_url": "https://api.anthropic.com",
+		"openai_api_type": "anthropic_messages",
+		"auth_provider": "claude",
+		"models": ["claude-3-5-sonnet"]
+	}`)
+	var p Profile
+	if err := json.Unmarshal(legacyJSON, &p); err != nil {
+		t.Fatalf("unmarshal legacy: %v", err)
+	}
+	if p.EffectiveEndpoint() != "https://api.anthropic.com" {
+		t.Fatalf("unexpected endpoint: %s", p.EffectiveEndpoint())
+	}
+	if p.EffectiveProtocol() != ProtocolAnthropic {
+		t.Fatalf("unexpected protocol: %s", p.EffectiveProtocol())
+	}
+	if p.EffectiveAuthRef() != "claude:default" {
+		t.Fatalf("unexpected auth ref: %s", p.EffectiveAuthRef())
+	}
+	if p.EffectiveCredentialMode() != CredentialModeAuth {
+		t.Fatalf("unexpected credential mode: %s", p.EffectiveCredentialMode())
+	}
+
+	// Test V2 JSON parsing
+	v2JSON := []byte(`{
+		"endpoint": "https://api.openai.com/v1",
+		"protocol": "openai_responses",
+		"credential": {
+			"mode": "api_key",
+			"api_key": "sk-secret"
+		}
+	}`)
+	var p2 Profile
+	if err := json.Unmarshal(v2JSON, &p2); err != nil {
+		t.Fatalf("unmarshal v2: %v", err)
+	}
+	if p2.EffectiveEndpoint() != "https://api.openai.com/v1" {
+		t.Fatalf("unexpected endpoint: %s", p2.EffectiveEndpoint())
+	}
+	if p2.EffectiveProtocol() != ProtocolOpenAIResponses {
+		t.Fatalf("unexpected protocol: %s", p2.EffectiveProtocol())
+	}
+	if p2.EffectiveCredentialMode() != CredentialModeAPIKey {
+		t.Fatalf("unexpected credential mode: %s", p2.EffectiveCredentialMode())
+	}
+	if p2.EffectiveAPIKey() != "sk-secret" {
+		t.Fatalf("unexpected api key: %s", p2.EffectiveAPIKey())
+	}
 }

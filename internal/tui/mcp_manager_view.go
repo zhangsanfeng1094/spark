@@ -8,591 +8,676 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// View renders the unified 2-column MCP Workbench + Overlay Modals.
 func (m *mcpManagerModel) View() string {
 	if m.width == 0 {
 		return "loading..."
 	}
 
-	header := dashboardHeaderStyle.Width(m.width - 6).Render("MCP Manager")
-	leftW := m.leftPaneWidth()
-	rightW := m.width - leftW - 4
-	if rightW < 44 {
-		rightW = 44
-	}
+	header := dashboardHeaderStyle.Width(m.width - 6).Render(m.renderHeaderSummary())
 
-	statusBar := pmStatusBarStyle.Width(m.width - 4).Render(
-		lipgloss.NewStyle().Align(lipgloss.Right).Foreground(colorMuted).Render(m.contextHelpText()),
+	leftPanelW := 34
+	if m.width < 100 {
+		leftPanelW = 28
+	}
+	if leftPanelW > m.width/3 && m.width < 75 {
+		leftPanelW = max(22, m.width/3)
+	}
+	m.leftPanelWidth = leftPanelW
+
+	availableW := m.width - 10
+	if availableW < 40 {
+		availableW = 40
+	}
+	rightPanelW := availableW - leftPanelW
+	if rightPanelW < 24 {
+		rightPanelW = 24
+	}
+	inputW := rightPanelW - pmLabelWidth - 5
+	if inputW < 14 {
+		inputW = 14
+	}
+	m.inputWidth = inputW
+
+	footerText := m.contextHelpText()
+	footer := pmStatusBarStyle.Width(m.width - 4).Render(
+		lipgloss.NewStyle().Align(lipgloss.Right).Foreground(colorMuted).Render(footerText),
 	)
 
-	left := m.renderServerList(0)
-	right := m.renderDetails()
-	paneInnerH := max(lipgloss.Height(left), lipgloss.Height(right))
-	availableOuterH := m.height - lipgloss.Height(header) - lipgloss.Height(statusBar)
+	availableOuterH := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+	paneInnerH := 20
 	if availableOuterH > 2 {
 		paneInnerH = availableOuterH - 2
 	}
-	left = m.renderServerList(paneInnerH)
 
-	body := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		m.leftPaneStyle(leftW).Render(left),
-		m.rightPaneStyle(rightW).Render(right),
-	)
+	leftPane := m.renderLeftPane(leftPanelW, paneInnerH)
+	rightPane := m.renderRightPane(rightPanelW, paneInnerH)
 
-	return fitToViewportHeight(pmAppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, body, statusBar)), m.height)
+	paneHeight := max(lipgloss.Height(leftPane), lipgloss.Height(rightPane))
+	if paneInnerH > 0 {
+		paneHeight = paneInnerH
+	}
+
+	leftStyle := pmPanelStyle.Width(leftPanelW).Height(paneHeight)
+	rightStyle := pmPanelStyle.Width(rightPanelW).Height(paneHeight)
+
+	if m.focusArea == mcpFocusList {
+		leftStyle = leftStyle.BorderForeground(colorBorderFocus)
+	} else {
+		rightStyle = rightStyle.BorderForeground(colorBorderFocus)
+	}
+
+	leftRendered := leftStyle.Render(leftPane)
+	rightRendered := rightStyle.Render(rightPane)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftRendered, rightRendered)
+
+	appMarginX := 1
+	appMarginY := 0
+	bodyX := appMarginX
+	bodyY := appMarginY + lipgloss.Height(header)
+	leftRenderedW := lipgloss.Width(leftRendered)
+
+	offsetX := pmBorderSize + pmPaddingH
+	offsetY := pmBorderSize + pmPaddingV
+	m.leftContentX = bodyX + offsetX
+	m.leftContentY = bodyY + offsetY
+	m.rightContentX = bodyX + leftRenderedW + offsetX
+	m.rightContentY = bodyY + offsetY
+
+	ui := pmAppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
+
+	if m.modalKind != mcpModalNone {
+		return fitToViewportHeight(m.overlayModal(ui), m.height)
+	}
+	return fitToViewportHeight(ui, m.height)
 }
 
-func (m *mcpManagerModel) leftPaneWidth() int {
-	leftW := 34
-	if m.width > 0 && m.width < 100 {
-		leftW = 36
-	}
-	if m.width > 0 && leftW > m.width/2 {
-		leftW = m.width / 2
-	}
-	if leftW < 34 {
-		return 34
-	}
-	return leftW
-}
-
-func (m *mcpManagerModel) leftPaneItemWidth() int {
-	return max(28, m.leftPaneWidth()-4)
-}
-
-func (m *mcpManagerModel) leftPaneStyle(width int) lipgloss.Style {
-	style := pmPanelStyle.Width(width)
-	if !m.editing && !m.transferring && m.browseFocus != mcpBrowseFocusActions {
-		return pmFocusedPanelStyle.Width(width)
-	}
-	return style
-}
-
-func (m *mcpManagerModel) rightPaneStyle(width int) lipgloss.Style {
-	style := pmPanelStyle.Width(width)
-	if m.editing || m.transferring || m.browseFocus == mcpBrowseFocusActions {
-		return pmFocusedPanelStyle.Width(width)
-	}
-	return style
-}
-
-func (m *mcpManagerModel) renderStatusBar() string {
-	if m.confirmDelete {
-		return m.status
-	}
-	statusMain, statusLog := splitStatusText(m.status)
-	if statusMain == "" {
-		statusMain = "Ready."
-	}
-	main := styleStatusMain(statusMain)
-	help := lipgloss.NewStyle().Foreground(colorDim).Align(lipgloss.Right).Render(m.contextHelpText())
-	if statusLog == "" {
-		return lipgloss.JoinHorizontal(lipgloss.Top,
-			lipgloss.NewStyle().Width(m.width/2).Render(main),
-			lipgloss.NewStyle().Width(max(0, m.width/2-6)).Render(help),
-		)
-	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.JoinHorizontal(lipgloss.Top,
-			lipgloss.NewStyle().Width(m.width/2).Render(main),
-			lipgloss.NewStyle().Width(max(0, m.width/2-6)).Render(help),
-		),
-		pmStatusLogStyle.Render("↳ "+statusLog),
-	)
-}
-
-func (m *mcpManagerModel) statusSummaryText() string {
-	main, _ := splitStatusText(m.status)
-	main = strings.TrimSpace(main)
-	if main == "" || strings.EqualFold(main, "Ready.") || strings.EqualFold(main, "Ready") {
-		return "No recent activity"
-	}
-	return main
-}
-
-func (m *mcpManagerModel) renderStatusSection(width int) []string {
-	title := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Status")
-	statusText := m.statusSummaryText()
-	return []string{
-		title,
-		lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(statusText),
-	}
-}
-
-func (m *mcpManagerModel) renderHelpSection(width int) []string {
-	title := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Help")
-	return []string{
-		title,
-		lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(m.contextHelpText()),
-	}
-}
-
-func (m *mcpManagerModel) contextHelpText() string {
-	if m.confirmDelete {
-		return "Y confirm • N/Esc/Q cancel"
-	}
-	if m.editing {
-		if m.editorMode == mcpEditorModeRaw {
-			return "F2 Save • F5 Save & Probe • F3 Form • Esc Cancel"
+func (m *mcpManagerModel) renderHeaderSummary() string {
+	total := len(m.cfg.McpServers)
+	healthy, errorCount, unknown, disabled := 0, 0, 0, 0
+	for name, srv := range m.cfg.McpServers {
+		if srv != nil && !srv.Enabled {
+			disabled++
+			continue
 		}
-		return "Tab Move • F4 Raw • F2 Save • F5 Save & Probe • Esc Cancel"
+		status := summarizeMCPStatus(name, srv, m.probes[name])
+		switch status.Kind {
+		case mcpStatusReachable, mcpStatusConfigured:
+			healthy++
+		case mcpStatusBroken:
+			errorCount++
+		default:
+			unknown++
+		}
 	}
-	if m.transferring {
-		return "Up/Down Select • Enter Run Transfer • Esc Cancel"
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("MCP Manager")
+
+	var statusParts []string
+	statusParts = append(statusParts, fmt.Sprintf("%d servers", total))
+	if errorCount > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(colorError).Bold(true).Render(fmt.Sprintf("%d error", errorCount)))
 	}
-	switch m.browseFocus {
-	case mcpBrowseFocusQuickAdd:
-		return "Enter Run Action • Tab Next Zone • A Add • T Transfer • " + screenBackHelp
-	case mcpBrowseFocusServers:
-		return "Up/Down Select • Tab Actions • E Edit • P Probe • Space Toggle • " + screenBackHelp
-	case mcpBrowseFocusActions:
-		return "Up/Down Action • Enter Run • Tab Next Zone • " + screenBackHelp
-	default:
-		return screenBackHelp
+	if healthy > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(colorSuccess).Render(fmt.Sprintf("%d healthy", healthy)))
 	}
+	if unknown > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(colorWarning).Render(fmt.Sprintf("%d unknown", unknown)))
+	}
+	if disabled > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(colorDim).Render(fmt.Sprintf("%d disabled", disabled)))
+	}
+	counts := strings.Join(statusParts, " · ")
+
+	shortcuts := lipgloss.NewStyle().Foreground(colorMuted).Render("Click to select • Tab to switch")
+	return fmt.Sprintf("%s    %s    %s", title, counts, shortcuts)
 }
 
-func (m *mcpManagerModel) renderServerList(height int) string {
-	lines := []string{
-		lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("MCP Servers"),
+func (m *mcpManagerModel) renderLeftPane(width, height int) string {
+	listWidth := width - 2
+	if listWidth < 20 {
+		listWidth = 20
+	}
+
+	listTitle := "Servers"
+	if m.searching {
+		listTitle = fmt.Sprintf("Search: %s_", m.searchQuery)
+	} else if m.filterOption != mcpFilterAll {
+		listTitle = fmt.Sprintf("Servers [%s]", filterOptionLabel(m.filterOption))
+	}
+
+	topLines := []string{
+		lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render(listTitle),
 		"",
 	}
-	if len(m.names) == 0 {
-		lines = append(lines, pmItemStyle.Width(m.leftPaneItemWidth()).Render("  No servers configured"))
+	m.leftVisibleRows = nil
+	m.leftVisibleIdxs = nil
+
+	bottomLines := m.renderLeftPaneBottom(listWidth)
+
+	if len(m.filtered) == 0 {
+		topLines = append(topLines, pmItemStyle.Width(listWidth).Render("  No servers configured"))
 	} else {
-		for i, name := range m.names {
-			lines = append(lines, m.renderServerRow(i, name))
+		visibleSlots := len(m.filtered)
+		if height > 0 {
+			overhead := lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, append(topLines, bottomLines...)...))
+			visibleSlots = max(1, height-overhead)
+		}
+		start, end, showUp, showDown := profileWindow(len(m.filtered), m.selected, visibleSlots)
+		if showUp {
+			topLines = append(topLines, lipgloss.NewStyle().Foreground(colorDim).Width(listWidth).Render("  ↑ more"))
+		}
+		for i := start; i < end; i++ {
+			topLines = append(topLines, m.renderServerRow(i, m.filtered[i], listWidth-2))
+			m.leftVisibleRows = append(m.leftVisibleRows, len(topLines)-1)
+			m.leftVisibleIdxs = append(m.leftVisibleIdxs, i)
+		}
+		if showDown {
+			topLines = append(topLines, lipgloss.NewStyle().Foreground(colorDim).Width(listWidth).Render("  ↓ more"))
 		}
 	}
-	return joinTopAndBottom(lines, m.renderLeftPaneBottom(), height)
+
+	content := joinTopAndBottom(topLines, bottomLines, height)
+	finalLines := strings.Split(content, "\n")
+	fillerOffset := len(finalLines) - len(topLines) - len(bottomLines)
+	if fillerOffset < 0 {
+		fillerOffset = 0
+	}
+	m.leftButtonsRelY += fillerOffset
+	m.leftButtonsRow2Y += fillerOffset
+	return content
 }
 
-func (m *mcpManagerModel) renderLeftPaneBottom() []string {
-	width := m.leftPaneItemWidth()
-	lines := []string{"", lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Current")}
-	name := m.currentName()
-	if name == "" {
-		lines = append(lines,
-			lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render("No server selected"),
-			lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render("Use Add to create one."),
-		)
-	} else {
-		server := m.cfg.GetMcpServer(name)
-		status := m.currentStatus()
-		lines = append(lines,
-			lipgloss.NewStyle().Foreground(colorTextSoft).Width(width).Render(truncateDisplay(name, width)),
-			lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(fmt.Sprintf("%s %s", renderStatusBadge(status), strings.Title(status.Headline))),
-			lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(transportLabel(server)),
-		)
-	}
+func (m *mcpManagerModel) renderLeftPaneBottom(width int) []string {
+	btnStyle := pmLeftBtnStyle.Copy().MarginRight(0)
 
-	addBtn := pmLeftBtnStyle.Copy().MarginRight(0).Render("[A] Add")
-	transferBtn := pmLeftBtnStyle.Copy().MarginRight(0).Render("[T] Transfer")
-	if m.browseFocus == mcpBrowseFocusQuickAdd {
-		if m.quickAddIndex == 0 {
-			addBtn = pmLeftActiveBtnStyle.Copy().MarginRight(0).Render("[A] Add")
-		} else if m.quickAddIndex == 1 {
-			transferBtn = pmLeftActiveBtnStyle.Copy().MarginRight(0).Render("[T] Transfer")
-		}
+	addBtn := btnStyle.Render("Add")
+	importBtn := btnStyle.Render("Import")
+	transferBtn := btnStyle.Render("Transfer")
+	refreshBtn := btnStyle.Render("Refresh")
+
+	btnGap := "  "
+	if width < 26 {
+		btnGap = " "
 	}
-	gap := "  "
-	lines = append(lines, "", lipgloss.JoinHorizontal(lipgloss.Top, addBtn, gap, transferBtn))
+	col1W := max(lipgloss.Width(addBtn), lipgloss.Width(transferBtn))
+	col2W := max(lipgloss.Width(importBtn), lipgloss.Width(refreshBtn))
+	btnRow1 := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		lipgloss.NewStyle().Width(col1W).Render(addBtn),
+		btnGap,
+		lipgloss.NewStyle().Width(col2W).Render(importBtn),
+	)
+	btnRow2 := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		lipgloss.NewStyle().Width(col1W).Render(transferBtn),
+		btnGap,
+		lipgloss.NewStyle().Width(col2W).Render(refreshBtn),
+	)
+	lines := []string{"", btnRow1, btnRow2}
+	m.leftButtonsRelY = len(lines) - 2
+	m.leftButtonsRow2Y = len(lines) - 1
+	m.leftButtonsRelH = lipgloss.Height(btnRow1)
+	m.leftButtonsRowW = lipgloss.Width(btnRow1)
+	m.leftButtonsRow2W = lipgloss.Width(btnRow2)
+	m.leftAddBtnW = lipgloss.Width(addBtn) + lipgloss.Width(btnGap)
+	m.leftImportBtnW = lipgloss.Width(importBtn)
+	m.leftTransferBtnW = lipgloss.Width(transferBtn) + lipgloss.Width(btnGap)
+	m.leftRefreshBtnW = lipgloss.Width(refreshBtn)
 	return lines
 }
 
-func (m *mcpManagerModel) renderDetails() string {
-	if m.editing {
-		return m.renderEditor()
+func (m *mcpManagerModel) renderServerRow(i int, name string, itemWidth int) string {
+	server := m.cfg.GetMcpServer(name)
+	status := summarizeMCPStatus(name, server, m.probes[name])
+	isFocused := (i == m.selected)
+
+	prefix := "  "
+	if isFocused {
+		prefix = "▶ "
 	}
-	if m.transferring {
-		return m.renderTransferMenu()
+
+	var icon string
+	switch status.Kind {
+	case mcpStatusReachable, mcpStatusConfigured:
+		icon = lipgloss.NewStyle().Foreground(colorSuccess).Bold(true).Render("●")
+	case mcpStatusBroken:
+		icon = lipgloss.NewStyle().Foreground(colorError).Bold(true).Render("✕")
+	default:
+		if server != nil && !server.Enabled {
+			icon = lipgloss.NewStyle().Foreground(colorDim).Render("○")
+		} else {
+			icon = lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Render("?")
+		}
 	}
+
+	enabled := server != nil && server.Enabled
+	stateLabel := "On "
+	stateStyle := lipgloss.NewStyle().Foreground(colorSuccess)
+	if !enabled {
+		stateLabel = "Off"
+		stateStyle = lipgloss.NewStyle().Foreground(colorDim)
+	}
+
+	transportStr := strings.ToUpper(transportLabel(server))
+	if len(transportStr) > 8 {
+		transportStr = transportStr[:8]
+	}
+
+	nameW := max(6, itemWidth-20)
+	displayName := truncateDisplay(name, nameW)
+
+	nameStyle := lipgloss.NewStyle().Width(nameW).Foreground(colorTextSoft)
+	if isFocused {
+		nameStyle = nameStyle.Foreground(colorText).Bold(true)
+	} else if !enabled {
+		nameStyle = nameStyle.Foreground(colorDim)
+	}
+
+	transportCol := lipgloss.NewStyle().Width(8).Foreground(colorMuted).Render(transportStr)
+	stateCol := stateStyle.Render(stateLabel)
+
+	content := fmt.Sprintf("%s%s %s %s %s", prefix, icon, nameStyle.Render(displayName), transportCol, stateCol)
+	style := pmItemStyle.Copy().Width(itemWidth)
+	if isFocused {
+		if m.focusArea == mcpFocusList {
+			style = pmFocusedItemStyle.Copy().Width(itemWidth)
+		} else {
+			style = pmSelectedMutedItemStyle.Copy().Width(itemWidth)
+		}
+	}
+	return style.Render(content)
+}
+
+func (m *mcpManagerModel) renderRightPane(width, height int) string {
 	name := m.currentName()
 	if name == "" {
 		return m.renderEmptyState()
 	}
 	server := m.cfg.GetMcpServer(name)
 	status := m.currentStatus()
-	contentWidth := m.detailContentWidth()
-	lines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Config · " + name),
-		"",
+	probe := m.probes[name]
+
+	inputW := max(16, width-pmLabelWidth-5)
+	contentWidth := pmLabelWidth + 1 + inputW
+
+	var lines []string
+	relY := 0
+
+	// 1. Server Summary Header: Identity & Status Indicator
+	statusIcon := "●"
+	statusColor := colorSuccess
+	statusText := "Healthy"
+
+	switch status.Kind {
+	case mcpStatusBroken:
+		statusIcon = "✕"
+		statusColor = colorError
+		statusText = "Error"
+	case mcpStatusUnknown:
+		if server != nil && !server.Enabled {
+			statusIcon = "○"
+			statusColor = colorDim
+			statusText = "Disabled"
+		} else {
+			statusIcon = "?"
+			statusColor = colorWarning
+			statusText = "Unknown"
+		}
 	}
-	lines = append(lines, renderMCPConfigRow("Status", fmt.Sprintf("%s %s", renderStatusBadge(status), strings.Title(status.Headline)), contentWidth))
-	lines = append(lines, renderMCPConfigRow("Transport", transportLabel(server), contentWidth))
-	lines = append(lines, renderMCPConfigRow("Enabled", fmt.Sprintf("%t", server != nil && server.Enabled), contentWidth))
+
+	badge := lipgloss.NewStyle().Foreground(statusColor).Bold(true).Render(statusIcon + " " + statusText)
+	nameTitle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(name)
+	if m.dirty {
+		nameTitle += " " + lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Render("● Modified")
+	}
+
+	headerGap := max(2, contentWidth-lipgloss.Width(nameTitle)-lipgloss.Width(badge))
+	summaryRow := lipgloss.JoinHorizontal(lipgloss.Top, nameTitle, strings.Repeat(" ", headerGap), badge)
+	lines = append(lines, summaryRow)
+	relY += lipgloss.Height(summaryRow)
+
+	// Endpoint / Command subtitle
+	targetInfo := ""
 	if server != nil {
-		if strings.TrimSpace(server.Command) != "" {
-			lines = append(lines, renderMCPConfigRow("Command", server.Command, contentWidth))
-		}
-		if len(server.Args) > 0 {
-			lines = append(lines, renderMCPConfigRow("Args", fmt.Sprintf("%d configured", len(server.Args)), contentWidth))
-			lines = append(lines, renderMCPConfigRow("Arg Preview", strings.Join(server.Args, " "), contentWidth))
-		}
-		if strings.TrimSpace(server.URL) != "" {
-			lines = append(lines, renderMCPConfigRow("URL", server.URL, contentWidth))
-		}
-		if len(server.Env) > 0 {
-			lines = append(lines, renderMCPConfigRow("Env", fmt.Sprintf("%d entries", len(server.Env)), contentWidth))
-		}
-		if strings.TrimSpace(server.DisabledReason) != "" {
-			lines = append(lines, renderMCPConfigRow("Disabled reason", server.DisabledReason, contentWidth))
+		if isHTTPMCPServer(server) {
+			targetInfo = fmt.Sprintf("HTTP · %s", server.URL)
+		} else if server.Command != "" {
+			targetInfo = fmt.Sprintf("STDIO · %s", server.Command)
 		}
 	}
-	if probe := m.probes[name]; probe != nil {
-		lines = append(lines, renderMCPConfigRow("Last probe", probe.ProbedAt.Format(time.RFC3339), contentWidth))
-		lines = append(lines, renderMCPConfigRow("Latency", probe.Latency.Round(time.Millisecond).String(), contentWidth))
-		if probe.ToolsCount > 0 {
-			lines = append(lines, renderMCPConfigRow("Tools detected", fmt.Sprintf("%d", probe.ToolsCount), contentWidth))
+	if targetInfo != "" {
+		subLine := lipgloss.NewStyle().Foreground(colorMuted).Render(truncateDisplay(targetInfo, contentWidth))
+		lines = append(lines, subLine)
+		relY += lipgloss.Height(subLine)
+	}
+
+	// Effective Status Note / Override
+	if server != nil && !server.Enabled {
+		overrideMsg := "Disabled by Spark"
+		if server.DisabledReason != "" {
+			overrideMsg = fmt.Sprintf("Disabled: %s", server.DisabledReason)
 		}
+		overrideLine := lipgloss.NewStyle().Foreground(colorDim).Italic(true).Render(overrideMsg)
+		lines = append(lines, overrideLine)
+		relY += lipgloss.Height(overrideLine)
 	}
-	lines = append(lines, "", lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Actions"))
-	for i, action := range m.browseActions() {
-		lines = append(lines, m.renderActionItem(i, action, contentWidth))
-	}
-	lines = append(lines, "", lipgloss.NewStyle().Bold(true).Render("Diagnostics"))
-	lines = append(lines, m.renderDiagnostics(status, m.probes[name])...)
+
 	lines = append(lines, "")
-	lines = append(lines, m.renderStatusSection(contentWidth)...)
+	relY++
+
+	// 2. Configuration Section
+	secConfig := renderFormSectionHeader("Configuration", contentWidth)
+	lines = append(lines, secConfig)
+	relY += lipgloss.Height(secConfig)
+
+	// Editable Form Fields
+	visible := m.visibleFieldIndices()
+	m.fieldStartRelY = make([]int, len(visible))
+	m.fieldEndRelY = make([]int, len(visible))
+	m.fieldActualIndices = make([]int, len(visible))
+
+	for fIdx, actualIdx := range visible {
+		m.fieldActualIndices[fIdx] = actualIdx
+		field := &m.draftFields[actualIdx]
+		focused := (m.focusArea == mcpFocusFields && fIdx == m.focusField)
+
+		var inputView string
+		if field.Kind == mcpFieldKindSelect {
+			inputView = renderSegmentedPills(field.Options, field.Value, focused, inputW)
+		} else {
+			if field.Input.Value() != field.Value {
+				field.Input.SetValue(field.Value)
+				field.Input.CursorEnd()
+			}
+			field.Input.Width = max(10, inputW-2)
+			field.Input.Placeholder = field.Placeholder
+			if focused {
+				field.Input.Focus()
+			} else {
+				field.Input.Blur()
+			}
+			inputView = field.Input.View()
+		}
+
+		row := renderCompactFormRow(compactFormRowOptions{
+			Label:       field.Label,
+			Value:       field.Value,
+			Placeholder: field.Placeholder,
+			Width:       inputW,
+			Focused:     focused,
+			ReadOnly:    field.Kind == mcpFieldKindSelect,
+			Required:    actualIdx == mcpFieldKeyName,
+			InputView:   inputView,
+		})
+		rowH := lipgloss.Height(row)
+		m.fieldStartRelY[fIdx] = relY
+		m.fieldEndRelY[fIdx] = relY + rowH - 1
+		lines = append(lines, row)
+		relY += rowH
+	}
+
 	lines = append(lines, "")
-	lines = append(lines, m.renderHelpSection(contentWidth)...)
+	relY++
+
+	// 3. Actions Section (follows directly under Configuration)
+	actionsHeader := renderFormSectionHeader("Actions", contentWidth)
+	probeBtn := m.renderActionBtn(0, "Probe")
+	saveBtn := m.renderActionBtn(1, "Save")
+	vimBtn := m.renderActionBtn(2, "Edit Raw")
+	deleteBtn := m.renderActionBtn(3, "Delete")
+	actionRow := lipgloss.JoinHorizontal(lipgloss.Top, probeBtn, "  ", saveBtn, "  ", vimBtn, "  ", deleteBtn)
+	lines = append(lines, actionsHeader, actionRow, "")
+	relY += lipgloss.Height(actionsHeader) + lipgloss.Height(actionRow) + 1
+
+	m.rightButtonsRelY = relY - lipgloss.Height(actionRow) - 1
+	m.rightButtonsRelH = lipgloss.Height(actionRow)
+	m.rightButtonsRowW = lipgloss.Width(actionRow)
+	m.rightProbeBtnW = lipgloss.Width(probeBtn)
+	m.rightSaveBtnW = lipgloss.Width(saveBtn)
+	m.rightVimBtnW = lipgloss.Width(vimBtn)
+	m.rightDeleteBtnW = lipgloss.Width(deleteBtn)
+
+	// 4. Diagnostics Feedback Section
+	diagHeader := renderFormSectionHeader("Diagnostics", contentWidth)
+	lines = append(lines, diagHeader)
+	relY += lipgloss.Height(diagHeader)
+
+	if probe == nil {
+		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Render("  Not tested yet · Click Probe to test connection"))
+	} else if probe.Err != "" {
+		failTitle := lipgloss.NewStyle().Foreground(colorError).Bold(true).Render(fmt.Sprintf("  ✕ %s failed", probe.Stage))
+		errDetail := lipgloss.NewStyle().Foreground(colorTextSoft).Render(fmt.Sprintf("    %s", probe.Err))
+		lines = append(lines, failTitle, errDetail)
+		if len(status.Suggestions) > 0 {
+			lines = append(lines, lipgloss.NewStyle().Foreground(colorWarning).Render(fmt.Sprintf("    Tip: %s", status.Suggestions[0])))
+		}
+	} else {
+		okLine := lipgloss.NewStyle().Foreground(colorSuccess).Render(fmt.Sprintf("  ✓ Connection & initialize OK (%s)", probe.Latency.Round(time.Millisecond)))
+		toolsLine := lipgloss.NewStyle().Foreground(colorSuccess).Render(fmt.Sprintf("  ✓ tools/list: %d tool(s) discovered", probe.ToolsCount))
+		lines = append(lines, okLine, toolsLine)
+		if len(probe.ToolNames) > 0 {
+			toolList := strings.Join(probe.ToolNames[:min(4, len(probe.ToolNames))], ", ")
+			if len(probe.ToolNames) > 4 {
+				toolList += fmt.Sprintf(" (+%d more)", len(probe.ToolNames)-4)
+			}
+			lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Render("    "+toolList))
+		}
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (m *mcpManagerModel) detailContentWidth() int {
-	if m.width <= 0 {
-		return 76
+func (m *mcpManagerModel) renderActionBtn(idx int, label string) string {
+	if m.focusArea == mcpFocusActions && m.actionIdx == idx {
+		return pmCompactPrimaryBtnStyle.Copy().MarginRight(0).Render(label)
 	}
-	return max(36, m.width-m.leftPaneWidth()-12)
-}
-
-func renderMCPConfigRow(label, value string, width int) string {
-	labelW := 16
-	inputW := max(24, width-labelW-5)
-	if strings.TrimSpace(value) == "" {
-		value = " "
-	}
-	labelStyle := pmLabelStyle.Copy().Width(labelW)
-	inputStyle := pmCompactReadOnlyInputStyle.Copy().Width(inputW)
-	divider := lipgloss.NewStyle().Foreground(colorBorder).Render("│")
-	return lipgloss.JoinHorizontal(lipgloss.Center,
-		labelStyle.Render(label),
-		divider,
-		inputStyle.Render(truncateDisplay(value, inputW-2)),
-	)
+	return pmCompactBtnStyle.Copy().MarginRight(0).Render(label)
 }
 
 func (m *mcpManagerModel) renderEmptyState() string {
 	lines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("No MCP servers yet"),
+		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("No MCP servers configured"),
 		"",
-		"Manage local and remote MCP endpoints from one place.",
-		"Recommended path: create a server, choose transport in the editor, then run a probe.",
+		"Manage local and remote MCP endpoints directly from this workbench.",
 		"",
-		lipgloss.NewStyle().Bold(true).Render("Start Here"),
-		"• Create MCP Server",
-		"• Choose transport in the editor",
-		"• Save and probe to verify the endpoint",
-		"",
-		lipgloss.NewStyle().Foreground(colorDim).Render("The Actions list on the left is the default focus."),
+		lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Quick Start:"),
+		"  • Click [Add] to add a new server",
+		"  • Click [Import] to import from JSON/YAML/TOML or existing config file",
 	}
-	lines = append(lines, "")
-	lines = append(lines, m.renderStatusSection(max(36, m.width-50))...)
-	lines = append(lines, "")
-	lines = append(lines, m.renderHelpSection(max(36, m.width-50))...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (m *mcpManagerModel) renderEditor() string {
-	title := "Edit Server"
-	if m.adding {
-		title = "Create Server"
+func (m *mcpManagerModel) overlayModal(bg string) string {
+	var modalContent string
+	modalWidth := 56
+	switch m.modalKind {
+	case mcpModalAdd:
+		modalContent = m.renderAddModal()
+		modalWidth = 52
+	case mcpModalImport:
+		modalContent = m.renderImportModal()
+		modalWidth = max(56, min(90, m.width-20))
+	case mcpModalTransfer:
+		modalContent = m.renderTransferModal()
+		modalWidth = 60
+	case mcpModalDeleteConfirm:
+		modalContent = m.renderDeleteModal()
+		modalWidth = 50
+	case mcpModalProbeDetail:
+		modalContent = m.renderProbeDetailModal()
+		modalWidth = 64
 	}
-	if !m.adding && m.editOriginalName != "" {
-		title += ": " + m.editOriginalName
+
+	modalBox := pmModalStyle.Width(modalWidth).Background(colorPanelBg).Render(modalContent)
+	modalW := lipgloss.Width(modalBox)
+	modalH := lipgloss.Height(modalBox)
+	x := max(0, (m.width-modalW)/2)
+	y := max(0, (m.height-modalH)/2)
+
+	m.modalX = x
+	m.modalY = y
+	m.modalW = modalW
+	m.modalH = modalH
+	m.modalOptionStartY = y + 4 // 1 border + 1 title + 1 empty + 1 desc
+
+	if bg != "" {
+		return overlayBox(bg, modalBox, x, y)
 	}
-	modeForm := renderMCPModeToggle("F3 Form", m.editorMode == mcpEditorModeForm)
-	modeRaw := renderMCPModeToggle("F4 Raw YAML/JSON", m.editorMode == mcpEditorModeRaw)
-	if m.editorMode == mcpEditorModeRaw {
-		modeForm = renderMCPModeToggle("F3 Form", false)
-		modeRaw = renderMCPModeToggle("F4 Raw YAML/JSON", true)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalBox)
+}
+
+func (m *mcpManagerModel) renderAddModal() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Create MCP Server")
+	desc := lipgloss.NewStyle().Foreground(colorMuted).Render("Choose transport protocol:")
+
+	transports := []string{"stdio  (local executable / command line)", "http   (remote HTTP endpoint)", "sse    (Server-Sent Events endpoint)"}
+	options := make([]string, 0, len(transports))
+	for i, t := range transports {
+		prefix := "  "
+		style := pmItemStyle
+		if i == m.addTransport {
+			prefix = "▶ "
+			style = pmFocusedItemStyle
+		}
+		options = append(options, style.Render(prefix+t))
 	}
-	contentWidth := max(36, m.width-50)
-	lines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render(title),
-		fmt.Sprintf("View: %s   %s", modeForm, modeRaw),
-		lipgloss.NewStyle().Foreground(colorDim).Render(m.editorIntroText()),
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		title,
 		"",
-	}
-	if m.editorMode == mcpEditorModeForm {
-		for _, i := range m.visibleEditFieldIndices() {
-			field := m.editFields[i]
-			value := m.renderEditorFieldValue(i, field, i == m.editFocus)
-			label := fmt.Sprintf("%-16s", field.label)
-			style := pmCompactInputStyle.Copy().Width(max(24, m.width-64))
-			labelStyle := pmLabelStyle
-			dividerColor := colorBorder
-			if i == m.editFocus {
-				style = pmCompactFocusedInputStyle.Copy().Width(max(24, m.width-64))
-				labelStyle = pmFocusedLabelStyle
-				dividerColor = colorFocus
-			}
-			divider := lipgloss.NewStyle().Foreground(dividerColor).Render("│")
-			lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Center, labelStyle.Render(label), divider, style.Render(value)))
-		}
-		if hint := m.editorFieldHint(); hint != "" {
-			lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render(hint))
-		}
-		lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Tab/Shift+Tab move fields. Left/Right changes select fields."))
-	} else {
-		editorText := renderCursorText(m.rawEditor, m.rawCursor)
-		lines = append(lines, pmFocusedInputStyle.Copy().Width(contentWidth).Height(max(12, m.height-14)).Render(editorText))
-		lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Tab exits editor. Format must be valid YAML/JSON."))
-	}
-	actionTitle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Actions")
-	saveBtn := pmCompactPrimaryBtnStyle.Copy().MarginRight(0).Render("[F2] Save")
-	probeBtn := pmCompactBtnStyle.Copy().MarginRight(0).Render("[F5] Save & Probe")
-	cancelBtn := pmCompactBtnStyle.Copy().MarginRight(0).Render("[Esc] Cancel")
-	actionRow1 := lipgloss.JoinHorizontal(lipgloss.Top, probeBtn, lipgloss.PlaceHorizontal(max(2, contentWidth-lipgloss.Width(probeBtn)-lipgloss.Width(saveBtn)), lipgloss.Right, saveBtn))
-	actionRow2 := cancelBtn
-	lines = append(lines, "", actionTitle, actionRow1, actionRow2, "")
-	lines = append(lines, m.renderStatusSection(contentWidth)...)
-	lines = append(lines, "")
-	lines = append(lines, m.renderHelpSection(contentWidth)...)
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+		desc,
+		"",
+		lipgloss.JoinVertical(lipgloss.Left, options...),
+	)
 }
 
-func renderMCPModeToggle(label string, selected bool) string {
-	if selected {
-		return "(●) " + label
-	}
-	return "( ) " + label
+func (m *mcpManagerModel) renderImportModal() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Import MCP Servers (JSON / YAML / TOML / File)")
+	desc := lipgloss.NewStyle().Foreground(colorMuted).Render("Paste snippet or enter local file path (e.g. ~/.codex/config.toml):")
+	contentWidth := max(36, m.width-40)
+
+	editorText := renderCursorText(m.importBuffer, m.importCursor)
+	inputBox := pmFocusedInputStyle.Copy().Width(contentWidth).Height(max(8, m.height-14)).Render(editorText)
+
+	vimBtn := pmCompactPrimaryBtnStyle.Copy().MarginRight(0).Render("Open in Editor")
+	saveBtn := pmCompactBtnStyle.Copy().MarginRight(0).Render("Import")
+	cancelBtn := pmCompactBtnStyle.Copy().MarginRight(0).Render("Cancel")
+	actionRow := lipgloss.JoinHorizontal(lipgloss.Top, vimBtn, "   ", saveBtn, "   ", cancelBtn)
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		"",
+		desc,
+		"",
+		inputBox,
+		"",
+		actionRow,
+	)
 }
 
-func (m *mcpManagerModel) renderEditorFieldValue(index int, field mcpEditField, focused bool) string {
-	value := field.value
-	if field.kind == mcpEditKindSelect {
-		value = renderMCPSelectSegments(field.options, field.value, focused)
-	}
-	if field.kind != mcpEditKindSelect && focused {
-		cursor := m.editCursor[index]
-		value = renderCursorText(value, cursor)
-	} else if value == "" {
-		value = " "
-	}
-	return value
-}
-
-func renderMCPSelectSegments(options []string, current string, focused bool) string {
-	if len(options) == 0 {
-		return " "
-	}
-	current = strings.TrimSpace(current)
-	parts := make([]string, 0, len(options))
-	for _, option := range options {
-		label := " " + option + " "
-		selected := option == current
-		switch {
-		case selected && focused:
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorText).Background(colorFocus).Bold(true).Render(label))
-		case selected:
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorText).Background(lipgloss.Color("#3a334a")).Bold(true).Render(label))
-		case focused:
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorTextSoft).Background(colorFieldBgFocus).Render(label))
-		default:
-			parts = append(parts, lipgloss.NewStyle().Foreground(colorMuted).Background(colorFieldBg).Render(label))
-		}
-	}
-	separator := lipgloss.NewStyle().Foreground(colorBorder).Render(" ")
-	return lipgloss.JoinHorizontal(lipgloss.Center, joinWithSeparator(parts, separator)...)
-}
-
-func joinWithSeparator(parts []string, separator string) []string {
-	if len(parts) <= 1 {
-		return parts
-	}
-	out := make([]string, 0, len(parts)*2-1)
-	for i, part := range parts {
-		if i > 0 {
-			out = append(out, separator)
-		}
-		out = append(out, part)
-	}
-	return out
-}
-
-func (m *mcpManagerModel) editorIntroText() string {
-	if m.adding {
-		transport := ""
-		if len(m.editFields) > mcpEditFieldTransport {
-			transport = strings.TrimSpace(m.editFields[mcpEditFieldTransport].value)
-		}
-		return fmt.Sprintf("Fill the minimum fields for a %s server, then save or probe.", transport)
-	}
-	return "Review the current server, then edit only the fields that need to change."
-}
-
-func (m *mcpManagerModel) editorFieldHint() string {
-	switch m.editFocus {
-	case mcpEditFieldCommand:
-		return "Command: executable name or absolute path used to launch the stdio server."
-	case mcpEditFieldArgs:
-		return "Args: one argument per line."
-	case mcpEditFieldEnv:
-		return "Env: use KEY=value, one per line."
-	case mcpEditFieldURL:
-		return "URL: point directly to the MCP endpoint."
-	default:
-		return ""
-	}
-}
-
-func containsEditField(values []int, target int) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
-}
-
-func filterPrintableRunes(runes []rune) []rune {
-	out := make([]rune, 0, len(runes))
-	for _, r := range runes {
-		if r < 32 {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out
-}
-
-func (m *mcpManagerModel) renderQuickAddItem(i int, item mcpQuickAddItem) string {
-	title := item.Label
-	summary := m.quickAddSummary(item)
-	style := pmItemStyle.Copy().Width(m.leftPaneItemWidth())
-	prefix := "  "
-	if i == m.quickAddIndex {
-		if m.browseFocus == mcpBrowseFocusQuickAdd {
-			style = pmFocusedItemStyle.Copy().Width(m.leftPaneItemWidth())
-			prefix = "➤ "
-		} else {
-			style = pmSelectedItemStyle.Copy().Width(m.leftPaneItemWidth())
-			prefix = "◆ "
-		}
-	}
-	return style.Render(prefix + title + "\n" + strings.Repeat(" ", len(prefix)) + "  " + summary)
-}
-
-func (m *mcpManagerModel) quickAddSummary(item mcpQuickAddItem) string {
-	switch item.Key {
-	case "add":
-		return "New server"
-	case "transfer":
-		return "Import/Export"
-	default:
-		return item.Description
-	}
-}
-
-func (m *mcpManagerModel) renderServerRow(i int, name string) string {
-	server := m.cfg.GetMcpServer(name)
-	status := summarizeMCPStatus(name, server, m.probes[name])
-	detail := transportLabel(server)
-	if server != nil && !server.Enabled {
-		detail += " • disabled"
-	}
-	if m.running[name] {
-		detail += " • probing"
-	}
-	line1 := fmt.Sprintf("%s %s", renderStatusBadge(status), name)
-	style := pmItemStyle.Copy().Width(m.leftPaneItemWidth())
-	prefix := "  "
-	if i == m.selected {
-		if m.browseFocus == mcpBrowseFocusServers {
-			style = pmFocusedItemStyle.Copy().Width(m.leftPaneItemWidth())
-			prefix = "➤ "
-		} else {
-			style = pmSelectedItemStyle.Copy().Width(m.leftPaneItemWidth())
-			prefix = "◆ "
-		}
-	}
-	return style.Render(prefix + line1 + "\n" + strings.Repeat(" ", len(prefix)) + "  " + detail)
-}
-
-func (m *mcpManagerModel) renderDiagnostics(status mcpStatusSummary, probe *mcpProbeResult) []string {
-	lines := []string{
-		fmt.Sprintf("Current State: %s %s", renderStatusBadge(status), strings.Title(status.Headline)),
-		fmt.Sprintf("Why: %s", status.Detail),
-	}
-	nextAction := "No action needed."
-	if len(status.Suggestions) > 0 {
-		nextAction = status.Suggestions[0]
-	}
-	if status.Kind == mcpStatusUnknown {
-		nextAction = "Run Probe to verify initialize and tools/list."
-	}
-	if probe != nil && probe.Err != "" {
-		lines = append(lines, fmt.Sprintf("Failure Stage: %s", probe.Stage))
-	}
-	lines = append(lines, fmt.Sprintf("Next Action: %s", nextAction))
-	if len(status.Suggestions) > 1 {
-		lines = append(lines, "Suggested fixes:")
-		for _, suggestion := range status.Suggestions[1:min(3, len(status.Suggestions))] {
-			lines = append(lines, "• "+suggestion)
-		}
-	}
-	return lines
-}
-
-func (m *mcpManagerModel) renderActionItem(i int, action mcpActionItem, width int) string {
-	label := fmt.Sprintf("%s  %s", action.Label, lipgloss.NewStyle().Foreground(colorDim).Render(action.Description))
-	style := pmItemStyle.Copy().Width(width)
-	prefix := "  "
-	if m.browseFocus == mcpBrowseFocusActions && i == m.actionIndex {
-		style = pmSelectedItemStyle.Copy().Width(width)
-		prefix = "➤ "
-	}
-	return style.Render(prefix + label)
-}
-
-func (m *mcpManagerModel) renderTransferMenu() string {
+func (m *mcpManagerModel) renderTransferModal() string {
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Transfer MCP Servers"),
 		"",
-		"Choose where to import from or export to.",
+		"Click to choose sync direction:",
 		"",
 	}
 	for i, item := range m.transferItems {
-		lines = append(lines, m.renderTransferItem(i, item))
+		label := fmt.Sprintf("%-24s %s", item.Label, lipgloss.NewStyle().Foreground(colorDim).Render(item.Description))
+		style := pmItemStyle.Copy().Width(max(24, m.width-48))
+		prefix := "  "
+		if i == m.transferIndex {
+			style = pmFocusedItemStyle.Copy().Width(max(24, m.width-48))
+			prefix = "▶ "
+		}
+		lines = append(lines, style.Render(prefix+label))
 	}
-	lines = append(lines, "", lipgloss.NewStyle().Foreground(colorDim).Render("Import skips same-name Spark servers. Export overwrites same-name target servers."))
-	lines = append(lines, "")
-	lines = append(lines, m.renderStatusSection(max(36, m.width-50))...)
-	lines = append(lines, "")
-	lines = append(lines, m.renderHelpSection(max(36, m.width-50))...)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func (m *mcpManagerModel) renderTransferItem(i int, item mcpTransferItem) string {
-	label := fmt.Sprintf("%s  %s", item.Label, lipgloss.NewStyle().Foreground(colorDim).Render(item.Description))
-	style := pmItemStyle.Copy().Width(max(24, m.width-48))
-	prefix := "  "
-	if i == m.transferIndex {
-		style = pmSelectedItemStyle.Copy().Width(max(24, m.width-48))
-		prefix = "➤ "
+func (m *mcpManagerModel) renderDeleteModal() string {
+	name := m.currentName()
+	title := lipgloss.NewStyle().Bold(true).Foreground(colorError).Render("Delete MCP Server")
+	desc := fmt.Sprintf("Are you sure you want to remove server %q?", name)
+	deleteBtn := pmCompactPrimaryBtnStyle.Copy().MarginRight(0).Render("Confirm Delete")
+	cancelBtn := pmCompactBtnStyle.Copy().MarginRight(0).Render("Cancel")
+	actionRow := lipgloss.JoinHorizontal(lipgloss.Top, deleteBtn, "   ", cancelBtn)
+	return lipgloss.JoinVertical(lipgloss.Left, title, "", desc, "", actionRow)
+}
+
+func (m *mcpManagerModel) renderProbeDetailModal() string {
+	name := m.currentName()
+	probe := m.probes[name]
+	title := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("Probe Diagnostics · " + name)
+	if probe == nil {
+		return lipgloss.JoinVertical(lipgloss.Left, title, "", "No probe data yet. Click outside or Esc to close.")
 	}
-	return style.Render(prefix + label)
+	lines := []string{
+		title,
+		"",
+	}
+	if probe.Err != "" {
+		lines = append(lines,
+			lipgloss.NewStyle().Foreground(colorError).Bold(true).Render(fmt.Sprintf("✕ %s failed", probe.Stage)),
+			"",
+			"Error: "+probe.Err,
+			"",
+		)
+	} else {
+		lines = append(lines,
+			lipgloss.NewStyle().Foreground(colorSuccess).Bold(true).Render("✓ Connection & Initialize OK"),
+			lipgloss.NewStyle().Foreground(colorSuccess).Bold(true).Render(fmt.Sprintf("✓ Discovered %d tools", probe.ToolsCount)),
+			"",
+		)
+		for _, tool := range probe.ToolNames {
+			lines = append(lines, "  • "+lipgloss.NewStyle().Foreground(colorTextSoft).Render(tool))
+		}
+		lines = append(lines, "")
+	}
+	closeBtn := pmCompactBtnStyle.Copy().MarginRight(0).Render("Close")
+	lines = append(lines, closeBtn)
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m *mcpManagerModel) contextHelpText() string {
+	if m.modalKind != mcpModalNone {
+		switch m.modalKind {
+		case mcpModalImport:
+			return "Click buttons or press Enter to import • Esc/Q Back"
+		case mcpModalAdd:
+			return "Click option to select • Esc/Q Back"
+		case mcpModalDeleteConfirm:
+			return "Click to confirm or cancel • Esc/Q Back"
+		default:
+			return "Click to confirm • Esc/Q Back"
+		}
+	}
+
+	saveLabel := "Save"
+	if m.dirty {
+		saveLabel = lipgloss.NewStyle().Foreground(colorFocus).Bold(true).Render("Save *")
+	} else {
+		saveLabel = lipgloss.NewStyle().Foreground(colorDim).Render("Save")
+	}
+
+	switch m.focusArea {
+	case mcpFocusFields:
+		return fmt.Sprintf("Tab Next Field    •    Click to select / toggle options    •    %s    •    Esc/Q Back", saveLabel)
+	case mcpFocusActions:
+		return "Click action or press Enter    •    Tab Switch Section    •    Esc/Q Back"
+	default:
+		return fmt.Sprintf("Click to select server    •    Tab Switch Section    •    %s    •    Esc/Q Back", saveLabel)
+	}
 }
 
 func renderStatusBadge(status mcpStatusSummary) string {
 	switch status.Kind {
 	case mcpStatusConfigured, mcpStatusReachable:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#50fa7b")).Bold(true).Render(status.Badge)
+		return lipgloss.NewStyle().Foreground(colorSuccess).Bold(true).Render(status.Badge)
 	case mcpStatusBroken:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render(status.Badge)
+		return lipgloss.NewStyle().Foreground(colorError).Bold(true).Render(status.Badge)
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("#f1fa8c")).Bold(true).Render(status.Badge)
+		return lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Render(status.Badge)
 	}
 }
-

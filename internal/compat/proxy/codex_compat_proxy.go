@@ -2,17 +2,17 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"strings"
 
-	"spark/internal/compat/gateway"
-	"spark/internal/compat/gateway/core"
-	openai_chat_target "spark/internal/compat/target/openai_chat"
+	"spark/internal/compat/engine"
+	codexingress "spark/internal/compat/ingress/codex"
+	"spark/internal/config"
 )
 
 type ResponsesProxy struct {
 	*compatProxyServer
+	engine       *engine.Engine
+	profile      *config.Profile
 	upstreamBase string
 	upstreamKey  string
 	mode         ResponsesProxyMode
@@ -38,14 +38,51 @@ func StartResponsesProxy(upstreamBase, upstreamKey string, quietStderr bool, mod
 	if len(preferredModels) > 0 {
 		preferredModel = strings.TrimSpace(preferredModels[0])
 	}
+
+	profile := &config.Profile{
+		OpenAIBaseURL: strings.TrimRight(upstreamBase, "/"),
+		APIKey:        upstreamKey,
+		DefaultModel:  preferredModel,
+	}
+	if mode == ResponsesProxyModeAnthropicMessagesOnly {
+		profile.OpenAIAPIType = config.OpenAIAPITypeAnthropicMessages
+		profile.AnthropicBaseURL = strings.TrimRight(upstreamBase, "/")
+	}
+
+	eng, err := engine.New(context.Background(), nil, engine.NewSparkLLMPlugin(server.logf))
+	if err != nil {
+		_ = server.Close()
+		return nil, err
+	}
+
+	provider, cleanedBase, _ := engine.MapProfileToProvider(profile)
+	_ = eng.ConfigureProvider(provider, cleanedBase, upstreamKey)
+
 	p := &ResponsesProxy{
 		compatProxyServer: server,
+		engine:            eng,
+		profile:           profile,
 		upstreamBase:      strings.TrimRight(upstreamBase, "/"),
 		upstreamKey:       upstreamKey,
 		mode:              mode,
 	}
-	p.restore = installUsageRecorder("codex", preferredModel, p.logf)
-	p.handleFunc("/v1/responses", p.handleResponses)
+
+	handler := codexingress.NewHandler(eng, profile, p.logf)
+	handler.SetSessionLogf(func(req map[string]any) func(format string, args ...any) {
+		sessionID := ""
+		if md, ok := req["client_metadata"].(map[string]any); ok {
+			if sid, ok := md["x-codex-window-id"].(string); ok && sid != "" {
+				sessionID = sid
+			}
+		}
+		if sessionID == "" {
+			return p.logf
+		}
+		return p.sessionLogf(sessionID)
+	})
+	p.handleFunc("/v1/responses", handler.ServeHTTP)
+	p.handleFunc("/responses", handler.ServeHTTP)
+
 	p.start()
 	p.logf("proxy started mode=%s upstream=%s listen=%s", p.mode, p.upstreamBase, p.BaseURL())
 	return p, nil
@@ -67,125 +104,4 @@ func (p *ResponsesProxy) warnf(summary string) {
 		return
 	}
 	p.compatProxyServer.warnf(summary)
-}
-
-func (p *ResponsesProxy) handleResponses(w http.ResponseWriter, r *http.Request) {
-	handler := gateway.NewCodexResponsesHandler(gateway.CodexResponsesOptions{
-		Mode:          string(p.mode),
-		UpstreamBase:  p.upstreamBase,
-		Logf:          p.logf,
-		SessionLogf:   p.sessionLogfForRequest,
-		Warnf:         p.warnf,
-		PostResponses: p.postResponses,
-		ExecutorForLog: func(logf func(format string, args ...any)) core.Executor {
-			if p.mode == ResponsesProxyModeAnthropicMessagesOnly {
-				return newCodexAnthropicMessagesExecutorWithLogf(p, logf)
-			}
-			return newCodexChatExecutorWithLogf(p, logf)
-		},
-	})
-	handler.ServeHTTP(w, r)
-}
-
-func (p *ResponsesProxy) sessionLogfForRequest(req map[string]any) func(format string, args ...any) {
-	if p == nil || p.compatProxyServer == nil {
-		return nil
-	}
-	sessionID := codexSessionID(req)
-	if sessionID == "" {
-		return p.logf
-	}
-	return p.compatProxyServer.sessionLogf(sessionID)
-}
-
-func codexSessionID(req map[string]any) string {
-	metadata, _ := req["client_metadata"].(map[string]any)
-	if metadata == nil {
-		return ""
-	}
-	for _, key := range []string{"x-codex-window-id", "x-codex-session-id", "session_id"} {
-		if value, _ := metadata[key].(string); strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func (p *ResponsesProxy) postResponses(ctx context.Context, req map[string]any) (*http.Response, error) {
-	return p.postUpstreamJSON(ctx, p.upstreamBase, p.upstreamKey, "/responses", req, p.logf)
-}
-
-func (p *ResponsesProxy) postChatCompletions(ctx context.Context, chatReq map[string]any) (*http.Response, error) {
-	return p.postChatCompletionsWithLogf(ctx, chatReq, p.logf)
-}
-
-func (p *ResponsesProxy) postAnthropicMessages(ctx context.Context, req map[string]any) (*http.Response, error) {
-	return p.postAnthropicMessagesWithLogf(ctx, req, p.logf)
-}
-
-func (p *ResponsesProxy) postChatCompletionsWithLogf(ctx context.Context, chatReq map[string]any, logf func(format string, args ...any)) (*http.Response, error) {
-	return p.postUpstreamJSON(ctx, p.upstreamBase, p.upstreamKey, "/chat/completions", chatReq, logf)
-}
-
-func (p *ResponsesProxy) postAnthropicMessagesWithLogf(ctx context.Context, req map[string]any, logf func(format string, args ...any)) (*http.Response, error) {
-	return p.postAnthropicMessagesJSON(ctx, p.upstreamBase, p.upstreamKey, req, logf)
-}
-
-func shouldRetryWithMinimalChatReq(status int, data []byte) bool {
-	if status != http.StatusBadRequest {
-		return false
-	}
-	msg := strings.ToLower(strings.TrimSpace(string(data)))
-	if msg == "" {
-		return false
-	}
-	if strings.Contains(msg, "invalid json") {
-		return true
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return false
-	}
-	if errObj, ok := decoded["error"].(map[string]any); ok {
-		em := strings.ToLower(stringValue(errObj["message"]))
-		return strings.Contains(em, "invalid json")
-	}
-	return false
-}
-
-func minimalChatCompletionsRequest(chatReq map[string]any) map[string]any {
-	out := map[string]any{
-		"model":    chatReq["model"],
-		"messages": chatReq["messages"],
-		"stream":   chatReq["stream"],
-	}
-	return out
-}
-
-func ultraMinimalChatCompletionsRequest(chatReq map[string]any) map[string]any {
-	content := ""
-	msgs, _ := chatReq["messages"].([]map[string]any)
-	for i := len(msgs) - 1; i >= 0; i-- {
-		role := stringValue(msgs[i]["role"])
-		if role != "user" && role != "system" {
-			continue
-		}
-		c := openai_chat_target.NormalizeMessageContent(msgs[i]["content"])
-		if c != "" {
-			content = c
-			break
-		}
-	}
-	out := map[string]any{
-		"model": chatReq["model"],
-		"messages": []map[string]any{
-			{"role": "user", "content": content},
-		},
-		"stream": chatReq["stream"],
-	}
-	return out
-}
-
-func (p *ResponsesProxy) forwardResponsesPassthrough(w http.ResponseWriter, upResp *http.Response) {
-	gateway.ForwardResponsesPassthrough(w, upResp, p.logf)
 }

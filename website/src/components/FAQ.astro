@@ -1,0 +1,54 @@
+---
+const faqs = [
+  {
+    q: 'Spark 会修改或破坏我已有的 Codex 或 Claude 配置吗？',
+    a: '不会。Spark 启动 Codex、Claude 等 Agent 时，遵循非侵入式配置写入原则；在启动 Grok Build 或 One 时，更是使用临时 HOME 符号链接镜像机制，主系统的原生配置与 OAuth Token 始终保持干净且不受污染。'
+  },
+  {
+    q: '为什么需要 Bifrost 统一驱动核心与 Ingress 协议网关？',
+    a: '不同 Agent 依赖特定的 Wire 协议（例如 Codex 默认使用 POST /v1/responses，Claude Code 使用 POST /v1/messages）。Spark 引入 Bifrost 作为底层统一驱动，并构建了原生高保真 Ingress 适配层，能够将任意第三方 OpenAI-compatible、DeepSeek、Gemini 或 Anthropic 上游透明转换为对应 Agent 的原生流式协议，同时无损保留 <think> 思考链与 Tool Calls。'
+  },
+  {
+    q: '什么是 Shared Daemon（共享常驻守护进程）？',
+    a: '在过去，每个打开的终端窗口可能都需要单独启动一个代理进程。现在 Spark 提供了 Shared Daemon 架构（通过 spark daemon start/status/stop 管理，默认端口 42337）：无论你开启多少个并发终端或运行不同 Agent，所有请求都由单个后台 Daemon 动态解析 Profile 并复用连接池，大幅降低系统内存开销，实现毫秒级即开即用。'
+  },
+  {
+    q: '如何添加和管理 MCP Server？',
+    a: '你可以直接运行 spark mcp 命令进入交互式 MCP 管理面板，也可以使用 spark mcp add 添加 stdio 或 http 类型的 MCP Server，并使用 spark mcp sync codex/claude 一键将配置双向投影同步至目标工具。'
+  },
+  {
+    q: '什么是 Skills 跨 Agent 投影？',
+    a: 'Spark 统一维护本地与 Git 来源的 Skills 目录。运行 spark skill sync 后，Spark 会自动将已启用的技能软链/投影到 .agents、.codex 与 .claude 的对应技能目录中，让多款 Agent 共享同一份强大的能力扩展。'
+  },
+  {
+    q: '如何在浏览器中管理配置？',
+    a: '直接运行 spark httpserver 即可在本地启动 Web 配置中心（默认 http://127.0.0.1:8765），在浏览器中直观管理 Profiles 密钥、模型以及 Prompt 预设。'
+  }
+];
+---
+
+<section id="faq" class="py-20 bg-white border-t border-slate-200/70">
+  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="text-center mb-16">
+      <h2 class="text-xs uppercase tracking-widest font-bold text-indigo-600 mb-2">FAQ</h2>
+      <p class="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">常见问题解答</p>
+      <p class="mt-3 text-slate-600 text-sm sm:text-base">关于 Spark 架构、安全隔离与工作机制的常见疑问。</p>
+    </div>
+
+    <div class="space-y-4">
+      {faqs.map((faq) => (
+        <details class="group rounded-2xl border border-slate-200 bg-slate-50/50 p-6 [&_summary::-webkit-details-marker]:hidden transition-all hover:border-slate-300 open:bg-white open:shadow-sm">
+          <summary class="flex cursor-pointer items-center justify-between gap-4 font-bold text-slate-900 text-base">
+            <span>{faq.q}</span>
+            <span class="ml-4 shrink-0 transition-transform duration-200 group-open:-rotate-180 text-slate-400 group-open:text-indigo-600">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </summary>
+          <p class="mt-4 text-sm text-slate-600 leading-relaxed pt-3 border-t border-slate-100">
+            {faq.a}
+          </p>
+        </details>
+      ))}
+    </div>
+  </div>
+</section>

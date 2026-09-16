@@ -9,7 +9,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-type codexConfigMap map[string]any
+type CodexConfigMap = map[string]any
 
 func DefaultCodexConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -20,7 +20,7 @@ func DefaultCodexConfigPath() (string, error) {
 }
 
 func LoadCodexMcpServers(path string) (map[string]*McpServerConfig, error) {
-	root, err := loadCodexConfigMap(path)
+	root, err := LoadCodexConfigMap(path)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func LoadCodexMcpServers(path string) (map[string]*McpServerConfig, error) {
 }
 
 func SaveCodexMcpServers(path string, servers map[string]*McpServerConfig) error {
-	root, err := loadCodexConfigMap(path)
+	root, err := LoadCodexConfigMap(path)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func SaveCodexMcpServers(path string, servers map[string]*McpServerConfig) error
 		if server == nil || !server.Enabled {
 			continue
 		}
-		encodedServers[McpServerName(name)] = encodeServerMap(server)
+		encodedServers[McpServerName(name)] = EncodeCodexServerMap(server)
 	}
 	root["mcp_servers"] = encodedServers
 
@@ -77,7 +77,7 @@ func SaveCodexMcpServers(path string, servers map[string]*McpServerConfig) error
 	return writeWithBackup(path, buf.Bytes())
 }
 
-func loadCodexConfigMap(path string) (codexConfigMap, error) {
+func LoadCodexConfigMap(path string) (CodexConfigMap, error) {
 	if path == "" {
 		var err error
 		path, err = DefaultCodexConfigPath()
@@ -89,12 +89,12 @@ func loadCodexConfigMap(path string) (codexConfigMap, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return codexConfigMap{}, nil
+			return CodexConfigMap{}, nil
 		}
 		return nil, err
 	}
 
-	root := codexConfigMap{}
+	root := CodexConfigMap{}
 	if _, err := toml.Decode(string(data), &root); err != nil {
 		return nil, fmt.Errorf("parse codex config: %w", err)
 	}
@@ -116,7 +116,7 @@ func decodeServerMap(serverMap map[string]any) (*McpServerConfig, error) {
 	return &cfg, nil
 }
 
-func encodeServerMap(server *McpServerConfig) map[string]any {
+func EncodeCodexServerMap(server *McpServerConfig) map[string]any {
 	out := map[string]any{}
 	if server.Command != "" {
 		out["command"] = server.Command

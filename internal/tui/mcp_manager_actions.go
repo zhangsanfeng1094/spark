@@ -2,301 +2,245 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"spark/internal/config"
 )
 
-func (m *mcpManagerModel) saveEditor(runProbe bool) tea.Cmd {
-	cfg, name, err := m.buildEditedServerConfig()
-	if err != nil {
-		m.status = errorStatus(err.Error())
-		return nil
+// loadCurrentDraft populates draftFields from the currently selected server.
+func saveAndMaybeProbeMCPConfigCmd(cfg *config.RootConfig, probeName string, runProbe bool) tea.Cmd {
+	return func() tea.Msg {
+		if err := config.Save(cfg); err != nil {
+			return mcpSaveFinishedMsg{Err: err}
+		}
+		var result *mcpProbeResult
+		if runProbe && probeName != "" {
+			if srv := cfg.GetMcpServer(probeName); srv != nil {
+				result = probeMCPServer(probeName, cloneMCPServerConfig(srv))
+			}
+		}
+		return mcpSaveFinishedMsg{
+			Status:     successStatus(fmt.Sprintf("Saved MCP configuration for %q.", probeName)),
+			Cfg:        cfg,
+			ProbeName:  probeName,
+			Result:     result,
+			OpenResult: runProbe,
+		}
 	}
-	m.editing = false
-	m.cfg = cfg
-	m.refreshNames()
-	m.selectByName(name)
-	return saveAndMaybeProbeMCPConfigCmd(cfg, name, runProbe)
 }
-
-func (m *mcpManagerModel) startAddEditor(transport string) {
-	m.editing = true
-	m.adding = true
-	m.editorMode = mcpEditorModeForm
-	m.editFocus = 0
-	m.editOriginalName = ""
-	m.editFields = newMCPEditFields("", &config.McpServerConfig{Enabled: true}, transport)
-	m.editCursor = make(map[int]int, len(m.editFields))
-	m.rawEditor = ""
-	m.rawCursor = 0
-	m.status = fmt.Sprintf("Add new %s server. F2 saves, F5 saves and probes.", transport)
-}
-
-func (m *mcpManagerModel) startEditCurrent() {
+func (m *mcpManagerModel) loadCurrentDraft() {
 	name := m.currentName()
 	server := m.cfg.GetMcpServer(name)
-	if name == "" || server == nil {
-		return
+	m.draftFields = newMCPFormFields(name, server)
+	m.fieldCursor = make(map[int]int, len(m.draftFields))
+	for i, f := range m.draftFields {
+		m.fieldCursor[i] = len([]rune(f.Value))
 	}
-	m.editing = true
-	m.adding = false
-	m.editorMode = mcpEditorModeForm
-	m.editFocus = 0
-	m.editOriginalName = name
-	m.editFields = newMCPEditFields(name, server, currentTransport(server))
-	m.editCursor = make(map[int]int, len(m.editFields))
-	for i, field := range m.editFields {
-		m.editCursor[i] = len([]rune(field.value))
-	}
-	m.rawEditor = marshalMCPServerYAML(server)
-	m.rawCursor = len([]rune(m.rawEditor))
-	m.status = fmt.Sprintf("Editing %s. F2 saves, F5 saves and probes.", name)
+	m.updateFocus()
+	m.dirty = false
 }
 
-func newMCPEditFields(name string, server *config.McpServerConfig, transport string) []mcpEditField {
+func (m *mcpManagerModel) updateFocus() tea.Cmd {
+	var cmds []tea.Cmd
+	visible := m.visibleFieldIndices()
+	for fIdx, actualIdx := range visible {
+		f := &m.draftFields[actualIdx]
+		if f.Kind == mcpFieldKindInput || f.Kind == mcpFieldKindTextarea {
+			if m.focusArea == mcpFocusFields && fIdx == m.focusField {
+				cmd := f.Input.Focus()
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			} else {
+				f.Input.Blur()
+			}
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *mcpManagerModel) syncInputsFromModels() {
+	for i := range m.draftFields {
+		f := &m.draftFields[i]
+		if f.Kind == mcpFieldKindInput || f.Kind == mcpFieldKindTextarea {
+			if f.Input.Focused() {
+				f.Value = f.Input.Value()
+			}
+		}
+	}
+}
+
+func newMCPFormFields(name string, server *config.McpServerConfig) []mcpFormField {
 	if server == nil {
 		server = &config.McpServerConfig{Enabled: true}
 	}
-	args := strings.Join(server.Args, "\n")
-	env := formatEnvLines(server.Env)
+	transport := currentTransport(server)
 	enabled := "false"
 	if server.Enabled {
 		enabled = "true"
 	}
-	return []mcpEditField{
-		{label: "Name", value: name, kind: mcpEditKindInput},
-		{label: "Transport", value: transport, kind: mcpEditKindSelect, options: []string{"stdio", "sse", "http"}},
-		{label: "Enabled", value: enabled, kind: mcpEditKindSelect, options: []string{"true", "false"}},
-		{label: "Command", value: server.Command, kind: mcpEditKindInput},
-		{label: "URL", value: server.URL, kind: mcpEditKindInput},
-		{label: "Args", value: args, kind: mcpEditKindInput, multiline: true},
-		{label: "Env", value: env, kind: mcpEditKindInput, multiline: true},
-		{label: "Disabled Reason", value: server.DisabledReason, kind: mcpEditKindInput},
-	}
-}
+	args := strings.Join(server.Args, "\n")
+	env := formatEnvLines(server.Env)
 
-func (m *mcpManagerModel) cycleSelectedField(delta int) {
-	if m.editFocus < 0 || m.editFocus >= len(m.editFields) {
-		return
+	fields := []mcpFormField{
+		{Key: "name", Label: "Name", Value: name, Placeholder: "e.g. sqlite", Kind: mcpFieldKindInput, Required: true},
+		{Key: "transport", Label: "Transport", Value: transport, Kind: mcpFieldKindSelect, Options: []string{"stdio", "http", "sse"}, ReadOnly: true},
+		{Key: "enabled", Label: "Config Enabled", Value: enabled, Kind: mcpFieldKindSelect, Options: []string{"true", "false"}, ReadOnly: true},
+		{Key: "command", Label: "Command", Value: server.Command, Placeholder: "e.g. npx", Kind: mcpFieldKindInput},
+		{Key: "args", Label: "Arguments", Value: args, Placeholder: "e.g. -y @mcp/server-sqlite /data.db", Kind: mcpFieldKindTextarea},
+		{Key: "url", Label: "URL", Value: server.URL, Placeholder: "e.g. https://mcp.deepwiki.com/mcp", Kind: mcpFieldKindInput},
+		{Key: "env", Label: "Environment", Value: env, Placeholder: "e.g. API_KEY=xxx", Kind: mcpFieldKindTextarea},
+		{Key: "reason", Label: "Disabled Reason", Value: server.DisabledReason, Placeholder: "optional note", Kind: mcpFieldKindInput},
 	}
-	field := &m.editFields[m.editFocus]
-	if field.kind != mcpEditKindSelect || len(field.options) == 0 {
-		return
-	}
-	current := strings.ToLower(strings.TrimSpace(field.value))
-	for i, option := range field.options {
-		if option == current {
-			next := (i + delta) % len(field.options)
-			if next < 0 {
-				next += len(field.options)
-			}
-			field.value = field.options[next]
-			return
+	for i := range fields {
+		f := &fields[i]
+		if f.Kind == mcpFieldKindInput || f.Kind == mcpFieldKindTextarea {
+			f.Input = newFieldTextInput(f.Placeholder, f.Value, false, false, 30)
 		}
 	}
-	field.value = field.options[0]
+	return fields
 }
 
-func (m *mcpManagerModel) cycleTransport() {
-	current := strings.ToLower(strings.TrimSpace(m.editFields[mcpEditFieldTransport].value))
-	options := []string{"stdio", "sse", "http"}
-	for i, option := range options {
-		if option == current {
-			m.editFields[mcpEditFieldTransport].value = options[(i+1)%len(options)]
-			return
-		}
+func (m *mcpManagerModel) visibleFieldIndices() []int {
+	transport := "stdio"
+	if len(m.draftFields) > mcpFieldKeyTransport {
+		transport = strings.ToLower(strings.TrimSpace(m.draftFields[mcpFieldKeyTransport].Value))
 	}
-	m.editFields[mcpEditFieldTransport].value = "stdio"
+	indices := []int{mcpFieldKeyName, mcpFieldKeyTransport, mcpFieldKeyEnabled}
+	if transport == "http" || transport == "sse" {
+		indices = append(indices, mcpFieldKeyURL, mcpFieldKeyEnv, mcpFieldKeyReason)
+	} else {
+		indices = append(indices, mcpFieldKeyCommand, mcpFieldKeyArgs, mcpFieldKeyEnv, mcpFieldKeyReason)
+	}
+	return indices
 }
 
-func (m *mcpManagerModel) toggleEnabledField() {
-	if strings.EqualFold(strings.TrimSpace(m.editFields[mcpEditFieldEnabled].value), "true") {
-		m.editFields[mcpEditFieldEnabled].value = "false"
-		return
-	}
-	m.editFields[mcpEditFieldEnabled].value = "true"
-}
-
-func (m *mcpManagerModel) syncRawFromFields() {
-	server, name, err := m.serverConfigFromForm()
-	if err != nil {
-		m.status = "Error: " + err.Error()
-		return
-	}
-	m.rawEditor = marshalNamedMCPServerYAML(name, server)
-}
-
-func (m *mcpManagerModel) syncFieldsFromRaw() error {
-	server, name, err := parseEditedMCPServerRaw(m.rawEditor, m.editOriginalName)
-	if err != nil {
-		return err
-	}
-	m.editFields = newMCPEditFields(name, server, currentTransport(server))
-	m.editCursor = make(map[int]int, len(m.editFields))
-	for i, field := range m.editFields {
-		m.editCursor[i] = len([]rune(field.value))
-	}
-	if m.adding || m.editOriginalName == "" {
-		m.editOriginalName = name
-	}
-	visible := m.visibleEditFieldIndices()
-	if len(visible) == 0 {
-		m.editFocus = 0
+func (m *mcpManagerModel) saveDraft(runProbe bool) tea.Cmd {
+	m.syncInputsFromModels()
+	name := strings.TrimSpace(m.draftFields[mcpFieldKeyName].Value)
+	if name == "" {
+		m.status = errorStatus("Server name is required")
 		return nil
 	}
-	if !containsEditField(visible, m.editFocus) {
-		m.editFocus = visible[0]
-	}
-	return nil
-}
-
-func (m *mcpManagerModel) switchEditorMode(mode int) {
-	if mode == m.editorMode {
-		return
-	}
-	switch mode {
-	case mcpEditorModeRaw:
-		m.syncRawFromFields()
-		if strings.HasPrefix(m.status, "Error:") {
-			return
-		}
-		m.editorMode = mcpEditorModeRaw
-		m.rawCursor = len([]rune(m.rawEditor))
-	case mcpEditorModeForm:
-		if err := m.syncFieldsFromRaw(); err != nil {
-			m.status = "Error: " + err.Error()
-			return
-		}
-		m.editorMode = mcpEditorModeForm
-	}
-}
-
-func (m *mcpManagerModel) visibleEditFieldIndices() []int {
-	transport := ""
-	if len(m.editFields) > mcpEditFieldTransport {
-		transport = strings.ToLower(strings.TrimSpace(m.editFields[mcpEditFieldTransport].value))
-	}
-	visible := []int{
-		mcpEditFieldName,
-		mcpEditFieldTransport,
-		mcpEditFieldEnabled,
-	}
-	switch transport {
-	case "sse", "http":
-		visible = append(visible, mcpEditFieldURL)
-	default:
-		visible = append(visible, mcpEditFieldCommand, mcpEditFieldArgs, mcpEditFieldEnv)
-	}
-	visible = append(visible, mcpEditFieldDisabledReason)
-	return visible
-}
-
-func (m *mcpManagerModel) moveEditFocus(delta int) {
-	visible := m.visibleEditFieldIndices()
-	if len(visible) == 0 {
-		return
-	}
-	currentPos := 0
-	for i, idx := range visible {
-		if idx == m.editFocus {
-			currentPos = i
-			break
-		}
-	}
-	next := (currentPos + delta) % len(visible)
-	if next < 0 {
-		next += len(visible)
-	}
-	m.editFocus = visible[next]
-}
-
-func (m *mcpManagerModel) buildEditedServerConfig() (*config.RootConfig, string, error) {
-	cfgCopy := *m.cfg
-	cfgCopy.McpServers = make(map[string]*config.McpServerConfig, len(m.cfg.McpServers))
-	for name, server := range m.cfg.McpServers {
-		cfgCopy.McpServers[name] = cloneMCPServerConfig(server)
-	}
-
-	var (
-		server *config.McpServerConfig
-		name   string
-		err    error
-	)
-	if m.editorMode == mcpEditorModeRaw {
-		server, name, err = parseEditedMCPServerRaw(m.rawEditor, m.editOriginalName)
-	} else {
-		server, name, err = m.serverConfigFromForm()
-	}
-	if err != nil {
-		return nil, "", err
-	}
-	if m.editOriginalName != "" && m.editOriginalName != name {
-		delete(cfgCopy.McpServers, m.editOriginalName)
-	}
-	cfgCopy.SetMcpServer(name, server)
-	config.Normalize(&cfgCopy)
-	return &cfgCopy, name, nil
-}
-
-func (m *mcpManagerModel) serverConfigFromForm() (*config.McpServerConfig, string, error) {
-	name := config.McpServerName(strings.TrimSpace(m.editFields[mcpEditFieldName].value))
-	if name == "" {
-		return nil, "", fmt.Errorf("server name is required")
-	}
-	transport := strings.ToLower(strings.TrimSpace(m.editFields[mcpEditFieldTransport].value))
-	if transport == "" {
-		transport = "stdio"
-	}
+	transport := strings.ToLower(strings.TrimSpace(m.draftFields[mcpFieldKeyTransport].Value))
+	enabled := parseBoolLoose(m.draftFields[mcpFieldKeyEnabled].Value)
 	server := &config.McpServerConfig{
-		Enabled:        parseBoolLoose(m.editFields[mcpEditFieldEnabled].value),
-		DisabledReason: strings.TrimSpace(m.editFields[mcpEditFieldDisabledReason].value),
+		Enabled:        enabled,
+		DisabledReason: strings.TrimSpace(m.draftFields[mcpFieldKeyReason].Value),
 	}
 	if transport == "stdio" {
-		server.Command = strings.TrimSpace(m.editFields[mcpEditFieldCommand].value)
-		server.Args = parseLineList(m.editFields[mcpEditFieldArgs].value)
+		server.Command = strings.TrimSpace(m.draftFields[mcpFieldKeyCommand].Value)
+		server.Args = parseLineList(m.draftFields[mcpFieldKeyArgs].Value)
 	} else {
-		server.URL = strings.TrimSpace(m.editFields[mcpEditFieldURL].value)
+		server.URL = strings.TrimSpace(m.draftFields[mcpFieldKeyURL].Value)
 	}
-	env, err := parseEnvLines(m.editFields[mcpEditFieldEnv].value)
+	env, err := parseEnvLines(m.draftFields[mcpFieldKeyEnv].Value)
 	if err != nil {
-		return nil, "", err
+		m.status = errorStatus("Invalid environment format: " + err.Error())
+		return nil
 	}
 	server.Env = env
 	if detail, _ := validateMCPServerConfig(server); detail != "" {
-		return nil, "", fmt.Errorf("%s", detail)
-	}
-	return server, name, nil
-}
-
-func (m *mcpManagerModel) openTransferMenu() {
-	m.transferring = true
-	m.transferIndex = clampIndex(m.transferIndex, len(m.transferItems))
-	m.status = infoStatus("Choose a transfer action.")
-}
-
-func (m *mcpManagerModel) activateTransferItem() tea.Cmd {
-	if len(m.transferItems) == 0 {
+		m.status = errorStatus(detail)
 		return nil
 	}
-	item := m.transferItems[clampIndex(m.transferIndex, len(m.transferItems))]
-	m.transferring = false
-	switch item.Key {
-	case "import_codex":
-		return m.importFromCodex()
-	case "import_claude":
-		return m.importFromClaude()
-	case "export_codex":
-		return m.syncToCodex()
-	case "export_claude":
-		return m.syncToClaude()
-	default:
-		return nil
+
+	origName := m.currentName()
+	cfgCopy := *m.cfg
+	cfgCopy.McpServers = make(map[string]*config.McpServerConfig, len(m.cfg.McpServers))
+	for k, v := range m.cfg.McpServers {
+		cfgCopy.McpServers[k] = cloneMCPServerConfig(v)
+	}
+	if origName != "" && origName != name {
+		delete(cfgCopy.McpServers, origName)
+	}
+	cfgCopy.SetMcpServer(name, server)
+	config.Normalize(&cfgCopy)
+
+	m.cfg = &cfgCopy
+	m.dirty = false
+	m.refreshNames()
+	m.selectByName(name)
+	m.loadCurrentDraft()
+
+	return saveAndMaybeProbeMCPConfigCmd(&cfgCopy, name, runProbe)
+}
+
+func (m *mcpManagerModel) selectByName(name string) {
+	for i, n := range m.filtered {
+		if n == name {
+			m.selected = i
+			return
+		}
 	}
 }
 
-func (m *mcpManagerModel) probeCurrent() tea.Cmd {
+func (m *mcpManagerModel) deleteCurrent() tea.Cmd {
+	name := m.currentName()
+	if name == "" {
+		return nil
+	}
+	cfgCopy := *m.cfg
+	cfgCopy.McpServers = make(map[string]*config.McpServerConfig, len(m.cfg.McpServers))
+	for k, v := range m.cfg.McpServers {
+		cfgCopy.McpServers[k] = cloneMCPServerConfig(v)
+	}
+	delete(cfgCopy.McpServers, name)
+	delete(m.probes, name)
+	config.Normalize(&cfgCopy)
+
+	m.cfg = &cfgCopy
+	m.modalKind = mcpModalNone
+	m.refreshNames()
+	m.loadCurrentDraft()
+	m.status = successStatus(fmt.Sprintf("Deleted server %q.", name))
+
+	return func() tea.Msg {
+		if err := config.Save(&cfgCopy); err != nil {
+			return mcpSaveFinishedMsg{Err: err}
+		}
+		return mcpSaveFinishedMsg{Status: successStatus(fmt.Sprintf("Deleted server %q.", name)), Cfg: &cfgCopy}
+	}
+}
+
+func (m *mcpManagerModel) toggleCurrentEnabled() tea.Cmd {
+	name := m.currentName()
+	if name == "" {
+		return nil
+	}
+	server := m.cfg.GetMcpServer(name)
+	if server == nil {
+		return nil
+	}
+	enabled := !server.Enabled
+	cfgCopy := *m.cfg
+	cfgCopy.McpServers = make(map[string]*config.McpServerConfig, len(m.cfg.McpServers))
+	for k, v := range m.cfg.McpServers {
+		cfgCopy.McpServers[k] = cloneMCPServerConfig(v)
+	}
+	srvCopy := cloneMCPServerConfig(server)
+	srvCopy.Enabled = enabled
+	cfgCopy.SetMcpServer(name, srvCopy)
+
+	m.cfg = &cfgCopy
+	m.refreshNames()
+	m.loadCurrentDraft()
+
+	statusText := ternary(enabled, "Enabled", "Disabled")
+	m.status = successStatus(fmt.Sprintf("Server %q %s.", name, statusText))
+
+	return func() tea.Msg {
+		if err := config.Save(&cfgCopy); err != nil {
+			return mcpSaveFinishedMsg{Err: err}
+		}
+		return mcpSaveFinishedMsg{Status: successStatus(fmt.Sprintf("Server %q %s.", name, statusText)), Cfg: &cfgCopy}
+	}
+}
+
+func (m *mcpManagerModel) probeCurrent(openResult bool) tea.Cmd {
 	name := m.currentName()
 	if name == "" {
 		return nil
@@ -309,7 +253,7 @@ func (m *mcpManagerModel) probeCurrent() tea.Cmd {
 	m.status = "Probing " + name + "..."
 	serverCopy := cloneMCPServerConfig(server)
 	return func() tea.Msg {
-		return mcpProbeFinishedMsg{Name: name, Result: probeMCPServer(name, serverCopy)}
+		return mcpProbeFinishedMsg{Name: name, Result: probeMCPServer(name, serverCopy), OpenResult: openResult}
 	}
 }
 
@@ -334,40 +278,230 @@ func (m *mcpManagerModel) probeAll() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (m *mcpManagerModel) toggleCurrentEnabled() tea.Cmd {
+func (m *mcpManagerModel) openExternalEditorForCurrent() tea.Cmd {
 	name := m.currentName()
 	if name == "" {
-		return nil
+		name = "new-server"
 	}
 	server := m.cfg.GetMcpServer(name)
-	if server == nil {
-		return nil
-	}
-	enabled := !server.Enabled
-	if enabled {
-		server.Enabled = true
-		server.DisabledReason = ""
-	} else {
-		server.Enabled = false
-		server.DisabledReason = "disabled by spark"
-	}
-	cfgCopy := m.cfg
-	return saveMCPConfigCmd(cfgCopy, fmt.Sprintf("%s %s.", name, ternary(enabled, "enabled", "disabled")))
+	content := marshalNamedMCPServerYAML(name, server)
+	return openExternalEditor(name, content, "yaml")
 }
 
-func (m *mcpManagerModel) deleteCurrent() tea.Cmd {
-	name := m.currentName()
-	if name == "" {
+func (m *mcpManagerModel) openExternalEditorForImport() tea.Cmd {
+	initial := m.importBuffer
+	if strings.TrimSpace(initial) == "" {
+		initial = "# Paste or write MCP Server config in TOML, JSON, or YAML format\n# Examples:\n# [mcp_servers.my-server]\n# command = \"npx\"\n# args = [\"-y\", \"@modelcontextprotocol/server-sqlite\"]\n\n"
+	}
+	return openExternalEditor("import", initial, "toml")
+}
+
+func openExternalEditor(target, initialContent, ext string) tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if strings.TrimSpace(editor) == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if strings.TrimSpace(editor) == "" {
+		if p, err := exec.LookPath("vim"); err == nil && p != "" {
+			editor = "vim"
+		} else if p, err := exec.LookPath("nano"); err == nil && p != "" {
+			editor = "nano"
+		} else {
+			editor = "vi"
+		}
+	}
+
+	tmpFile, err := os.CreateTemp("", fmt.Sprintf("spark-mcp-*.%s", ext))
+	if err != nil {
+		return func() tea.Msg {
+			return mcpExternalEditorFinishedMsg{
+				Target: target,
+				Err:    fmt.Errorf("failed to create temporary file: %w", err),
+			}
+		}
+	}
+	tmpPath := tmpFile.Name()
+	if strings.TrimSpace(initialContent) != "" {
+		_, _ = tmpFile.WriteString(initialContent)
+	}
+	_ = tmpFile.Close()
+
+	parts := strings.Fields(editor)
+	if len(parts) == 0 {
+		parts = []string{"vim"}
+	}
+	cmdName := parts[0]
+	cmdArgs := append(parts[1:], tmpPath)
+
+	c := exec.Command(cmdName, cmdArgs...)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		return mcpExternalEditorFinishedMsg{
+			Target: target,
+			Path:   tmpPath,
+			Err:    err,
+		}
+	})
+}
+
+func (m *mcpManagerModel) handleExternalEditorFinished(msg mcpExternalEditorFinishedMsg) tea.Cmd {
+	defer func() {
+		if msg.Path != "" {
+			_ = os.Remove(msg.Path)
+		}
+	}()
+
+	if msg.Err != nil {
+		m.status = errorStatus("Editor error: " + msg.Err.Error())
 		return nil
 	}
-	delete(m.probes, name)
-	delete(m.running, name)
-	m.cfg.RemoveMcpServer(name)
-	return saveMCPConfigCmd(m.cfg, fmt.Sprintf("Removed %s.", name))
+
+	data, err := os.ReadFile(msg.Path)
+	if err != nil {
+		m.status = errorStatus("Failed to read edited file: " + err.Error())
+		return nil
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		m.status = infoStatus("Editor closed without saving.")
+		return nil
+	}
+
+	if msg.Target == "import" {
+		servers, err := parseMultipleMCPServersRaw(content, "imported-server")
+		if err != nil {
+			m.importBuffer = content
+			m.importCursor = len([]rune(content))
+			m.status = errorStatus("Import parse error: " + err.Error())
+			return nil
+		}
+		m.modalKind = mcpModalNone
+		m.importBuffer = ""
+		m.importCursor = 0
+		return func() tea.Msg {
+			cfg, err := config.Load()
+			if err != nil {
+				return mcpSaveFinishedMsg{Err: err}
+			}
+			result := cfg.ImportMcpServers(servers)
+			if err := config.Save(cfg); err != nil {
+				return mcpSaveFinishedMsg{Err: err}
+			}
+			status := successStatus(fmt.Sprintf("Vim import: %d server(s) added.", result.Added))
+			if result.Skipped > 0 {
+				status += fmt.Sprintf(" %d skipped.", result.Skipped)
+			}
+			return mcpSaveFinishedMsg{Status: status, Cfg: cfg}
+		}
+	}
+
+	server, name, err := parseEditedMCPServerRaw(content, msg.Target)
+	if err != nil {
+		m.status = errorStatus("Config error: " + err.Error())
+		return nil
+	}
+
+	cfgCopy := *m.cfg
+	cfgCopy.McpServers = make(map[string]*config.McpServerConfig, len(m.cfg.McpServers))
+	for k, v := range m.cfg.McpServers {
+		cfgCopy.McpServers[k] = cloneMCPServerConfig(v)
+	}
+	if msg.Target != "" && msg.Target != name && msg.Target != "new-server" {
+		delete(cfgCopy.McpServers, msg.Target)
+	}
+	cfgCopy.SetMcpServer(name, server)
+	config.Normalize(&cfgCopy)
+
+	m.cfg = &cfgCopy
+	m.modalKind = mcpModalNone
+	m.refreshNames()
+	m.selectByName(name)
+	m.loadCurrentDraft()
+
+	return saveAndMaybeProbeMCPConfigCmd(&cfgCopy, name, false)
+}
+
+func (m *mcpManagerModel) confirmAddFromModal() {
+	name := strings.TrimSpace(m.addName)
+	if name == "" {
+		name = fmt.Sprintf("mcp-server-%d", len(m.names)+1)
+	}
+	transports := []string{"stdio", "http", "sse"}
+	transport := transports[clampIndex(m.addTransport, len(transports))]
+
+	server := &config.McpServerConfig{
+		Enabled: true,
+	}
+	if transport == "stdio" {
+		server.Command = "npx"
+	} else {
+		server.URL = "https://mcp.example.com/mcp"
+	}
+
+	m.cfg.SetMcpServer(config.McpServerName(name), server)
+	config.Normalize(m.cfg)
+	m.modalKind = mcpModalNone
+	m.refreshNames()
+	m.selectByName(name)
+	m.loadCurrentDraft()
+	m.focusArea = mcpFocusFields
+	m.focusField = 0
+	m.status = successStatus(fmt.Sprintf("Created %s server %q. Fill fields or press [V] to open in Vim.", strings.ToUpper(transport), name))
+}
+
+func (m *mcpManagerModel) saveImportModal() tea.Cmd {
+	servers, err := parseMultipleMCPServersRaw(m.importBuffer, "imported-server")
+	if err != nil {
+		m.status = errorStatus("Import failed: " + err.Error())
+		return nil
+	}
+	m.modalKind = mcpModalNone
+	return func() tea.Msg {
+		cfg, err := config.Load()
+		if err != nil {
+			return mcpSaveFinishedMsg{Err: err}
+		}
+		result := cfg.ImportMcpServers(servers)
+		if err := config.Save(cfg); err != nil {
+			return mcpSaveFinishedMsg{Err: err}
+		}
+		status := successStatus(fmt.Sprintf("Imported %d MCP server(s).", result.Added))
+		if result.Skipped > 0 {
+			status += fmt.Sprintf(" Skipped %d existing.", result.Skipped)
+		}
+		return mcpSaveFinishedMsg{Status: status, Cfg: cfg}
+	}
+}
+
+func (m *mcpManagerModel) activateTransferItem() tea.Cmd {
+	if len(m.transferItems) == 0 {
+		return nil
+	}
+	item := m.transferItems[clampIndex(m.transferIndex, len(m.transferItems))]
+	m.modalKind = mcpModalNone
+	switch item.Key {
+	case "import_raw":
+		m.modalKind = mcpModalImport
+		m.importBuffer = ""
+		m.importCursor = 0
+		return nil
+	case "import_codex":
+		return m.importFromCodex()
+	case "import_claude":
+		return m.importFromClaude()
+	case "export_codex":
+		return m.syncToCodex()
+	case "export_claude":
+		return m.syncToClaude()
+	}
+	return nil
 }
 
 func (m *mcpManagerModel) importFromCodex() tea.Cmd {
-	m.status = infoStatus("Importing MCP servers from Codex...")
+	m.status = "Importing from Codex..."
 	return func() tea.Msg {
 		cfg, err := config.Load()
 		if err != nil {
@@ -381,16 +515,16 @@ func (m *mcpManagerModel) importFromCodex() tea.Cmd {
 		if err := config.Save(cfg); err != nil {
 			return mcpSaveFinishedMsg{Err: err}
 		}
-		status := successStatus(fmt.Sprintf("Imported %d MCP server(s) from Codex.", result.Added))
+		summary := fmt.Sprintf("Imported %d server(s) from Codex.", result.Added)
 		if result.Skipped > 0 {
-			status += fmt.Sprintf(" Skipped %d existing server(s).", result.Skipped)
+			summary += fmt.Sprintf(" %d skipped.", result.Skipped)
 		}
-		return mcpSaveFinishedMsg{Status: status, Cfg: cfg}
+		return mcpSaveFinishedMsg{Status: successStatus(summary), Cfg: cfg}
 	}
 }
 
 func (m *mcpManagerModel) importFromClaude() tea.Cmd {
-	m.status = infoStatus("Importing MCP servers from Claude...")
+	m.status = "Importing from Claude..."
 	return func() tea.Msg {
 		cfg, err := config.Load()
 		if err != nil {
@@ -404,74 +538,38 @@ func (m *mcpManagerModel) importFromClaude() tea.Cmd {
 		if err := config.Save(cfg); err != nil {
 			return mcpSaveFinishedMsg{Err: err}
 		}
-		status := successStatus(fmt.Sprintf("Imported %d MCP server(s) from Claude.", result.Added))
+		summary := fmt.Sprintf("Imported %d server(s) from Claude.", result.Added)
 		if result.Skipped > 0 {
-			status += fmt.Sprintf(" Skipped %d existing server(s).", result.Skipped)
+			summary += fmt.Sprintf(" %d skipped.", result.Skipped)
 		}
-		return mcpSaveFinishedMsg{Status: status, Cfg: cfg}
+		return mcpSaveFinishedMsg{Status: successStatus(summary), Cfg: cfg}
 	}
 }
 
 func (m *mcpManagerModel) syncToCodex() tea.Cmd {
-	m.status = infoStatus("Syncing MCP servers to Codex...")
+	m.status = "Exporting to Codex..."
 	return func() tea.Msg {
-		if err := config.SaveCodexMcpServers("", m.cfg.McpServers); err != nil {
-			return mcpSaveFinishedMsg{Err: err}
-		}
 		cfg, err := config.Load()
 		if err != nil {
 			return mcpSaveFinishedMsg{Err: err}
 		}
-		return mcpSaveFinishedMsg{Status: successStatus(fmt.Sprintf("Synced %d MCP server(s) to Codex.", config.CountEnabledMcpServers(m.cfg.McpServers))), Cfg: cfg}
+		if err := config.SaveCodexMcpServers("", cfg.McpServers); err != nil {
+			return mcpSaveFinishedMsg{Err: err}
+		}
+		return mcpSaveFinishedMsg{Status: successStatus("Exported servers to Codex."), Cfg: cfg}
 	}
 }
 
 func (m *mcpManagerModel) syncToClaude() tea.Cmd {
-	m.status = infoStatus("Syncing MCP servers to Claude...")
+	m.status = "Exporting to Claude..."
 	return func() tea.Msg {
-		if err := config.SaveClaudeUserMcpServers("", m.cfg.McpServers); err != nil {
-			return mcpSaveFinishedMsg{Err: err}
-		}
 		cfg, err := config.Load()
 		if err != nil {
 			return mcpSaveFinishedMsg{Err: err}
 		}
-		return mcpSaveFinishedMsg{Status: successStatus(fmt.Sprintf("Synced %d MCP server(s) to Claude.", config.CountEnabledMcpServers(m.cfg.McpServers))), Cfg: cfg}
+		if err := config.SaveClaudeUserMcpServers("", cfg.McpServers); err != nil {
+			return mcpSaveFinishedMsg{Err: err}
+		}
+		return mcpSaveFinishedMsg{Status: successStatus("Exported servers to Claude."), Cfg: cfg}
 	}
 }
-
-func saveMCPConfigCmd(cfg *config.RootConfig, success string) tea.Cmd {
-	return func() tea.Msg {
-		if err := config.Save(cfg); err != nil {
-			return mcpSaveFinishedMsg{Err: err}
-		}
-		reloaded, err := config.Load()
-		if err != nil {
-			return mcpSaveFinishedMsg{Err: err}
-		}
-		return mcpSaveFinishedMsg{Status: successStatus(success), Cfg: reloaded}
-	}
-}
-
-func saveAndMaybeProbeMCPConfigCmd(cfg *config.RootConfig, name string, runProbe bool) tea.Cmd {
-	return func() tea.Msg {
-		if err := config.Save(cfg); err != nil {
-			return mcpSaveFinishedMsg{Err: err}
-		}
-		reloaded, err := config.Load()
-		if err != nil {
-			return mcpSaveFinishedMsg{Err: err}
-		}
-		msg := mcpSaveFinishedMsg{
-			Status: successStatus(fmt.Sprintf("Saved %s.", name)),
-			Cfg:    reloaded,
-		}
-		if runProbe {
-			msg.Status = infoStatus(fmt.Sprintf("Saved %s and probing...", name))
-			msg.ProbeName = name
-			msg.Result = probeMCPServer(name, cloneMCPServerConfig(reloaded.GetMcpServer(name)))
-		}
-		return msg
-	}
-}
-

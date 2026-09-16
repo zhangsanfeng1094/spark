@@ -409,3 +409,26 @@ func TestProfileManagerModelSummaryTruncatesLongDefault(t *testing.T) {
 		t.Fatalf("expected ellipsis in model summary, got %q", got)
 	}
 }
+
+func TestProfileManagerViewShowsManagedAuth(t *testing.T) {
+	cfg := &config.RootConfig{
+		DefaultProfile: "command-code",
+		Profiles: map[string]*config.Profile{
+			"command-code": {
+				OpenAIBaseURL: "http://localhost:3050/v1",
+				AuthProvider:  "commandcode",
+				DefaultModel:  "claude-3-5-sonnet",
+			},
+		},
+	}
+	m := newPMModel(cfg)
+	m.width = 100
+	m.height = 30
+	view := m.View()
+	if !strings.Contains(view, "[managed: commandcode]") {
+		t.Fatalf("expected '[managed: commandcode]' in view, got: %s", view)
+	}
+	if !strings.Contains(view, "Command Code") {
+		t.Fatalf("expected 'Command Code' in view, got: %s", view)
+	}
+}

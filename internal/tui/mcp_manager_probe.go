@@ -127,7 +127,8 @@ func probeStdioMCPServer(ctx context.Context, server *config.McpServerConfig) *m
 	if err != nil {
 		return &mcpProbeResult{Stage: mcpProbeStageToolsList, Err: enrichProbeError(err, stderr.String())}
 	}
-	return &mcpProbeResult{Stage: mcpProbeStageToolsList, ToolsCount: extractToolCount(resp.Result)}
+	count, names := extractToolInfo(resp.Result)
+	return &mcpProbeResult{Stage: mcpProbeStageToolsList, ToolsCount: count, ToolNames: names}
 }
 
 func callStdioMCP(ctx context.Context, stdin io.Writer, reader *bufio.Reader, id int, method string, params any) (*mcpJSONRPCResponse, error) {
@@ -246,7 +247,8 @@ func probeHTTPMCPServer(ctx context.Context, server *config.McpServerConfig) *mc
 	if err != nil {
 		return &mcpProbeResult{Stage: mcpProbeStageToolsList, Err: err.Error()}
 	}
-	return &mcpProbeResult{Stage: mcpProbeStageToolsList, ToolsCount: extractToolCount(resp.Result)}
+	count, names := extractToolInfo(resp.Result)
+	return &mcpProbeResult{Stage: mcpProbeStageToolsList, ToolsCount: count, ToolNames: names}
 }
 
 func callHTTPMCP(ctx context.Context, client *http.Client, endpoint, sessionID string, id int, method string, params any) (*mcpJSONRPCResponse, string, error) {
@@ -310,6 +312,24 @@ func extractSSEData(body []byte) []byte {
 		return body
 	}
 	return []byte(strings.Join(data, "\n"))
+}
+
+func extractToolInfo(raw json.RawMessage) (int, []string) {
+	var payload struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if json.Unmarshal(raw, &payload) == nil && payload.Tools != nil {
+		names := make([]string, 0, len(payload.Tools))
+		for _, t := range payload.Tools {
+			if t.Name != "" {
+				names = append(names, t.Name)
+			}
+		}
+		return len(payload.Tools), names
+	}
+	return 0, nil
 }
 
 func extractToolCount(raw json.RawMessage) int {

@@ -385,7 +385,7 @@ func TestDebugNestedSnapshotsRenderSubscreens(t *testing.T) {
 		{
 			name: "mcp add http",
 			args: []string{"debug", "snapshot", "mcp", "--state", "add-http", "--width", "120", "--height", "18"},
-			want: []string{"MCP Manager", "Create Server", "Transport", "http"},
+			want: []string{"MCP Manager", "Create MCP Server", "http"},
 		},
 		{
 			name: "skills transfer",

@@ -1,12 +1,12 @@
 package tui
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"spark/internal/config"
 )
 
@@ -19,357 +19,364 @@ func TestValidateMCPServerConfigRequiresTransport(t *testing.T) {
 		t.Fatalf("expected missing transport detail, got %q", status.Detail)
 	}
 	if !strings.Contains(strings.Join(status.Suggestions, "\n"), "command") {
-		t.Fatalf("expected command suggestion, got %v", status.Suggestions)
+		t.Fatalf("expected suggestions to mention command, got %v", status.Suggestions)
 	}
 }
 
-func TestSummarizeMCPStatusStdioProbeSuccessIsConfigured(t *testing.T) {
-	cfg := &config.McpServerConfig{Command: "npx", Args: []string{"-y", "server"}, Enabled: true}
-	status := summarizeMCPStatus("docs", cfg, &mcpProbeResult{Stage: mcpProbeStageToolsList})
-	if status.Kind != mcpStatusConfigured {
-		t.Fatalf("expected configured, got %v", status.Kind)
+func TestDiagnoseMCPFailureExplainsMissingBinary(t *testing.T) {
+	server := &config.McpServerConfig{Command: "npx-missing", Enabled: true}
+	probe := &mcpProbeResult{
+		Stage: mcpProbeStageSpawn,
+		Err:   `exec: "npx-missing": executable file not found in $PATH`,
 	}
-}
-
-func TestSummarizeMCPStatusHTTPProbeSuccessIsReachable(t *testing.T) {
-	cfg := &config.McpServerConfig{URL: "https://example.com/mcp", Enabled: true}
-	status := summarizeMCPStatus("remote", cfg, &mcpProbeResult{Stage: mcpProbeStageToolsList})
-	if status.Kind != mcpStatusReachable {
-		t.Fatalf("expected reachable, got %v", status.Kind)
+	sugs := diagnoseMCPFailure(server, probe)
+	if len(sugs) == 0 {
+		t.Fatal("expected suggestions for missing executable")
 	}
-}
-
-func TestSummarizeMCPStatusProbeFailureIncludesFixes(t *testing.T) {
-	cfg := &config.McpServerConfig{Command: "missing-binary", Enabled: true}
-	status := summarizeMCPStatus("broken", cfg, &mcpProbeResult{Stage: mcpProbeStageSpawn, Err: "executable file not found in $PATH"})
-	if status.Kind != mcpStatusBroken {
-		t.Fatalf("expected broken, got %v", status.Kind)
-	}
-	if !strings.Contains(status.Detail, "spawn") {
-		t.Fatalf("expected stage in detail, got %q", status.Detail)
-	}
-	if !strings.Contains(strings.Join(status.Suggestions, "\n"), "PATH") {
-		t.Fatalf("expected PATH suggestion, got %v", status.Suggestions)
+	if !strings.Contains(sugs[0], "not found in PATH") {
+		t.Fatalf("expected PATH suggestion, got %q", sugs[0])
 	}
 }
 
 func TestMCPManagerProbeResultUpdatesSelectionStatus(t *testing.T) {
-	cfg := &config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"docs": {Command: "npx", Enabled: true},
-	}}
-	m := newMCPManagerModel(cfg)
-	m.selectByName("docs")
-	_, _ = m.Update(mcpProbeFinishedMsg{Name: "docs", Result: &mcpProbeResult{Stage: mcpProbeStageToolsList}})
+	m := newMCPManagerModel(&config.RootConfig{
+		McpServers: map[string]*config.McpServerConfig{
+			"docs": {Command: "npx", Enabled: true},
+		},
+	})
+
+	now := time.Now()
+	updated, _ := m.Update(mcpProbeFinishedMsg{
+		Name: "docs",
+		Result: &mcpProbeResult{
+			Stage:      mcpProbeStageToolsList,
+			ToolsCount: 2,
+			ToolNames:  []string{"read_doc", "search_doc"},
+			Latency:    120 * time.Millisecond,
+			ProbedAt:   now,
+		},
+	})
+	m = updated.(*mcpManagerModel)
+
 	status := m.currentStatus()
-	if status.Kind != mcpStatusConfigured {
-		t.Fatalf("expected configured, got %v", status.Kind)
+	if status.Kind != mcpStatusReachable {
+		t.Fatalf("expected reachable status, got %v", status.Kind)
+	}
+	if !strings.Contains(status.Headline, "ok (2 tools)") {
+		t.Fatalf("expected tools count in headline, got %q", status.Headline)
 	}
 }
 
-func TestMCPManagerBrowseFocusStartsInQuickAddWhenEmpty(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	if m.browseFocus != mcpBrowseFocusQuickAdd {
-		t.Fatalf("expected quick add focus, got %v", m.browseFocus)
+func TestMCPManagerHeaderSummaryCounts(t *testing.T) {
+	cfg := &config.RootConfig{
+		McpServers: map[string]*config.McpServerConfig{
+			"healthy-server":  {Command: "npx", Enabled: true},
+			"disabled-server": {Command: "node", Enabled: false},
+			"broken-server":   {Command: "broken", Enabled: true},
+			"unknown-server":  {Command: "unknown", Enabled: true},
+		},
 	}
-	if len(m.quickAddItems) != 2 {
-		t.Fatalf("expected 2 action items, got %d", len(m.quickAddItems))
-	}
-	if got := m.quickAddItems[0].Label; got != "Add" {
-		t.Fatalf("expected first action to be Add, got %q", got)
-	}
-	if got := m.quickAddItems[1].Label; got != "Transfer" {
-		t.Fatalf("expected second action to be Transfer, got %q", got)
-	}
-}
+	m := newMCPManagerModel(cfg)
+	m.width = 140
+	m.probes["healthy-server"] = &mcpProbeResult{ToolsCount: 3}
+	m.probes["broken-server"] = &mcpProbeResult{Err: "executable not found"}
 
-func TestMCPManagerBrowseFocusStartsInServersWhenConfigured(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"docs": {Command: "npx", Enabled: true},
-	}})
-	if m.browseFocus != mcpBrowseFocusServers {
-		t.Fatalf("expected server list focus, got %v", m.browseFocus)
+	summary := m.renderHeaderSummary()
+	if !strings.Contains(summary, "4 servers") {
+		t.Fatalf("expected 4 servers in summary, got %q", summary)
 	}
-}
-
-func TestMCPManagerBrowseFocusCyclesWithTab(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"docs": {Command: "npx", Enabled: true},
-	}})
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.browseFocus != mcpBrowseFocusActions {
-		t.Fatalf("expected actions focus after tab, got %v", m.browseFocus)
+	if !strings.Contains(summary, "1 healthy") {
+		t.Fatalf("expected 1 healthy, got %q", summary)
 	}
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.browseFocus != mcpBrowseFocusQuickAdd {
-		t.Fatalf("expected quick-add focus after second tab, got %v", m.browseFocus)
+	if !strings.Contains(summary, "1 error") {
+		t.Fatalf("expected 1 error, got %q", summary)
 	}
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if m.browseFocus != mcpBrowseFocusActions {
-		t.Fatalf("expected actions focus after shift+tab, got %v", m.browseFocus)
+	if !strings.Contains(summary, "1 disabled") {
+		t.Fatalf("expected 1 disabled, got %q", summary)
+	}
+	if !strings.Contains(summary, "1 unknown") {
+		t.Fatalf("expected 1 unknown, got %q", summary)
 	}
 }
 
-func TestMCPManagerQuickAddEnterStartsEditor(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-
-	if !m.editing || !m.adding {
-		t.Fatalf("expected add editor to open, editing=%t adding=%t", m.editing, m.adding)
+func TestMCPManagerErrorFirstPrioritySorting(t *testing.T) {
+	cfg := &config.RootConfig{
+		McpServers: map[string]*config.McpServerConfig{
+			"aaa-healthy":  {Command: "npx", Enabled: true},
+			"bbb-disabled": {Command: "node", Enabled: false},
+			"ccc-error":    {Command: "bad", Enabled: true},
+			"ddd-unknown":  {Command: "wait", Enabled: true},
+		},
 	}
-	if got := m.editFields[mcpEditFieldTransport].value; got != "stdio" {
-		t.Fatalf("expected stdio transport from first quick add item, got %q", got)
-	}
-}
+	m := newMCPManagerModel(cfg)
+	m.probes["aaa-healthy"] = &mcpProbeResult{ToolsCount: 1}
+	m.probes["ccc-error"] = &mcpProbeResult{Err: "crash"}
 
-func TestMCPManagerRenderQuickAddSection(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
+	m.refreshNames()
 
-	left := m.renderServerList(0)
-
-	for _, want := range []string{"MCP Servers", "Add", "Transfer", "Current"} {
-		if !strings.Contains(left, want) {
-			t.Fatalf("expected left pane to contain %q, got %q", want, left)
-		}
+	if len(m.names) != 4 {
+		t.Fatalf("expected 4 names, got %d", len(m.names))
 	}
-	for _, unwanted := range []string{"Quick Add", "Create MCP Server", "Global MCP operations", "Your Servers"} {
-		if strings.Contains(left, unwanted) {
-			t.Fatalf("expected left pane to omit %q, got %q", unwanted, left)
-		}
+	if m.names[0] != "ccc-error" {
+		t.Fatalf("expected ccc-error to be first (priority 0), got %q", m.names[0])
 	}
-	if strings.Contains(left, "Load missing servers from Codex") {
-		t.Fatalf("expected compact action copy to avoid the old long description, got %q", left)
+	if m.names[1] != "ddd-unknown" {
+		t.Fatalf("expected ddd-unknown to be second (priority 1), got %q", m.names[1])
 	}
-	if got := strings.Count(left, "[T] Transfer"); got != 1 {
-		t.Fatalf("expected transfer button to appear once, got count %d in %q", got, left)
+	if m.names[2] != "aaa-healthy" {
+		t.Fatalf("expected aaa-healthy to be third (priority 2), got %q", m.names[2])
+	}
+	if m.names[3] != "bbb-disabled" {
+		t.Fatalf("expected bbb-disabled to be last (priority 4), got %q", m.names[3])
 	}
 }
 
-func TestMCPManagerRenderServerRowIncludesTransportAndSelectionMarker(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"docs": {Command: "npx", Enabled: true},
-	}})
-	m.selected = 0
-	m.browseFocus = mcpBrowseFocusServers
+func TestMCPManagerSearchFiltering(t *testing.T) {
+	cfg := &config.RootConfig{
+		McpServers: map[string]*config.McpServerConfig{
+			"alpha-node":   {Command: "npx", Enabled: true},
+			"beta-python":  {Command: "python3", Enabled: true},
+			"gamma-remote": {URL: "https://example.com", Enabled: true},
+		},
+	}
+	m := newMCPManagerModel(cfg)
+	m.searchQuery = "python"
+	m.refreshFiltered()
 
-	left := m.renderServerList(0)
+	if len(m.filtered) != 1 || m.filtered[0] != "beta-python" {
+		t.Fatalf("expected only beta-python, got %v", m.filtered)
+	}
 
-	for _, want := range []string{"docs", "stdio", "➤"} {
-		if !strings.Contains(left, want) {
-			t.Fatalf("expected left pane to contain %q, got %q", want, left)
-		}
+	m.searchQuery = "example.com"
+	m.refreshFiltered()
+	if len(m.filtered) != 1 || m.filtered[0] != "gamma-remote" {
+		t.Fatalf("expected gamma-remote by url, got %v", m.filtered)
 	}
 }
 
-func TestMCPManagerQuickAddRowsUseWiderPaneWidth(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
+func TestMCPManagerFilterCycle(t *testing.T) {
+	cfg := &config.RootConfig{
+		McpServers: map[string]*config.McpServerConfig{
+			"healthy-server": {Command: "npx", Enabled: true},
+			"broken-server":  {Command: "bad", Enabled: true},
+			"remote-server":  {URL: "https://remote.com", Enabled: true},
+		},
+	}
+	m := newMCPManagerModel(cfg)
+	m.probes["healthy-server"] = &mcpProbeResult{ToolsCount: 1}
+	m.probes["broken-server"] = &mcpProbeResult{Err: "fail"}
 
-	row := m.renderQuickAddItem(0, m.quickAddItems[0])
+	m.filterOption = mcpFilterError
+	m.refreshFiltered()
+	if len(m.filtered) != 1 || m.filtered[0] != "broken-server" {
+		t.Fatalf("expected only broken-server for error filter, got %v", m.filtered)
+	}
 
-	if got := lipgloss.Width(row); got < 28 {
-		t.Fatalf("expected quick-add row to fit the compact left pane, got %d in %q", got, row)
+	m.filterOption = mcpFilterHTTP
+	m.refreshFiltered()
+	if len(m.filtered) != 1 || m.filtered[0] != "remote-server" {
+		t.Fatalf("expected only remote-server for HTTP filter, got %v", m.filtered)
+	}
+}
+
+func TestMCPManagerRenderServerRowSingleLineFormat(t *testing.T) {
+	cfg := &config.RootConfig{
+		McpServers: map[string]*config.McpServerConfig{
+			"deepwiki": {URL: "https://mcp.deepwiki.com/mcp", Enabled: true},
+		},
+	}
+	m := newMCPManagerModel(cfg)
+	rendered := m.renderServerRow(0, "deepwiki", 40)
+
+	if strings.Contains(rendered, "\n") {
+		t.Fatalf("expected single line row render, got multi-line: %q", rendered)
+	}
+	if !strings.Contains(rendered, "deepwiki") || !strings.Contains(strings.ToLower(rendered), "http") || !strings.Contains(strings.ToLower(rendered), "on") {
+		t.Fatalf("expected formatted server row, got %q", rendered)
 	}
 }
 
 func TestMCPManagerRenderEmptyState(t *testing.T) {
 	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
+	view := m.renderEmptyState()
 
-	right := m.renderDetails()
-
-	for _, want := range []string{"No MCP servers yet", "Create MCP Server", "choose transport in the editor"} {
-		if !strings.Contains(right, want) {
-			t.Fatalf("expected empty state to contain %q, got %q", want, right)
-		}
+	if !strings.Contains(view, "No MCP servers configured") {
+		t.Fatalf("expected empty state message, got %q", view)
+	}
+	if !strings.Contains(view, "Click [Add]") {
+		t.Fatalf("expected quick start hints, got %q", view)
 	}
 }
 
-func TestMCPManagerQuickAddShortcutOpensUnifiedCreateFlow(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
-
-	if !m.editing || !m.adding {
-		t.Fatalf("expected add editor to open, editing=%t adding=%t", m.editing, m.adding)
-	}
-	if got := m.editFields[mcpEditFieldTransport].value; got != "stdio" {
-		t.Fatalf("expected unified create flow to default transport to stdio, got %q", got)
-	}
-}
-
-func TestMCPManagerQuickAddTransferEnterOpensTransferMenu(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-
-	m.quickAddIndex = 1
-	cmd := m.activateFocusedItem()
-	if cmd != nil {
-		t.Fatal("expected transfer menu open without immediate command execution")
-	}
-	if !m.transferring {
-		t.Fatal("expected transfer menu to be active")
-	}
-	if len(m.transferItems) != 4 {
-		t.Fatalf("expected 4 transfer items, got %d", len(m.transferItems))
-	}
-}
-
-func TestMCPManagerRenderOverviewIncludesProbeMetadata(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"docs": {Command: "npx", Args: []string{"-y", "@mcp/server"}, Enabled: true},
-	}})
-	now := time.Date(2026, 4, 9, 12, 0, 0, 0, time.UTC)
-	m.probes["docs"] = &mcpProbeResult{Stage: mcpProbeStageToolsList, ToolsCount: 3, Latency: 1500 * time.Millisecond, ProbedAt: now}
-
-	right := m.renderDetails()
-
-	for _, want := range []string{"Config · docs", "Transport", "stdio", "Args", "2 configured", "Tools detected", "3", now.Format(time.RFC3339)} {
-		if !strings.Contains(right, want) {
-			t.Fatalf("expected overview to contain %q, got %q", want, right)
-		}
-	}
-}
-
-func TestMCPManagerRenderDiagnosticsConclusionFirst(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"broken": {Command: "missing-binary", Enabled: true},
-	}})
-	m.probes["broken"] = &mcpProbeResult{Stage: mcpProbeStageSpawn, Err: "executable file not found in $PATH"}
-
-	right := m.renderDetails()
-
-	for _, want := range []string{"Current State:", "Why:", "Next Action:", "Failure Stage: spawn"} {
-		if !strings.Contains(right, want) {
-			t.Fatalf("expected diagnostics to contain %q, got %q", want, right)
-		}
-	}
-}
-
-func TestMCPManagerDisabledStatusExplainsIntent(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"docs": {Command: "npx", Enabled: false, DisabledReason: "disabled by spark"},
-	}})
-
-	right := m.renderDetails()
-
-	if !strings.Contains(right, "Disabled reason") || !strings.Contains(right, "disabled by spark") {
-		t.Fatalf("expected disabled reason in details, got %q", right)
-	}
-}
-
-func TestMCPManagerRenderActionsAndStatusBarContext(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"docs": {Command: "npx", Enabled: true},
-	}})
+func TestMCPManagerDirectKeyActionsAndStatusBarContext(t *testing.T) {
+	m := newMCPManagerModel(&config.RootConfig{
+		McpServers: map[string]*config.McpServerConfig{
+			"docs": {Command: "npx", Enabled: true},
+		},
+	})
 	m.width = 120
+	m.height = 30
+	_ = m.View()
 
-	right := m.renderDetails()
-	for _, want := range []string{"Actions", "Probe", "Edit", "Disable", "Delete", "Transfer", "Status", "Help", "No recent activity"} {
-		if !strings.Contains(right, want) {
-			t.Fatalf("expected details to contain %q, got %q", want, right)
-		}
+	// 1. Toggle with Space
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	if m.cfg.McpServers["docs"].Enabled {
+		t.Fatal("expected docs server to be toggled off")
 	}
 
-	if got := m.contextHelpText(); !strings.Contains(got, "Tab Actions") {
-		t.Fatalf("expected server-list help text, got %q", got)
+	// 2. Open Add Modal via Mouse Click on Add button
+	addBtnY := m.leftContentY + m.leftButtonsRelY
+	m.Update(tea.MouseMsg{
+		Type: tea.MouseRelease,
+		X:    m.leftContentX + 2,
+		Y:    addBtnY,
+	})
+	if m.modalKind != mcpModalAdd {
+		t.Fatalf("expected add modal kind, got %v", m.modalKind)
 	}
 
-	m.browseFocus = mcpBrowseFocusActions
-	if got := m.contextHelpText(); !strings.Contains(got, "Enter Run") {
-		t.Fatalf("expected actions help text, got %q", got)
+	// 3. Close Modal with Esc
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.modalKind != mcpModalNone {
+		t.Fatalf("expected modal closed, got %v", m.modalKind)
 	}
 
-	m.startEditCurrent()
-	if got := m.contextHelpText(); !strings.Contains(got, "F2 Save") {
-		t.Fatalf("expected edit help text, got %q", got)
+	// 4. Tab rotates focus to fields
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.focusArea != mcpFocusFields {
+		t.Fatalf("expected focus on fields, got %v", m.focusArea)
 	}
 }
 
 func TestMCPManagerTransferMenuRendersClaudeAndCodexOptions(t *testing.T) {
 	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.openTransferMenu()
+	m.width = 120
+	m.openTransferModal()
 
-	right := m.renderDetails()
+	modalView := m.renderTransferModal()
 
 	for _, want := range []string{
 		"Transfer MCP Servers",
+		"Paste JSON / YAML / TOML",
 		"Import from Codex",
 		"Import from Claude",
 		"Export to Codex",
 		"Export to Claude",
 	} {
-		if !strings.Contains(right, want) {
-			t.Fatalf("expected transfer panel to contain %q, got %q", want, right)
+		if !strings.Contains(modalView, want) {
+			t.Fatalf("expected transfer panel to contain %q, got %q", want, modalView)
 		}
 	}
 }
 
-func TestMCPManagerStatusBarStylesSuccessAndErrorStates(t *testing.T) {
+func TestMCPManagerImportJSONYAMLAndTOMLModal(t *testing.T) {
+	// 1. Test JSON with mcpServers wrapper
+	jsonSnippet := `{"mcpServers": {"sqlite-node": {"command": "npx", "args": ["-y", "@mcp/server-sqlite"]}}}`
+	servers, err := parseMultipleMCPServersRaw(jsonSnippet, "test")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(servers) != 1 || servers["sqlite-node"] == nil {
+		t.Fatalf("expected parsed sqlite-node, got %v", servers)
+	}
+	if servers["sqlite-node"].Command != "npx" {
+		t.Fatalf("expected command npx, got %q", servers["sqlite-node"].Command)
+	}
+
+	// 2. Test YAML direct multi-server snippet
+	yamlSnippet := `
+figma:
+  url: "https://mcp.figma.com/mcp"
+  enabled: true
+git-tools:
+  command: "npx"
+  args: ["-y", "git-mcp"]
+`
+	serversYaml, err := parseMultipleMCPServersRaw(yamlSnippet, "test")
+	if err != nil {
+		t.Fatalf("unexpected yaml parse error: %v", err)
+	}
+	if len(serversYaml) != 2 {
+		t.Fatalf("expected 2 parsed servers, got %d", len(serversYaml))
+	}
+	if serversYaml["figma"].URL != "https://mcp.figma.com/mcp" {
+		t.Fatalf("expected figma URL, got %q", serversYaml["figma"].URL)
+	}
+
+	// 3. Test TOML format (Codex config format: [mcp_servers.name] and [mcpServers.name])
+	tomlSnippet := `
+[mcp_servers.context-mode]
+command = "uvx"
+args = ["context-mode-mcp"]
+enabled = true
+
+[mcp_servers.remote-sse]
+url = "https://mcp.example.com/sse"
+enabled = true
+`
+	serversToml, err := parseMultipleMCPServersRaw(tomlSnippet, "test")
+	if err != nil {
+		t.Fatalf("unexpected toml parse error: %v", err)
+	}
+	if len(serversToml) != 2 {
+		t.Fatalf("expected 2 parsed servers from TOML, got %d (%v)", len(serversToml), serversToml)
+	}
+	if serversToml["context-mode"].Command != "uvx" {
+		t.Fatalf("expected context-mode command uvx, got %q", serversToml["context-mode"].Command)
+	}
+	if serversToml["remote-sse"].URL != "https://mcp.example.com/sse" {
+		t.Fatalf("expected remote-sse url, got %q", serversToml["remote-sse"].URL)
+	}
+
+	// 4. Test Mouse Click opening Import Modal
 	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.width = 120
-
-	m.status = "✓ Imported 2 MCP server(s) from Claude."
-	if got := m.renderStatusBar(); !strings.Contains(got, "✓ Imported 2 MCP server(s) from Claude.") {
-		t.Fatalf("expected success status in status bar, got %q", got)
+	m.width = 100
+	m.height = 30
+	_ = m.View()
+	importBtnY := m.leftContentY + m.leftButtonsRelY
+	m.Update(tea.MouseMsg{
+		Type: tea.MouseRelease,
+		X:    m.leftContentX + m.leftAddBtnW + 2,
+		Y:    importBtnY,
+	})
+	if m.modalKind != mcpModalImport {
+		t.Fatalf("expected screen to be import modal, got %v", m.modalKind)
+	}
+	modalView := m.renderImportModal()
+	if !strings.Contains(modalView, "Import MCP Servers") || !strings.Contains(modalView, "Import") || !strings.Contains(modalView, "Open in Editor") {
+		t.Fatalf("expected import modal view, got %q", modalView)
 	}
 
-	m.status = "✗ Failed to sync MCP servers to Claude."
-	if got := m.renderStatusBar(); !strings.Contains(got, "✗ Failed to sync MCP servers to Claude.") {
-		t.Fatalf("expected error status in status bar, got %q", got)
+	// 5. Test File Path Import parsing
+	tmpFile, err := os.CreateTemp("", "spark-mcp-test-*.toml")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
 	}
-}
+	defer os.Remove(tmpFile.Name())
+	_, _ = tmpFile.WriteString(tomlSnippet)
+	_ = tmpFile.Close()
 
-func TestMCPManagerEditorFlowPreservesBrowseUntilExplicitEdit(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"docs": {Command: "npx", Enabled: true},
-	}})
-
-	if m.editing {
-		t.Fatal("expected browse mode by default")
+	serversFromFile, err := parseMultipleMCPServersRaw(tmpFile.Name(), "test")
+	if err != nil {
+		t.Fatalf("failed to parse servers from file path: %v", err)
 	}
-
-	right := m.renderDetails()
-	if !strings.Contains(right, "Config · docs") {
-		t.Fatalf("expected overview in browse mode, got %q", right)
-	}
-
-	m.startEditCurrent()
-	editor := m.renderDetails()
-	for _, want := range []string{"Edit Server: docs", "Actions", "[F2] Save", "[F5] Save & Probe", "Help"} {
-		if !strings.Contains(editor, want) {
-			t.Fatalf("expected editor to contain %q, got %q", want, editor)
-		}
-	}
-}
-
-func TestMCPManagerStartAddEditorDefaultsToForm(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	if !m.editing {
-		t.Fatal("expected editing mode")
-	}
-	if m.editorMode != mcpEditorModeForm {
-		t.Fatalf("expected form mode, got %v", m.editorMode)
-	}
-	if got := m.editFields[mcpEditFieldTransport].value; got != "stdio" {
-		t.Fatalf("expected stdio transport, got %q", got)
+	if len(serversFromFile) != 2 || serversFromFile["context-mode"] == nil {
+		t.Fatalf("expected parsed servers from file path, got %v", serversFromFile)
 	}
 }
 
 func TestMCPManagerSaveFormCreatesServer(t *testing.T) {
 	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFields[mcpEditFieldName].value = "git-tools"
-	m.editFields[mcpEditFieldCommand].value = "npx"
-	m.editFields[mcpEditFieldArgs].value = "-y\n@mcp/sqlite-server"
-	m.editFields[mcpEditFieldEnv].value = "DB_PATH=/tmp/data.db"
+	m.draftFields = newMCPFormFields("git-tools", &config.McpServerConfig{
+		Command: "npx",
+		Args:    []string{"-y", "@mcp/sqlite-server"},
+		Env:     map[string]string{"DB_PATH": "/tmp/data.db"},
+		Enabled: true,
+	})
 
-	cfg, name, err := m.buildEditedServerConfig()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	server := cfg.GetMcpServer(name)
+	m.saveDraft(false)
+
+	server := m.cfg.GetMcpServer("git-tools")
 	if server == nil {
 		t.Fatal("expected saved server")
 	}
@@ -384,275 +391,133 @@ func TestMCPManagerSaveFormCreatesServer(t *testing.T) {
 	}
 }
 
-func TestMCPManagerSaveRawYAMLUpdatesServer(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{
-		"git-tools": {Command: "old", Enabled: true},
-	}})
-	m.startEditCurrent()
-	m.editorMode = mcpEditorModeRaw
-	m.rawEditor = "command: npx\nargs:\n  - -y\n  - '@mcp/sqlite-server'\nenabled: true\nenv:\n  DB_PATH: /var/lib/data.db\n"
-
-	cfg, name, err := m.buildEditedServerConfig()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestMCPManagerComponentViewRendering(t *testing.T) {
+	cfg := &config.RootConfig{
+		McpServers: map[string]*config.McpServerConfig{
+			"deepwiki": {
+				URL:     "https://mcp.deepwiki.com/mcp",
+				Enabled: true,
+			},
+			"augment-context": {
+				Command: "npx",
+				Enabled: false,
+			},
+			"context-mode": {
+				Command: "npx",
+				Enabled: false,
+			},
+			"figma": {
+				URL:     "https://figma.com/mcp",
+				Enabled: false,
+			},
+			"n8n": {
+				Command: "npx",
+				Enabled: false,
+			},
+		},
 	}
-	server := cfg.GetMcpServer(name)
-	if server == nil {
-		t.Fatal("expected saved server")
-	}
-	if server.Command != "npx" {
-		t.Fatalf("expected command npx, got %q", server.Command)
-	}
-	if len(server.Args) != 2 {
-		t.Fatalf("unexpected args: %v", server.Args)
-	}
-	if server.Env["DB_PATH"] != "/var/lib/data.db" {
-		t.Fatalf("unexpected env: %v", server.Env)
-	}
-}
+	m := newMCPManagerModel(cfg)
+	m.width = 110
+	m.height = 28
 
-func TestMCPManagerSelectFieldIgnoresFreeText(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFocus = mcpEditFieldTransport
+	view := m.View()
+	t.Log("\n" + view)
 
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-
-	if got := m.editFields[mcpEditFieldTransport].value; got != "stdio" {
-		t.Fatalf("expected transport select to ignore free text, got %q", got)
+	// 1. Verify headers & sections
+	if !strings.Contains(view, "MCP Manager") {
+		t.Fatalf("expected header title, got: %s", view)
 	}
-}
-
-func TestMCPManagerSelectFieldCyclesWithArrowKeys(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFocus = mcpEditFieldTransport
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if got := m.editFields[mcpEditFieldTransport].value; got != "sse" {
-		t.Fatalf("expected transport to cycle right to sse, got %q", got)
+	if !strings.Contains(view, "Configuration") {
+		t.Fatalf("expected section header 'Configuration', got: %s", view)
+	}
+	if !strings.Contains(view, "Actions") {
+		t.Fatalf("expected section header 'Actions', got: %s", view)
+	}
+	if !strings.Contains(view, "Diagnostics") {
+		t.Fatalf("expected section header 'Diagnostics', got: %s", view)
 	}
 
-	m.editFocus = mcpEditFieldEnabled
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if got := m.editFields[mcpEditFieldEnabled].value; got != "false" {
-		t.Fatalf("expected enabled to toggle right to false, got %q", got)
+	// 2. Verify left pane bottom buttons
+	if !strings.Contains(view, "Add") || !strings.Contains(view, "Import") {
+		t.Fatalf("expected clean left pane buttons, got: %s", view)
 	}
-}
-
-func TestMCPManagerSelectFieldRendersSegmentedControl(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFocus = mcpEditFieldTransport
-
-	value := lipgloss.NewStyle().Render(m.renderEditorFieldValue(mcpEditFieldTransport, m.editFields[mcpEditFieldTransport], true))
-
-	for _, want := range []string{"stdio", "sse", "http"} {
-		if !strings.Contains(value, want) {
-			t.Fatalf("expected select rendering to contain %q, got %q", want, value)
-		}
-	}
-	if strings.Contains(value, "[stdio]") {
-		t.Fatalf("expected segmented select rendering to avoid bracket marker, got %q", value)
-	}
-}
-
-func TestMCPManagerTabMovesFieldsWhileArrowKeysMoveTextCursor(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFocus = mcpEditFieldName
-	m.editFields[mcpEditFieldName].value = "figma"
-	m.editCursor[mcpEditFieldName] = len([]rune("figma"))
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
-
-	if got := m.editFields[mcpEditFieldName].value; got != "figXma" {
-		t.Fatalf("expected insert at cursor, got %q", got)
-	}
-	if m.editFocus != mcpEditFieldName {
-		t.Fatalf("expected left/right not to change focus, got %d", m.editFocus)
+	if !strings.Contains(view, "Transfer") || !strings.Contains(view, "Refresh") {
+		t.Fatalf("expected clean left pane transfer/refresh buttons, got: %s", view)
 	}
 
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.editFocus != mcpEditFieldTransport {
-		t.Fatalf("expected tab to move focus, got %d", m.editFocus)
-	}
-}
-
-func TestMCPManagerTextFieldsKeepModeShortcutLetters(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFocus = mcpEditFieldName
-	m.editFields[mcpEditFieldName].value = ""
-	m.editCursor[mcpEditFieldName] = 0
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-
-	if got := m.editFields[mcpEditFieldName].value; got != "fr" {
-		t.Fatalf("expected text field to keep mode shortcut letters, got %q", got)
-	}
-	if m.editorMode != mcpEditorModeForm {
-		t.Fatalf("expected editor to stay in form mode, got %d", m.editorMode)
-	}
-}
-
-func TestMCPManagerTextFieldSupportsDeleteAndHomeEnd(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFocus = mcpEditFieldName
-	m.editFields[mcpEditFieldName].value = "figma"
-	m.editCursor[mcpEditFieldName] = len([]rune("figma"))
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyDelete})
-	if got := m.editFields[mcpEditFieldName].value; got != "igma" {
-		t.Fatalf("expected delete at cursor to remove first rune, got %q", got)
+	// 3. Verify segmented pills rendering
+	if !strings.Contains(view, "http") || !strings.Contains(view, "stdio") {
+		t.Fatalf("expected transport options, got: %s", view)
 	}
 
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	if got := m.editFields[mcpEditFieldName].value; got != "igm" {
-		t.Fatalf("expected backspace before cursor to remove last rune, got %q", got)
-	}
-}
+	// 4. Test field navigation and textinput typing
+	m.focusArea = mcpFocusFields
+	m.focusField = 0 // Name field
+	m.updateFocus()
 
-func TestMCPManagerMultilineFieldSupportsVerticalCursorMovement(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFocus = mcpEditFieldArgs
-	m.editFields[mcpEditFieldArgs].value = "abc\ndefg"
-	m.editCursor[mcpEditFieldArgs] = len([]rune("abc\ndefg"))
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
-
-	if got := m.editFields[mcpEditFieldArgs].value; got != "abcX\ndefg" {
-		t.Fatalf("expected up to move cursor to prior line before insert, got %q", got)
-	}
-}
-
-func TestMCPManagerRawEditorSupportsCursorMovement(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editorMode = mcpEditorModeRaw
-	m.rawEditor = "abc\ndef"
-	m.rawCursor = len([]rune("abc\ndef"))
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
-
-	if got := m.rawEditor; got != "abcX\ndef" {
-		t.Fatalf("expected raw editor insertion at moved cursor, got %q", got)
-	}
-}
-
-func TestMCPManagerOnlyFocusedFieldRendersCursor(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFields[mcpEditFieldName].value = "demo"
-	m.editFields[mcpEditFieldCommand].value = "auggie"
-	m.editCursor[mcpEditFieldName] = 2
-	m.editCursor[mcpEditFieldCommand] = 3
-	m.editFocus = mcpEditFieldName
-
-	view := m.renderDetails()
-
-	if !strings.Contains(view, "de|mo") {
-		t.Fatalf("expected focused field to render cursor, got %q", view)
-	}
-	if strings.Contains(view, "aug|gie") {
-		t.Fatalf("expected unfocused field to omit cursor, got %q", view)
-	}
-}
-
-func TestMCPManagerSwitchFormToRawSyncsCurrentFields(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editFields[mcpEditFieldName].value = "git-tools"
-	m.editFields[mcpEditFieldCommand].value = "npx"
-	m.editFields[mcpEditFieldArgs].value = "-y\n@mcp/sqlite-server"
-
-	m.switchEditorMode(mcpEditorModeRaw)
-
-	if m.editorMode != mcpEditorModeRaw {
-		t.Fatalf("expected raw mode, got %v", m.editorMode)
-	}
-	if !strings.Contains(m.rawEditor, "git-tools:") {
-		t.Fatalf("expected raw editor to include server name, got %q", m.rawEditor)
-	}
-	if !strings.Contains(m.rawEditor, `command: "npx"`) {
-		t.Fatalf("expected raw editor to include command, got %q", m.rawEditor)
-	}
-}
-
-func TestMCPManagerSwitchRawToFormParsesRawEditor(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-	m.editorMode = mcpEditorModeRaw
-	m.rawEditor = "git-tools:\n  url: \"https://example.com/mcp\"\n  enabled: false\n"
-
-	m.switchEditorMode(mcpEditorModeForm)
-
-	if m.editorMode != mcpEditorModeForm {
-		t.Fatalf("expected form mode, got %v", m.editorMode)
-	}
-	if got := m.editFields[mcpEditFieldName].value; got != "git-tools" {
-		t.Fatalf("expected parsed name, got %q", got)
-	}
-	if got := m.editFields[mcpEditFieldTransport].value; got != "http" {
-		t.Fatalf("expected parsed transport http, got %q", got)
-	}
-	if got := m.editFields[mcpEditFieldEnabled].value; got != "false" {
-		t.Fatalf("expected parsed enabled false, got %q", got)
-	}
-}
-
-func TestMCPManagerVisibleFieldsFollowTransport(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("stdio")
-
-	visible := m.visibleEditFieldIndices()
-	if !containsInt(visible, mcpEditFieldCommand) || !containsInt(visible, mcpEditFieldArgs) || !containsInt(visible, mcpEditFieldEnv) {
-		t.Fatalf("expected stdio fields visible, got %v", visible)
-	}
-	if containsInt(visible, mcpEditFieldURL) {
-		t.Fatalf("expected url hidden for stdio, got %v", visible)
+	// Type a character into name
+	m.handleFieldsKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("-v2")})
+	if !strings.Contains(m.draftFields[mcpFieldKeyName].Value, "-v2") {
+		t.Fatalf("expected updated draft value from textinput component, got %q", m.draftFields[mcpFieldKeyName].Value)
 	}
 
-	m.editFields[mcpEditFieldTransport].value = "http"
-	visible = m.visibleEditFieldIndices()
-	if !containsInt(visible, mcpEditFieldURL) {
-		t.Fatalf("expected url visible for http, got %v", visible)
-	}
-	if containsInt(visible, mcpEditFieldCommand) || containsInt(visible, mcpEditFieldArgs) || containsInt(visible, mcpEditFieldEnv) {
-		t.Fatalf("expected stdio-only fields hidden for http, got %v", visible)
-	}
-}
-
-func TestMCPManagerFieldNavigationSkipsHiddenFields(t *testing.T) {
-	m := newMCPManagerModel(&config.RootConfig{McpServers: map[string]*config.McpServerConfig{}})
-	m.startAddEditor("http")
-	m.editFocus = mcpEditFieldTransport
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.editFocus != mcpEditFieldEnabled {
-		t.Fatalf("expected focus to move to enabled, got %d", m.editFocus)
+	// 5. Test cycling select field (Transport)
+	m.focusField = 1 // Transport field
+	m.updateFocus()
+	origTransport := m.draftFields[mcpFieldKeyTransport].Value
+	m.handleFieldsKey(tea.KeyMsg{Type: tea.KeyRight})
+	if m.draftFields[mcpFieldKeyTransport].Value == origTransport {
+		t.Fatalf("expected transport to cycle from %q", origTransport)
 	}
 
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	if m.editFocus != mcpEditFieldURL {
-		t.Fatalf("expected focus to skip hidden stdio fields and move to url, got %d", m.editFocus)
+	// 6. Test Mouse Interactions (Profile-style)
+	// 6.1 Click on server row in left pane
+	firstRowY := m.leftContentY + m.leftVisibleRows[0]
+	m.Update(tea.MouseMsg{
+		Type: tea.MouseRelease,
+		X:    m.leftContentX + 3,
+		Y:    firstRowY,
+	})
+	if m.selected != 0 || m.focusArea != mcpFocusList {
+		t.Fatalf("expected left row click to select server 0 and focus list, got selected=%d focusArea=%d", m.selected, m.focusArea)
 	}
-}
 
-func containsInt(values []int, target int) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
+	// 6.2 Click on input field in right panel
+	nameFieldY := m.rightContentY + m.fieldStartRelY[0]
+	inputStartX := m.rightContentX + pmLabelWidth + 2
+	m.Update(tea.MouseMsg{
+		Type: tea.MouseRelease,
+		X:    inputStartX + 5,
+		Y:    nameFieldY,
+	})
+	if m.focusArea != mcpFocusFields || m.focusField != 0 {
+		t.Fatalf("expected click on field to focus fields and field 0, got focusArea=%d focusField=%d", m.focusArea, m.focusField)
 	}
-	return false
+
+	// 6.3 Click on segmented pill field (e.g. Transport field 1)
+	transportFieldY := m.rightContentY + m.fieldStartRelY[1]
+	oldTrans := m.draftFields[mcpFieldKeyTransport].Value
+	m.Update(tea.MouseMsg{
+		Type: tea.MouseRelease,
+		X:    inputStartX + 5,
+		Y:    transportFieldY,
+	})
+	if m.draftFields[mcpFieldKeyTransport].Value == oldTrans {
+		t.Fatalf("expected clicking segmented pill field to cycle value from %q", oldTrans)
+	}
+
+	// 6.4 Click outside modal to close modal
+	m.modalKind = mcpModalAdd
+	m.modalX = 20
+	m.modalY = 5
+	m.modalW = 50
+	m.modalH = 15
+	m.Update(tea.MouseMsg{
+		Type: tea.MouseRelease,
+		X:    0,
+		Y:    0,
+	})
+	if m.modalKind != mcpModalNone {
+		t.Fatalf("expected click outside modal to dismiss modal, got %v", m.modalKind)
+	}
 }

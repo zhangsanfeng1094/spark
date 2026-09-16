@@ -1,6 +1,8 @@
 package integrations
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/BurntSushi/toml"
+
+	"spark/internal/auth"
+	"spark/internal/compat/daemon"
 	compatproxy "spark/internal/compat/proxy"
 	"spark/internal/config"
 )
@@ -79,40 +85,200 @@ func (c *Codex) RunWithConfigAndPrompt(profile *config.Profile, integration *con
 	}
 	apiKey := profileKey(profile)
 	resolvedUpstreamKey, upstreamKeySource := resolveOpenAIAPIKey(apiKey)
-	quietCompatStderr := shouldQuietCompatStderr()
-
 	envBaseURL := baseURL
 	envKey := resolvedUpstreamKey
-
-	if proxyMode, useProxy := codexProxyModeForAPIType(apiType); useProxy {
-		proxy, err := compatproxy.StartResponsesProxy(baseURL, resolvedUpstreamKey, quietCompatStderr, proxyMode, model)
-		if err != nil {
-			return err
-		}
-		defer proxy.Close()
-		envBaseURL = proxy.BaseURL()
-		envKey = "spark-compat"
-		routeLine := fmt.Sprintf("[route] mode=compat proxy_mode=%s upstream=%s proxy=%s log=%s api_type=%s upstream_key_source=%s upstream_key_set=%t", proxyMode, baseURL, envBaseURL, proxy.LogPath(), apiType, upstreamKeySource, strings.TrimSpace(resolvedUpstreamKey) != "")
-		routeLogPath := appendLaunchRouteLog(routeLine)
-		if routeLogPath != "" {
-			routeLine = routeLine + " route_log=" + routeLogPath
-		}
-		fmt.Fprintln(os.Stderr, routeLine)
-		if !quietCompatStderr {
-			fmt.Fprintf(os.Stderr, "Using compatibility adapter: %s -> %s\n", envBaseURL, baseURL)
-			fmt.Fprintf(os.Stderr, "Compatibility adapter log file: %s\n", proxy.LogPath())
-		}
-	} else {
+	if os.Getenv("SPARK_DIRECT") == "1" {
 		routeLine := fmt.Sprintf("[route] mode=direct upstream=%s api_type=%s upstream_key_source=%s upstream_key_set=%t", baseURL, apiType, upstreamKeySource, strings.TrimSpace(resolvedUpstreamKey) != "")
 		routeLogPath := appendLaunchRouteLog(routeLine)
 		if routeLogPath != "" {
 			routeLine = routeLine + " route_log=" + routeLogPath
 		}
 		fmt.Fprintln(os.Stderr, routeLine)
+	} else {
+		dInfo, err := daemon.EnsureDaemon(context.Background(), nil)
+		if err != nil || dInfo == nil {
+			if err != nil {
+				return fmt.Errorf("start shared Spark daemon: %w", err)
+			}
+			return fmt.Errorf("start shared Spark daemon: no daemon information returned")
+		}
+		envBaseURL = dInfo.BaseURL + "/v1"
+		envKey = daemonProfileToken(profile)
+		routeLine := fmt.Sprintf("[route] mode=shared-daemon upstream=%s proxy=%s api_type=%s daemon_pid=%d", baseURL, envBaseURL, apiType, dInfo.PID)
+		if routeLogPath := appendLaunchRouteLog(routeLine); routeLogPath != "" {
+			routeLine += " route_log=" + routeLogPath
+		}
+		fmt.Fprintln(os.Stderr, routeLine)
+	}
+
+	// Launch in an isolated CODEX_HOME mirroring the real ~/.codex assets
+	// (skills, sessions, history, ...) via symlinks, and injecting Spark's
+	// provider and enabled MCP servers into launch config.toml.
+	launchHome, err := createLaunchTempDir("spark-codex-home-*")
+	if err != nil {
+		return fmt.Errorf("create codex launch home: %w", err)
+	}
+	realHome, _ := realCodexHome()
+	defer func() {
+		if realHome != "" {
+			syncCodexHookTrustBack(launchHome, realHome)
+		}
+		_ = os.RemoveAll(launchHome)
+	}()
+
+	if err := writeCodexLaunchHome(launchHome, profile, envBaseURL, envKey, integration, model); err != nil {
+		return err
 	}
 
 	cmdArgs := c.argsWithConfigAndPrompt(model, envBaseURL, integration, args, prompt)
-	return runCmd("codex", cmdArgs, codexEnv(profile, envKey))
+	env := append(codexEnv(profile, envKey), "CODEX_HOME="+launchHome)
+	return runCmd("codex", cmdArgs, env)
+}
+
+// writeCodexLaunchHome builds a launch-time CODEX_HOME that:
+//   - reuses the user's real ~/.codex assets (skills, sessions, history, …) via symlinks
+//   - never links auth.json / auth.json.lock
+//   - writes a config.toml cloned from the real one with spark provider and spark enabled MCP servers
+func writeCodexLaunchHome(launchHome string, profile *config.Profile, envBaseURL, envKey string, integration *config.IntegrationConfig, model string) error {
+	if err := os.MkdirAll(launchHome, 0o755); err != nil {
+		return err
+	}
+	realHome, err := realCodexHome()
+	if err != nil {
+		return err
+	}
+	if err := mirrorCodexHome(realHome, launchHome); err != nil {
+		return err
+	}
+	return writeCodexLaunchConfig(launchHome, realHome, profile, envBaseURL, envKey, integration, model)
+}
+
+func realCodexHome() (string, error) {
+	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" && !strings.Contains(home, "spark-codex-home") {
+		return home, nil
+	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(userHome, ".codex"), nil
+}
+
+func mirrorCodexHome(src, dst string) error {
+	return symlinkEntries(src, dst, shouldSkipCodexMirror)
+}
+
+func shouldSkipCodexMirror(name string) bool {
+	switch name {
+	case "config.toml", "auth.json", "auth.json.lock":
+		return true
+	}
+	return strings.HasPrefix(name, "auth.json")
+}
+
+func writeCodexLaunchConfig(launchHome, realHome string, profile *config.Profile, envBaseURL, envKey string, integration *config.IntegrationConfig, model string) error {
+	cfgPath := filepath.Join(launchHome, "config.toml")
+	root, err := config.LoadCodexConfigMap(filepath.Join(realHome, "config.toml"))
+	if err != nil {
+		return err
+	}
+	if root == nil {
+		root = map[string]any{}
+	}
+
+	providers, _ := root["model_providers"].(map[string]any)
+	if providers == nil {
+		providers = map[string]any{}
+	}
+	providers[codexProviderName] = map[string]any{
+		"name":                 "Spark",
+		"base_url":             envBaseURL,
+		"env_key":              "OPENAI_API_KEY",
+		"wire_api":             "responses",
+		"requires_openai_auth": false,
+	}
+	root["model_providers"] = providers
+	root["model_provider"] = codexProviderName
+
+	// Injects enabled MCP servers from Spark config into mcp_servers table
+	if sparkCfg, _ := config.Load(); sparkCfg != nil && len(sparkCfg.McpServers) > 0 {
+		mcpTable, _ := root["mcp_servers"].(map[string]any)
+		if mcpTable == nil {
+			mcpTable = map[string]any{}
+		}
+		for name, srv := range sparkCfg.McpServers {
+			if srv != nil && srv.Enabled {
+				mcpTable[name] = config.EncodeCodexServerMap(srv)
+			}
+		}
+		root["mcp_servers"] = mcpTable
+	}
+
+	// Adapt hook trust state from realHome to launchHome so Codex doesn't prompt for hook reviews on every launch.
+	if hooksSection, ok := root["hooks"].(map[string]any); ok {
+		if stateSection, ok := hooksSection["state"].(map[string]any); ok {
+			for k, v := range stateSection {
+				if strings.HasPrefix(k, realHome) {
+					launchKey := strings.Replace(k, realHome, launchHome, 1)
+					stateSection[launchKey] = v
+				}
+			}
+			hooksSection["state"] = stateSection
+			root["hooks"] = hooksSection
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(root); err != nil {
+		return err
+	}
+	return os.WriteFile(cfgPath, buf.Bytes(), 0o644)
+}
+
+func syncCodexHookTrustBack(launchHome, realHome string) {
+	launchCfg, err := config.LoadCodexConfigMap(filepath.Join(launchHome, "config.toml"))
+	if err != nil || launchCfg == nil {
+		return
+	}
+	launchHooks, ok := launchCfg["hooks"].(map[string]any)
+	if !ok {
+		return
+	}
+	launchState, ok := launchHooks["state"].(map[string]any)
+	if !ok || len(launchState) == 0 {
+		return
+	}
+	realCfgPath := filepath.Join(realHome, "config.toml")
+	realCfg, err := config.LoadCodexConfigMap(realCfgPath)
+	if err != nil || realCfg == nil {
+		return
+	}
+	realHooks, _ := realCfg["hooks"].(map[string]any)
+	if realHooks == nil {
+		realHooks = map[string]any{}
+	}
+	realState, _ := realHooks["state"].(map[string]any)
+	if realState == nil {
+		realState = map[string]any{}
+	}
+	updated := false
+	for k, v := range launchState {
+		if strings.HasPrefix(k, launchHome) {
+			realKey := strings.Replace(k, launchHome, realHome, 1)
+			if _, exists := realState[realKey]; !exists {
+				realState[realKey] = v
+				updated = true
+			}
+		}
+	}
+	if updated {
+		realHooks["state"] = realState
+		realCfg["hooks"] = realHooks
+		var buf bytes.Buffer
+		if err := toml.NewEncoder(&buf).Encode(realCfg); err == nil {
+			_ = os.WriteFile(realCfgPath, buf.Bytes(), 0o644)
+		}
+	}
 }
 
 // codexPromptArgs returns the CLI args for file-based prompt injection.
@@ -281,6 +447,11 @@ func resolveOpenAIAPIKey(profileKey string) (key string, source string) {
 	}
 	if k := strings.TrimSpace(profileKey); k != "" {
 		return k, "profile.api_key"
+	}
+	if store, err := auth.DefaultStore(); err == nil && store != nil {
+		if a, err := store.Get(auth.ProviderCodex); err == nil && a != nil && a.AccessToken != "" && !a.Expired(0) {
+			return a.AccessToken, "oauth.codex"
+		}
 	}
 	return "", "none"
 }

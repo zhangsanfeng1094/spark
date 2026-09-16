@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"spark/internal/auth"
+	"spark/internal/compat/engine"
 	"spark/internal/config"
 )
 
@@ -30,6 +32,7 @@ type Request struct {
 	Org          string
 	Project      string
 	Payload      map[string]any
+	ExtraHeaders map[string]string
 }
 
 type Response struct {
@@ -71,7 +74,7 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 		return TestResult{Success: false, Message: "Profile is nil", LogPath: logPath}
 	}
 
-	baseURL := strings.TrimSpace(profile.OpenAIBaseURL)
+	baseURL := strings.TrimSpace(profile.EffectiveEndpoint())
 	if baseURL == "" {
 		AppendModelConnectionTestLogf("result=fail reason=%q", "Base URL is empty")
 		return TestResult{Success: false, Message: "Base URL is empty", LogPath: logPath}
@@ -80,11 +83,68 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 		baseURL = "https://" + baseURL
 	}
 
+	isCommandCode := profile.AuthProvider == "commandcode" ||
+		strings.Contains(strings.ToLower(profile.EffectiveAuthRef()), "commandcode") ||
+		strings.Contains(strings.ToLower(baseURL), "commandcode") ||
+		strings.Contains(baseURL, ":3050")
+
+	if isCommandCode && (strings.Contains(baseURL, ":3050") || strings.TrimSpace(baseURL) == "") {
+		baseURL = "https://api.commandcode.ai/provider/v1"
+	}
+
 	apiTypes := config.ParseOpenAIAPITypes(profile.OpenAIAPIType)
+	if len(apiTypes) == 0 && profile.Protocol != "" {
+		apiTypes = config.ParseOpenAIAPITypes(string(profile.Protocol))
+	}
 	if len(apiTypes) == 0 {
 		apiTypes = config.ParseOpenAIAPITypes(config.DefaultOpenAIAPIType)
 	}
-	apiKey := strings.TrimSpace(profile.EffectiveAPIKey())
+	mode := profile.EffectiveCredentialMode()
+	apiKey := ""
+	if mode != config.CredentialModeAuth {
+		apiKey = strings.TrimSpace(profile.EffectiveAPIKey())
+	}
+	extraHeaders := make(map[string]string)
+	cred := engine.ResolveRequestCredential(context.Background(), profile, nil)
+	if apiKey == "" && cred.Value != "" {
+		apiKey = cred.Value
+	}
+	for k, v := range cred.ExtraHeaders {
+		extraHeaders[k] = v
+	}
+	if apiKey == "" && mode != config.CredentialModeAPIKey {
+		if store, err := auth.DefaultStore(); err == nil && store != nil {
+			authRef := strings.TrimSpace(profile.EffectiveAuthRef())
+			if authRef != "" {
+				if rec, err := store.GetByRef(authRef); err == nil && rec != nil && rec.AccessToken != "" {
+					apiKey = rec.AccessToken
+				}
+			}
+			if apiKey == "" {
+				lowerBase := strings.ToLower(baseURL)
+				var authProv string
+				if strings.Contains(lowerBase, "commandcode") || strings.Contains(lowerBase, ":3050") {
+					authProv = auth.ProviderCommandCode
+				} else if strings.Contains(lowerBase, "anthropic.com") {
+					authProv = auth.ProviderClaude
+				} else if strings.Contains(lowerBase, "openai.com") || strings.Contains(lowerBase, "chatgpt.com") {
+					authProv = auth.ProviderCodex
+				} else if strings.Contains(lowerBase, "googleapis.com") {
+					authProv = auth.ProviderGemini
+				} else if strings.Contains(lowerBase, "x.ai") || strings.Contains(lowerBase, "grok.com") {
+					authProv = auth.ProviderGrok
+				}
+				if authProv == "" {
+					authProv = profile.AuthProvider
+				}
+				if authProv != "" {
+					if rec, err := store.Get(authProv); err == nil && rec != nil && rec.AccessToken != "" {
+						apiKey = rec.AccessToken
+					}
+				}
+			}
+		}
+	}
 	AppendModelConnectionTestLogf(
 		"config base_url=%q api_types=%q has_api_key=%t org=%q project=%q",
 		baseURL,
@@ -96,6 +156,14 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 
 	testModel := pickTestModel(profile, model)
 	AppendModelConnectionTestLogf("resolved test_model=%q", testModel)
+
+	if isCommandCode {
+		if strings.HasPrefix(strings.ToLower(testModel), "claude-") {
+			apiTypes = []string{config.OpenAIAPITypeAnthropicMessages}
+		} else {
+			apiTypes = []string{config.OpenAIAPITypeChatCompletions}
+		}
+	}
 
 	testStart := time.Now()
 	reqSpecs, err := buildConnectionTestRequests(baseURL, apiTypes, testModel)
@@ -128,6 +196,7 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 			Org:          strings.TrimSpace(profile.OpenAIOrg),
 			Project:      strings.TrimSpace(profile.OpenAIProject),
 			Payload:      reqSpec.payload,
+			ExtraHeaders: extraHeaders,
 		})
 		latency := time.Since(start)
 		results = append(results, connectionTestResult{
@@ -185,7 +254,12 @@ func testModelConnection(profile *config.Profile, model string, poster JSONPoste
 			if ctx.Err() != nil {
 				reason = fmt.Sprintf("timeout at %s", r.request.endpointType)
 			} else {
-				reason = fmt.Sprintf("%s error: %s", r.request.endpointType, r.err.Error())
+				errStr := r.err.Error()
+				if (strings.Contains(baseURL, ":3050") || strings.Contains(r.request.url, ":3050")) && (strings.Contains(errStr, "Failed to connect") || strings.Contains(errStr, "refused")) {
+					reason = fmt.Sprintf("%s error: localhost:3050 offline. If using Command Code Cloud, set Base URL to https://api.commandcode.ai/provider/v1", r.request.endpointType)
+				} else {
+					reason = fmt.Sprintf("%s error: %s", r.request.endpointType, errStr)
+				}
 			}
 			break
 		}
@@ -354,6 +428,7 @@ func curlPostJSONArgs(req Request, timeout time.Duration) []string {
 		req.URL,
 		"--header", "Content-Type: application/json",
 		"--header", "Accept: application/json",
+		"--header", "User-Agent: spark/1.0.0",
 	}
 	apiKey := strings.TrimSpace(req.APIKey)
 	if apiKey != "" {
@@ -373,6 +448,11 @@ func curlPostJSONArgs(req Request, timeout time.Duration) []string {
 		}
 		if project := strings.TrimSpace(req.Project); project != "" {
 			args = append(args, "--header", "OpenAI-Project: "+project)
+		}
+	}
+	for k, v := range req.ExtraHeaders {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			args = append(args, "--header", fmt.Sprintf("%s: %s", strings.TrimSpace(k), strings.TrimSpace(v)))
 		}
 	}
 	args = append(args,

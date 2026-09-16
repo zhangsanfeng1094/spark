@@ -604,6 +604,7 @@ func (s *apiServer) promptValidate(w http.ResponseWriter, r *http.Request) {
 type profileDTO struct {
 	Name             string   `json:"name"`
 	ProviderType     string   `json:"provider_type,omitempty"`
+	AuthProvider     string   `json:"auth_provider,omitempty"`
 	OpenAIBaseURL    string   `json:"openai_base_url"`
 	APIKey           *string  `json:"api_key,omitempty"`
 	ClearAPIKey      bool     `json:"clear_api_key,omitempty"`
@@ -699,6 +700,9 @@ func (s *apiServer) profileByName(w http.ResponseWriter, r *http.Request) {
 			if cfg.DefaultProfile == name {
 				cfg.DefaultProfile = newName
 			}
+			if cfg.History.LastProfile == name {
+				cfg.History.LastProfile = newName
+			}
 			for _, ic := range cfg.Integrations {
 				if ic != nil && ic.Profile == name {
 					ic.Profile = newName
@@ -716,6 +720,9 @@ func (s *apiServer) profileByName(w http.ResponseWriter, r *http.Request) {
 		delete(cfg.Profiles, name)
 		if cfg.DefaultProfile == name {
 			cfg.DefaultProfile = firstProfileName(cfg)
+		}
+		if cfg.History.LastProfile == name {
+			cfg.History.LastProfile = cfg.DefaultProfile
 		}
 		for _, ic := range cfg.Integrations {
 			if ic != nil && ic.Profile == name {
@@ -750,10 +757,13 @@ func (s *apiServer) profileFetchModels(w http.ResponseWriter, r *http.Request) {
 
 	// Build a temporary profile from the request body
 	profile := &config.Profile{
-		OpenAIBaseURL:     strings.TrimSpace(body.OpenAIBaseURL),
-		OpenAIAPIType:     strings.TrimSpace(body.OpenAIAPIType),
-		ModelListURL:      strings.TrimSpace(body.ModelListURL),
-		AnthropicBaseURL:  strings.TrimSpace(body.AnthropicBaseURL),
+		Endpoint:         strings.TrimSpace(body.OpenAIBaseURL),
+		Protocol:         config.NormalizeAPIProtocol(body.OpenAIAPIType),
+		OpenAIBaseURL:    strings.TrimSpace(body.OpenAIBaseURL),
+		OpenAIAPIType:    strings.TrimSpace(body.OpenAIAPIType),
+		ModelListURL:     strings.TrimSpace(body.ModelListURL),
+		AnthropicBaseURL: strings.TrimSpace(body.AnthropicBaseURL),
+		AuthProvider:     strings.TrimSpace(body.AuthProvider),
 	}
 
 	// Use API key from request if provided, otherwise try to get from saved profile
@@ -763,7 +773,23 @@ func (s *apiServer) profileFetchModels(w http.ResponseWriter, r *http.Request) {
 		// Try to get API key from existing profile
 		if existing, exists := cfg.Profiles[strings.TrimSpace(body.Name)]; exists && existing != nil {
 			profile.APIKey = existing.EffectiveAPIKey()
+			profile.Credential = existing.Credential
+			profile.AuthRef = existing.AuthRef
+			profile.Thinking = existing.Thinking
+			if profile.AuthProvider == "" {
+				profile.AuthProvider = existing.AuthProvider
+			}
 		}
+	}
+	profile.Credential.APIKey = profile.APIKey
+	if profile.Credential.Mode == "" {
+		profile.Credential.Mode = config.CredentialModeAuto
+	}
+	if profile.Credential.AuthRef == "" && profile.AuthProvider != "" {
+		profile.Credential.AuthRef = profile.AuthProvider + ":default"
+	}
+	if profile.Endpoint == "" {
+		profile.Endpoint = profile.EffectiveEndpoint()
 	}
 
 	// Use the TUI's FetchOpenAIModels function to get the models
@@ -843,7 +869,8 @@ func profileToDTO(name string, p *config.Profile) profileDTO {
 	return profileDTO{
 		Name:             name,
 		ProviderType:     detectProviderType(p),
-		OpenAIBaseURL:    p.OpenAIBaseURL,
+		AuthProvider:     p.AuthProvider,
+		OpenAIBaseURL:    p.EffectiveEndpoint(),
 		OpenAIAPIType:    displayAPIType(p.OpenAIAPIType),
 		ModelListURL:     p.ModelListURL,
 		Models:           append([]string{}, p.Models...),
@@ -871,9 +898,17 @@ func profileFromDTO(existing *config.Profile, body profileDTO) (*config.Profile,
 	} else if body.APIKey != nil {
 		key = strings.TrimSpace(*body.APIKey)
 	}
+	authProvider := strings.TrimSpace(body.AuthProvider)
+	if authProvider == "" && existing != nil {
+		authProvider = existing.AuthProvider
+	}
+	providerChanged := existing != nil && strings.TrimSpace(existing.AuthProvider) != authProvider
 	p := &config.Profile{
+		Endpoint:      baseURL,
+		Protocol:      config.NormalizeAPIProtocol(apiType),
 		OpenAIBaseURL: baseURL,
 		APIKey:        key,
+		AuthProvider:  authProvider,
 		OpenAIAPIType: apiType,
 		ModelListURL:  strings.TrimSpace(body.ModelListURL),
 		Models:        config.NormalizeModels(body.Models),
@@ -884,6 +919,34 @@ func profileFromDTO(existing *config.Profile, body profileDTO) (*config.Profile,
 	if existing != nil {
 		p.OpenAIOrg = existing.OpenAIOrg
 		p.OpenAIProject = existing.OpenAIProject
+		p.Thinking = existing.Thinking
+		if !providerChanged {
+			p.Credential = existing.Credential
+			p.AuthRef = existing.AuthRef
+		}
+	}
+	p.Credential.APIKey = key
+	if p.Credential.Mode == "" {
+		p.Credential.Mode = config.CredentialModeAuto
+	}
+	if providerChanged && authProvider != "" {
+		ref := authProvider + ":default"
+		p.Credential.AuthRef = ref
+		p.AuthRef = ref
+		// Keep api_key mode only when the request explicitly supplies a
+		// replacement key for the new provider. An inherited key from the
+		// previous provider must not stay active.
+		submittedNewKey := !body.ClearAPIKey && body.APIKey != nil && strings.TrimSpace(*body.APIKey) != ""
+		if submittedNewKey {
+			p.Credential.Mode = config.CredentialModeAPIKey
+		} else {
+			p.Credential.Mode = config.CredentialModeAuth
+		}
+	} else if p.Credential.AuthRef == "" && authProvider != "" {
+		p.Credential.AuthRef = authProvider + ":default"
+	}
+	if p.AuthRef == "" && authProvider != "" {
+		p.AuthRef = p.Credential.AuthRef
 	}
 	if config.SupportsOpenAIAPIType(apiType, config.OpenAIAPITypeAnthropicMessages) {
 		p.AnthropicBaseURL = baseURL
@@ -921,16 +984,22 @@ func displayAPIType(v string) string {
 }
 
 func detectProviderType(p *config.Profile) string {
-	if strings.TrimSpace(p.AnthropicBaseURL) != "" || config.SupportsOpenAIAPIType(p.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
+	if p == nil {
+		return "OpenAI Compatible"
+	}
+	if p.AuthProvider == "commandcode" || strings.Contains(strings.ToLower(p.EffectiveEndpoint()), ":3050") || strings.Contains(strings.ToLower(p.EffectiveEndpoint()), "commandcode") {
+		return "Command Code"
+	}
+	if strings.TrimSpace(p.AnthropicBaseURL) != "" || p.AuthProvider == "claude" {
 		return "Anthropic"
 	}
-	base := strings.ToLower(strings.TrimSpace(p.OpenAIBaseURL))
+	base := strings.ToLower(strings.TrimSpace(p.EffectiveEndpoint()))
 	switch {
 	case strings.Contains(base, "localhost:11434") || strings.Contains(base, "127.0.0.1:11434"):
 		return "Ollama"
-	case strings.Contains(base, "generativelanguage.googleapis.com") || strings.Contains(base, "ai.google.dev"):
+	case p.AuthProvider == "gemini" || strings.Contains(base, "generativelanguage.googleapis.com") || strings.Contains(base, "ai.google.dev"):
 		return "Gemini"
-	case base == "https://api.openai.com/v1" || base == "":
+	case base == "https://api.openai.com/v1" || base == "" || p.AuthProvider == "codex":
 		return "OpenAI"
 	default:
 		return "OpenAI Compatible"
@@ -1132,4 +1201,3 @@ You are helpful, harmless, and honest. Answer the user's request directly and ad
 
 	return basePrompt, nil
 }
-

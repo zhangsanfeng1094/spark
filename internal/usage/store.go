@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"spark/internal/compat/ir"
 	"spark/internal/config"
 
 	_ "modernc.org/sqlite"
@@ -78,8 +77,6 @@ const (
 )
 
 var defaultStoreMu sync.Mutex
-var recorderMu sync.RWMutex
-var recorder func(Record) error
 
 func Windows() []Window {
 	return []Window{WindowToday, Window7D, Window30D, WindowAll}
@@ -103,42 +100,6 @@ func AppendDefault(record Record) error {
 	defaultStoreMu.Lock()
 	defer defaultStoreMu.Unlock()
 	return Append(path, record)
-}
-
-func EnableDefaultRecorder() {
-	SetRecorder(AppendDefault)
-}
-
-func SetRecorder(fn func(Record) error) {
-	recorderMu.Lock()
-	defer recorderMu.Unlock()
-	recorder = fn
-}
-
-func ReplaceRecorder(fn func(Record) error) func() {
-	recorderMu.Lock()
-	prev := recorder
-	recorder = fn
-	recorderMu.Unlock()
-
-	return func() {
-		recorderMu.Lock()
-		defer recorderMu.Unlock()
-		recorder = prev
-	}
-}
-
-func RecordIR(usage ir.Usage, model string, stream bool, now time.Time) {
-	record, ok := RecordFromIRUsage(usage, model, stream, now)
-	if !ok {
-		return
-	}
-	recorderMu.RLock()
-	fn := recorder
-	recorderMu.RUnlock()
-	if fn != nil {
-		_ = fn(record)
-	}
 }
 
 func Append(path string, record Record) error {
@@ -904,37 +865,6 @@ func RecordFromUsageMap(usage map[string]any, model string, stream bool, now tim
 		TotalTokens:       total,
 		CachedInputTokens: cached,
 	}, true
-}
-
-func RecordFromIRUsage(usage ir.Usage, model string, stream bool, now time.Time) (Record, bool) {
-	record, _ := RecordFromUsageMap(usage.Raw, model, stream, now)
-	if usage.InputTokens != 0 {
-		record.InputTokens = usage.InputTokens
-	}
-	if usage.OutputTokens != 0 {
-		record.OutputTokens = usage.OutputTokens
-	}
-	if usage.TotalTokens != 0 {
-		record.TotalTokens = usage.TotalTokens
-	}
-	if usage.CacheReadInputTokens != 0 {
-		record.CachedInputTokens = usage.CacheReadInputTokens
-	}
-	if record.TotalTokens == 0 && (record.InputTokens > 0 || record.OutputTokens > 0) {
-		record.TotalTokens = record.InputTokens + record.OutputTokens
-	}
-	if record.Timestamp.IsZero() {
-		if now.IsZero() {
-			now = time.Now().UTC()
-		}
-		record.Timestamp = now
-	}
-	record.Model = model
-	record.Stream = stream
-	if record.InputTokens == 0 && record.OutputTokens == 0 && record.TotalTokens == 0 && record.CachedInputTokens == 0 {
-		return Record{}, false
-	}
-	return record, true
 }
 
 func normalizeClient(client string) string {

@@ -19,6 +19,11 @@ type DashboardSummary struct {
 	DefaultProfile         string
 	DefaultModel           string
 	ConfigPath             string
+	TotalProfiles          int
+	TotalMCPServers        int
+	EnabledMCPServers      int
+	TotalSkills            int
+	PromptEnabled          bool
 }
 
 type dashboardModel struct {
@@ -35,10 +40,9 @@ type dashboardModel struct {
 var (
 	dashboardFrameStyle  = lipgloss.NewStyle().Margin(0, 1)
 	dashboardHeaderStyle = lipgloss.NewStyle().
-				Foreground(colorText).
-				Background(colorFocus).
+				Foreground(colorAccent).
 				Bold(true).
-				Padding(0, 2)
+				Padding(0, 1)
 	dashboardSectionTitleStyle = lipgloss.NewStyle().
 					Foreground(colorLabel).
 					Bold(true)
@@ -46,8 +50,7 @@ var (
 				Foreground(colorText).
 				Padding(0, 1)
 	dashboardSelectedItemStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#ffffff")).
-					Background(colorFocus).
+					Foreground(colorFocus).
 					Bold(true).
 					Padding(0, 1)
 	dashboardBodyTextStyle = lipgloss.NewStyle().
@@ -138,16 +141,21 @@ func (m *dashboardModel) View() string {
 	header := dashboardHeaderStyle.Width(m.width - 6).Render(m.title)
 	left := m.renderMenuPane(leftWidth)
 	right := m.renderDetailPane(rightWidth)
+	panelHeight := max(lipgloss.Height(left), lipgloss.Height(right))
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		pmFocusedPanelStyle.Width(leftWidth).Render(left),
-		pmPanelStyle.Width(rightWidth).Render(right),
+		pmFocusedPanelStyle.Width(leftWidth).Height(panelHeight).Render(left),
+		pmPanelStyle.Width(rightWidth).Height(panelHeight).Render(right),
 	)
 
+	statusText := "Ready"
+	if m.summary.ConfigPath != "" {
+		statusText = "Config: " + m.summary.ConfigPath
+	}
 	help := pmStatusBarStyle.Width(m.width - 6).Render(
 		lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			lipgloss.NewStyle().Foreground(colorText).Render("Ready"),
-			lipgloss.NewStyle().Width(m.width-24).Align(lipgloss.Right).Foreground(colorMuted).Render("↑/↓ Move · Enter Select · Q Quit"),
+			lipgloss.NewStyle().Foreground(colorMuted).Render(statusText),
+			lipgloss.NewStyle().Width(max(0, m.width-lipgloss.Width(statusText)-8)).Align(lipgloss.Right).Foreground(colorMuted).Render("↑/↓ Move · Enter Select · Q Quit"),
 		),
 	)
 
@@ -178,21 +186,95 @@ func (m *dashboardModel) renderDetailPane(width int) string {
 		"",
 		dashboardBodyTextStyle.Width(width - 4).Render(action.Description),
 		"",
-		dashboardSectionTitleStyle.Render("Current Context"),
-		lipgloss.JoinHorizontal(lipgloss.Top,
-			dashboardBodyTextStyle.Render("Quick launch: "),
-			dashboardQuickLaunchValueStyle.Render(emptyFallback(m.summary.QuickLaunchIntegration, "not set")),
-		),
-		lipgloss.JoinHorizontal(lipgloss.Top,
-			dashboardBodyTextStyle.Render("Default profile: "),
-			dashboardDefaultProfileValueStyle.Render(emptyFallback(summaryDefaultProfile(m.summary), "not set")),
-		),
-		lipgloss.JoinHorizontal(lipgloss.Top,
-			dashboardBodyTextStyle.Render("Default model: "),
-			dashboardDefaultModelValueStyle.Render(emptyFallback(m.summary.DefaultModel, "not set")),
-		),
-		dashboardMutedTextStyle.Width(width - 4).Render("Config file: " + emptyFallback(m.summary.ConfigPath, "unavailable")),
 	}
+
+	renderRow := func(label, value string, valStyle lipgloss.Style) string {
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			dashboardBodyTextStyle.Render(label),
+			valStyle.Render(value),
+		)
+	}
+
+	switch action.Title {
+	case "Quick launch":
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("Launch Target"),
+			renderRow("Quick launch: ", emptyFallback(m.summary.QuickLaunchIntegration, "not set"), dashboardQuickLaunchValueStyle),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
+			renderRow("Default model: ", emptyFallback(m.summary.DefaultModel, "not set"), dashboardDefaultModelValueStyle),
+			dashboardMutedTextStyle.Width(width - 4).Render("Config file: " + emptyFallback(m.summary.ConfigPath, "unavailable")),
+		)
+	case "Launch options":
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("Launch Defaults"),
+			renderRow("Default client: ", emptyFallback(m.summary.QuickLaunchIntegration, "not set"), dashboardQuickLaunchValueStyle),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
+			renderRow("Default model: ", emptyFallback(m.summary.DefaultModel, "not set"), dashboardDefaultModelValueStyle),
+		)
+	case "Manage profiles":
+		countText := fmt.Sprintf("%d configured", m.summary.TotalProfiles)
+		if m.summary.TotalProfiles == 0 {
+			countText = "none configured"
+		}
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("Profiles Overview"),
+			renderRow("Total profiles: ", countText, dashboardQuickLaunchValueStyle),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
+			renderRow("Default model: ", emptyFallback(m.summary.DefaultModel, "not set"), dashboardDefaultModelValueStyle),
+		)
+	case "Manage MCP servers":
+		countText := fmt.Sprintf("%d configured (%d enabled)", m.summary.TotalMCPServers, m.summary.EnabledMCPServers)
+		if m.summary.TotalMCPServers == 0 {
+			countText = "none configured"
+		}
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("MCP Servers Overview"),
+			renderRow("MCP servers: ", countText, dashboardQuickLaunchValueStyle),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
+		)
+	case "Manage skills":
+		countText := fmt.Sprintf("%d installed", m.summary.TotalSkills)
+		if m.summary.TotalSkills == 0 {
+			countText = "none installed"
+		}
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("Skills Overview"),
+			renderRow("Agent skills: ", countText, dashboardQuickLaunchValueStyle),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
+		)
+	case "Token usage":
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("Usage Tracking"),
+			renderRow("Tracking status: ", "Active (recorded in SQLite)", dashboardDefaultProfileValueStyle),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultModelValueStyle),
+		)
+	case "Manage settings":
+		promptStatus := "disabled"
+		if m.summary.PromptEnabled {
+			promptStatus = "enabled"
+		}
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("Global Settings"),
+			renderRow("Default client: ", emptyFallback(m.summary.QuickLaunchIntegration, "not set"), dashboardQuickLaunchValueStyle),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
+			renderRow("Prompt injection: ", promptStatus, dashboardDefaultModelValueStyle),
+			dashboardMutedTextStyle.Width(width - 4).Render("Config file: " + emptyFallback(m.summary.ConfigPath, "unavailable")),
+		)
+	case "Quit":
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("Session"),
+			renderRow("Status: ", "Ready to exit", dashboardMutedTextStyle),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
+			dashboardMutedTextStyle.Width(width - 4).Render("Config file: " + emptyFallback(m.summary.ConfigPath, "unavailable")),
+		)
+	default:
+		lines = append(lines,
+			dashboardSectionTitleStyle.Render("Current Context"),
+			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
+			renderRow("Default model: ", emptyFallback(m.summary.DefaultModel, "not set"), dashboardDefaultModelValueStyle),
+		)
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 

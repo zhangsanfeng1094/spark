@@ -10,7 +10,7 @@
     },
     {
       "name": "mcp.add",
-      "include": ["MCP Manager", "Create Server"]
+      "include": ["MCP Manager", "Create MCP Server"]
     },
     {
       "name": "mcp.transfer",
@@ -40,44 +40,44 @@
     },
     {
       "name": "dashboard",
-      "include": ["Launch integration", "Current Context"]
+      "include": ["Menu", "Manage profiles"]
     }
   ],
   "transitions": [
     {
       "from": "dashboard",
       "to": "profile",
-      "keys": ["Down", "Down", "Down", "Enter"],
+      "keys": ["Down", "Down", "Enter"],
       "markers": ["Manage profiles"],
-      "selectedText": "Launch integration"
+      "selectedText": "Quick launch"
     },
     {
       "from": "dashboard",
       "to": "mcp.overview",
-      "keys": ["Down", "Down", "Down", "Down", "Enter"],
+      "keys": ["Down", "Down", "Down", "Enter"],
       "markers": ["Manage MCP servers"],
-      "selectedText": "Launch integration"
+      "selectedText": "Quick launch"
     },
     {
       "from": "dashboard",
       "to": "skills.overview",
-      "keys": ["Down", "Down", "Down", "Down", "Down", "Enter"],
+      "keys": ["Down", "Down", "Down", "Down", "Enter"],
       "markers": ["Manage skills"],
-      "selectedText": "Launch integration"
+      "selectedText": "Quick launch"
     },
     {
       "from": "mcp.overview",
       "to": "mcp.add",
       "keys": ["A"],
       "markers": ["[A] Add"],
-      "selectedText": "augment-context-engine"
+      "selectedText": ["deepwiki", "augment-context-engine", "Servers"]
     },
     {
       "from": "mcp.overview",
       "to": "mcp.transfer",
       "keys": ["T"],
-      "markers": ["[T] Transfer"],
-      "selectedText": "augment-context-engine"
+      "markers": ["Transfer"],
+      "selectedText": ["deepwiki", "augment-context-engine", "Servers"]
     },
     {
       "from": "skills.overview",

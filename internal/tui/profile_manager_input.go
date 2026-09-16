@@ -107,38 +107,28 @@ func (m *pmModel) syncModelsModalScroll() {
 	}
 }
 
-func (m *pmModel) handleModelSearchKey(msg tea.KeyMsg) bool {
+func (m *pmModel) handleModelSearchKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	if m.modalKind != pmModalKindModels || m.modelEditMode || !m.modelSearchFocused {
-		return false
+		return nil, false
 	}
 	switch msg.String() {
-	case "backspace":
-		r := []rune(m.modelSearchQuery)
-		if len(r) == 0 {
-			return false
-		}
-		m.modelSearchQuery = string(r[:len(r)-1])
-		m.syncModelsModalScroll()
-		return true
+	case "esc", "enter", "tab", "shift+tab", "up", "down", "f5", "f6", "f7", "f8":
+		return nil, false
 	case "delete":
-		if m.modelSearchQuery == "" {
-			return false
-		}
+		m.modelSearchInput.SetValue("")
 		m.modelSearchQuery = ""
 		m.syncModelsModalScroll()
-		return true
+		return nil, true
 	}
-	if len(msg.Runes) > 0 {
-		for _, r := range msg.Runes {
-			if r < 32 {
-				continue
-			}
-			m.modelSearchQuery += string(r)
-		}
-		m.syncModelsModalScroll()
-		return true
+	if m.modelSearchInput.Value() != m.modelSearchQuery {
+		m.modelSearchInput.SetValue(m.modelSearchQuery)
+		m.modelSearchInput.CursorEnd()
 	}
-	return false
+	var cmd tea.Cmd
+	m.modelSearchInput, cmd = m.modelSearchInput.Update(msg)
+	m.modelSearchQuery = m.modelSearchInput.Value()
+	m.syncModelsModalScroll()
+	return cmd, true
 }
 
 func (m *pmModel) handleModalWheel(msg tea.MouseMsg) bool {
@@ -183,7 +173,11 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 	leftX1, leftY1 := m.leftContentX, m.leftContentY
 	rightX1, rightY1 := m.rightContentX, m.rightContentY
 
-	if x >= leftX1 && x <= leftX1+27 {
+	leftW := m.leftPanelWidth
+	if leftW <= 0 {
+		leftW = 26
+	}
+	if x >= leftX1 && x <= leftX1+leftW {
 		for i, row := range m.leftVisibleRows {
 			if y == leftY1+row && i < len(m.leftVisibleIdxs) {
 				m.focusArea = pmFocusProfiles
@@ -269,6 +263,11 @@ func (m *pmModel) handleMainMouse(msg tea.MouseMsg) tea.Cmd {
 			if i < len(m.fieldStartRelY) && fieldY >= m.fieldStartRelY[i] && fieldY <= m.fieldEndRelY[i] {
 				m.focusArea = pmFocusFields
 				m.focusField = i
+				m.updateFocus()
+				if i == pmFieldThinkingMode || i == pmFieldThinkingEffort || i == pmFieldOpenAIAPIType {
+					m.cycleSelectField(true)
+					return nil
+				}
 				m.openFieldModalIfNeeded()
 				return nil
 			}
@@ -334,6 +333,9 @@ func (m *pmModel) handleModalMouse(msg tea.MouseMsg) {
 	}
 
 	optionStartY := m.modalY + 4
+	if m.modalOptionStartY > 0 {
+		optionStartY = m.modalOptionStartY
+	}
 	if m.modalKind == pmModalKindModels {
 		optionStartY++ // account for always-visible search input row
 	}
@@ -353,6 +355,11 @@ func (m *pmModel) handleModalMouse(msg tea.MouseMsg) {
 		if idx >= 0 && idx < len(m.apiTypeOptions) {
 			m.modalCursor = idx
 			m.toggleAPITypeOptionAtCursor()
+		}
+	case pmModalKindThinkingMode, pmModalKindThinkingEffort:
+		if idx >= 0 && idx < len(m.thinkingModalOptions()) {
+			m.modalCursor = idx
+			m.confirmThinkingSelection()
 		}
 	case pmModalKindModels:
 		filtered := m.filteredModelIndices()
@@ -394,6 +401,14 @@ func (m *pmModel) openFieldModalIfNeeded() bool {
 		m.openModelsModal()
 		return true
 	}
+	if m.focusField == pmFieldThinkingMode {
+		m.openThinkingModal(pmModalKindThinkingMode, pmFieldThinkingMode)
+		return true
+	}
+	if m.focusField == pmFieldThinkingEffort {
+		m.openThinkingModal(pmModalKindThinkingEffort, pmFieldThinkingEffort)
+		return true
+	}
 	return false
 }
 
@@ -401,30 +416,42 @@ func (m *pmModel) handleFieldShortcut(msg tea.KeyMsg) bool {
 	if m.focusArea != pmFocusFields {
 		return false
 	}
-	if m.focusField != pmFieldProviderType && m.focusField != pmFieldOpenAIAPIType && m.focusField != pmFieldModelsCSV {
+	if m.focusField != pmFieldProviderType && m.focusField != pmFieldOpenAIAPIType && m.focusField != pmFieldModelsCSV && m.focusField != pmFieldThinkingMode && m.focusField != pmFieldThinkingEffort {
 		return false
 	}
 	switch msg.String() {
 	case " ", "space":
+		if m.focusField == pmFieldThinkingMode || m.focusField == pmFieldThinkingEffort || m.focusField == pmFieldOpenAIAPIType {
+			m.cycleSelectField(true)
+			return true
+		}
 		if m.focusField == pmFieldProviderType {
 			m.openProviderTypeModal()
-		} else if m.focusField == pmFieldOpenAIAPIType {
-			m.openAPITypeModal()
-		} else {
-			m.openModelsModal()
+			return true
 		}
-		return true
+		if m.focusField == pmFieldModelsCSV {
+			m.openModelsModal()
+			return true
+		}
 	}
 	return false
 }
 
 func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if msg.String() != "q" && msg.String() != "esc" {
+		m.confirmQuit = false
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		return tea.Quit, true
 	case "q":
 		// Leave manager from profile list; nested field/action focus uses Esc to pop first.
 		if m.focusArea == pmFocusProfiles {
+			if m.dirty && !m.confirmQuit {
+				m.confirmQuit = true
+				m.setUserStatus(pmStatusWarning, "Unsaved changes! Press Q or Esc again to exit without saving, or F2 to save.")
+				return nil, true
+			}
 			return tea.Quit, true
 		}
 		return nil, false
@@ -432,11 +459,17 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		switch m.focusArea {
 		case pmFocusFields, pmFocusActions:
 			m.focusArea = pmFocusProfiles
+			m.updateFocus()
 			return nil, true
 		default:
+			if m.dirty && !m.confirmQuit {
+				m.confirmQuit = true
+				m.setUserStatus(pmStatusWarning, "Unsaved changes! Press Esc or Q again to exit without saving, or F2 to save.")
+				return nil, true
+			}
 			return tea.Quit, true
 		}
-	case "f2":
+	case "f2", "ctrl+s":
 		m.save()
 		return nil, true
 	case "f3":
@@ -494,12 +527,18 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 			}
 			return nil, true
 		}
+		if m.focusArea == pmFocusFields && m.cycleSelectField(false) {
+			return nil, true
+		}
 		return nil, false
 	case "right", "l":
 		if m.focusArea == pmFocusActions {
 			if m.actionIndex < pmActSave {
 				m.actionIndex++
 			}
+			return nil, true
+		}
+		if m.focusArea == pmFocusFields && m.cycleSelectField(true) {
 			return nil, true
 		}
 		return nil, false
@@ -509,9 +548,21 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		if m.focusArea == pmFocusProfiles {
 			m.focusArea = pmFocusFields
+			m.updateFocus()
 			return nil, true
 		}
-		if m.openFieldModalIfNeeded() {
+		if m.focusArea == pmFocusFields {
+			if m.openFieldModalIfNeeded() {
+				return nil, true
+			}
+			if m.focusField < len(m.fields)-1 {
+				m.focusField++
+				m.updateFocus()
+			} else {
+				m.focusArea = pmFocusActions
+				m.actionIndex = pmActSave
+				m.updateFocus()
+			}
 			return nil, true
 		}
 		return nil, true
@@ -522,54 +573,36 @@ func (m *pmModel) handleMainKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	return nil, false
 }
 
-func (m *pmModel) handleFieldEdit(msg tea.KeyMsg) {
+func (m *pmModel) handleFieldEdit(msg tea.KeyMsg) tea.Cmd {
 	if m.focusArea != pmFocusFields || m.focusField < 0 || m.focusField >= len(m.fields) {
-		return
+		return nil
 	}
 	f := &m.fields[m.focusField]
 	if f.readOnly {
-		return
+		return nil
 	}
 
-	switch msg.String() {
-	case "left":
-		if f.cursor > 0 {
-			f.cursor--
-		}
-	case "right":
-		if f.cursor < len([]rune(f.value)) {
-			f.cursor++
-		}
-	case "home":
-		f.cursor = 0
-	case "end":
-		f.cursor = len([]rune(f.value))
-	case "backspace":
-		r := []rune(f.value)
-		if f.cursor > 0 && f.cursor <= len(r) {
-			f.value = string(append(r[:f.cursor-1], r[f.cursor:]...))
-			f.cursor--
-			m.dirty = true
-		}
-	case "delete":
-		r := []rune(f.value)
-		if f.cursor >= 0 && f.cursor < len(r) {
-			f.value = string(append(r[:f.cursor], r[f.cursor+1:]...))
-			m.dirty = true
-		}
-	default:
-		if len(msg.Runes) > 0 {
-			r := []rune(f.value)
-			ins := msg.Runes
-			before := append([]rune{}, r[:f.cursor]...)
-			after := append([]rune{}, r[f.cursor:]...)
-			next := append(before, ins...)
-			next = append(next, after...)
-			f.value = string(next)
-			f.cursor += len(ins)
-			m.dirty = true
+	if f.input.Value() != f.value {
+		f.input.SetValue(f.value)
+		if f.cursor >= 0 && f.cursor <= len([]rune(f.value)) {
+			f.input.SetCursor(f.cursor)
+		} else {
+			f.input.CursorEnd()
 		}
 	}
+	if !f.input.Focused() {
+		f.input.Focus()
+	}
+
+	var cmd tea.Cmd
+	f.input, cmd = f.input.Update(msg)
+	newVal := f.input.Value()
+	if newVal != f.value {
+		f.value = newVal
+		m.dirty = true
+	}
+	f.cursor = f.input.Position()
+	return cmd
 }
 
 func (m *pmModel) moveUp() {
@@ -581,6 +614,7 @@ func (m *pmModel) moveUp() {
 	case pmFocusFields:
 		if m.focusField > 0 {
 			m.focusField--
+			m.updateFocus()
 		}
 	case pmFocusActions:
 		if m.actionIndex > 0 {
@@ -598,6 +632,7 @@ func (m *pmModel) moveDown() {
 	case pmFocusFields:
 		if m.focusField < len(m.fields)-1 {
 			m.focusField++
+			m.updateFocus()
 		}
 	case pmFocusActions:
 		if m.actionIndex < pmActSave {
@@ -614,6 +649,11 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		switch msg.String() {
 		case "tab", "shift+tab":
 			m.modelSearchFocused = !m.modelSearchFocused
+			if m.modelSearchFocused {
+				m.modelSearchInput.Focus()
+			} else {
+				m.modelSearchInput.Blur()
+			}
 			return nil
 		case "f5":
 			return m.fetchModelsFromAPI()
@@ -628,8 +668,8 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		if m.modelSearchFocused {
-			if m.handleModelSearchKey(msg) {
-				return nil
+			if cmd, handled := m.handleModelSearchKey(msg); handled {
+				return cmd
 			}
 		}
 	}
@@ -673,52 +713,20 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 		maxItems := len(m.providerOptions)
 		if m.modalKind == pmModalKindOpenAIAPIType {
 			maxItems = len(m.apiTypeOptions)
+		} else if m.modalKind == pmModalKindThinkingMode || m.modalKind == pmModalKindThinkingEffort {
+			maxItems = len(m.thinkingModalOptions())
 		}
 		if m.modalCursor < maxItems-1 {
 			m.modalCursor++
 		}
 		return nil
 	case "tab":
-		if m.modalKind == pmModalKindModels {
-			filtered := m.filteredModelIndices()
-			if len(filtered) > 0 {
-				pos := 0
-				for i, idx := range filtered {
-					if idx == m.modalCursor {
-						pos = i
-						break
-					}
-				}
-				pos = (pos + 1) % len(filtered)
-				m.modalCursor = filtered[pos]
-				m.syncModelsModalScroll()
-			}
-			return nil
-		}
 		maxItems := m.modalItemCount()
 		if maxItems > 0 {
 			m.modalCursor = (m.modalCursor + 1) % maxItems
 		}
 		return nil
 	case "shift+tab":
-		if m.modalKind == pmModalKindModels {
-			filtered := m.filteredModelIndices()
-			if len(filtered) > 0 {
-				pos := len(filtered) - 1
-				for i, idx := range filtered {
-					if idx == m.modalCursor {
-						pos = i - 1
-						break
-					}
-				}
-				if pos < 0 {
-					pos = len(filtered) - 1
-				}
-				m.modalCursor = filtered[pos]
-				m.syncModelsModalScroll()
-			}
-			return nil
-		}
 		maxItems := m.modalItemCount()
 		if maxItems > 0 {
 			m.modalCursor--
@@ -730,6 +738,8 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 	case " ", "space":
 		if m.modalKind == pmModalKindOpenAIAPIType {
 			m.toggleAPITypeOptionAtCursor()
+		} else if m.modalKind == pmModalKindModels {
+			m.setDefaultModelAtCursor()
 		}
 		return nil
 	case "enter":
@@ -745,6 +755,8 @@ func (m *pmModel) handleModalKey(msg tea.KeyMsg) tea.Cmd {
 				m.defaultModel = m.modelItems[m.modalCursor]
 			}
 			m.confirmModelsSelection()
+		case pmModalKindThinkingMode, pmModalKindThinkingEffort:
+			m.confirmThinkingSelection()
 		}
 		return nil
 	}
@@ -758,25 +770,19 @@ func (m *pmModel) handleModelsEditKey(msg tea.KeyMsg) tea.Cmd {
 		m.modelEditIndex = -1
 		m.modelEditBuffer = ""
 		m.modelModalNote = "Edit canceled."
+		return nil
 	case "enter":
 		m.confirmModelEdit()
-	case "left":
-		// no cursor support in modal input currently
-	case "right":
-		// no cursor support in modal input currently
-	case "backspace":
-		r := []rune(m.modelEditBuffer)
-		if len(r) > 0 {
-			m.modelEditBuffer = string(r[:len(r)-1])
-		}
-	case "delete":
-		m.modelEditBuffer = ""
-	default:
-		if len(msg.Runes) > 0 {
-			m.modelEditBuffer += string(msg.Runes)
-		}
+		return nil
 	}
-	return nil
+	if m.modelEditInput.Value() != m.modelEditBuffer {
+		m.modelEditInput.SetValue(m.modelEditBuffer)
+		m.modelEditInput.CursorEnd()
+	}
+	var cmd tea.Cmd
+	m.modelEditInput, cmd = m.modelEditInput.Update(msg)
+	m.modelEditBuffer = m.modelEditInput.Value()
+	return cmd
 }
 
 func (m *pmModel) focusNextByTab() {
@@ -784,19 +790,23 @@ func (m *pmModel) focusNextByTab() {
 	case pmFocusProfiles:
 		m.focusArea = pmFocusFields
 		m.focusField = 0
+		m.updateFocus()
 	case pmFocusFields:
 		if m.focusField < len(m.fields)-1 {
 			m.focusField++
+			m.updateFocus()
 			return
 		}
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActAdd
+		m.updateFocus()
 	case pmFocusActions:
 		if m.actionIndex < pmActSave {
 			m.actionIndex++
 			return
 		}
 		m.focusArea = pmFocusProfiles
+		m.updateFocus()
 	}
 }
 
@@ -805,12 +815,15 @@ func (m *pmModel) focusPrevByTab() {
 	case pmFocusProfiles:
 		m.focusArea = pmFocusActions
 		m.actionIndex = pmActSave
+		m.updateFocus()
 	case pmFocusFields:
 		if m.focusField > 0 {
 			m.focusField--
+			m.updateFocus()
 			return
 		}
 		m.focusArea = pmFocusProfiles
+		m.updateFocus()
 	case pmFocusActions:
 		if m.actionIndex > pmActAdd {
 			m.actionIndex--
@@ -820,6 +833,7 @@ func (m *pmModel) focusPrevByTab() {
 		if len(m.fields) > 0 {
 			m.focusField = len(m.fields) - 1
 		}
+		m.updateFocus()
 	}
 }
 
@@ -829,6 +843,8 @@ func (m *pmModel) modalItemCount() int {
 		return len(m.apiTypeOptions)
 	case pmModalKindModels:
 		return len(m.filteredModelIndices())
+	case pmModalKindThinkingMode, pmModalKindThinkingEffort:
+		return len(m.thinkingModalOptions())
 	default:
 		return len(m.providerOptions)
 	}

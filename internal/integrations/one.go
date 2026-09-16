@@ -76,7 +76,7 @@ func (o *One) Run(profile *config.Profile, model string, args []string) error {
 	// launch in an isolated HOME: mirror the real home via symlinks, rewrite
 	// .one/agent provider/selection files for this process only, and drop the
 	// temp home when the agent exits. The real ~/.one stays untouched.
-	launchHome, err := os.MkdirTemp("", "spark-one-home-*")
+	launchHome, err := createLaunchTempDir("spark-one-home-*")
 	if err != nil {
 		return fmt.Errorf("create one launch home: %w", err)
 	}
@@ -137,34 +137,6 @@ func shouldSkipOneAgentMirror(name string) bool {
 		return true
 	}
 	return strings.HasPrefix(name, "auth.json")
-}
-
-// symlinkEntries mirrors every entry from src into dst as absolute symlinks so
-// the launch home stays relocatable and writes reach the real assets.
-func symlinkEntries(src, dst string, skip func(name string) bool) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read %s: %w", src, err)
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if skip != nil && skip(name) {
-			continue
-		}
-		srcPath := filepath.Join(src, name)
-		dstPath := filepath.Join(dst, name)
-		absSrc, err := filepath.Abs(srcPath)
-		if err != nil {
-			absSrc = srcPath
-		}
-		if err := os.Symlink(absSrc, dstPath); err != nil {
-			return fmt.Errorf("link %s: %w", name, err)
-		}
-	}
-	return nil
 }
 
 // writeOneLaunchConfigs clones the real provider catalog and selection state,

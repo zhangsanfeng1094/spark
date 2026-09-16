@@ -1,6 +1,7 @@
 package integrations
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -299,6 +300,24 @@ func TestGrokEnv(t *testing.T) {
 	}
 }
 
+func TestGrokProfileForDaemonUsesResponsesAndRoutingToken(t *testing.T) {
+	profile := &config.Profile{
+		RuntimeName:   "ziyong",
+		Thinking:      &config.ThinkingConfig{Mode: "force", Effort: "low"},
+		OpenAIBaseURL: "https://upstream.example/v1",
+	}
+	got := grokProfileForDaemon(profile, "http://127.0.0.1:42337")
+	if got.OpenAIBaseURL != "http://127.0.0.1:42337/v1" || got.Protocol != config.ProtocolOpenAIResponses || got.OpenAIAPIType != config.OpenAIAPITypeResponses {
+		t.Fatalf("daemon profile route=%#v", got)
+	}
+	if got.EffectiveAPIKey() != "spark-profile:ziyong" {
+		t.Fatalf("routing token=%q", got.EffectiveAPIKey())
+	}
+	if profile.OpenAIBaseURL != "https://upstream.example/v1" {
+		t.Fatal("original profile must not be mutated")
+	}
+}
+
 func TestGrokAPIBackendMapping(t *testing.T) {
 	tests := []struct {
 		apiType string
@@ -545,5 +564,161 @@ func TestNormalizeGrokModelID(t *testing.T) {
 		if got := normalizeGrokModelID(tc.in); got != tc.want {
 			t.Fatalf("normalizeGrokModelID(%q)=%q want=%q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func grokTestProfile() *config.Profile {
+	return &config.Profile{
+		OpenAIBaseURL: "http://127.0.0.1:8317/v1",
+		OpenAIAPIKey:  "sk-test",
+		OpenAIAPIType: "chat_completions",
+	}
+}
+
+func TestGrokNeedsEditAndSkipsRewriteWhenSparkConfigMatches(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := &Grok{}
+	profile := grokTestProfile()
+	models := []string{"gpt-4o"}
+
+	needs, err := g.NeedsEdit(profile, models)
+	if err != nil {
+		t.Fatalf("NeedsEdit missing file: %v", err)
+	}
+	if !needs {
+		t.Fatal("missing spark model should need edit")
+	}
+	if err := g.Edit(profile, models); err != nil {
+		t.Fatalf("first Edit: %v", err)
+	}
+
+	cfgPath := filepath.Join(home, ".grok", "config.toml")
+	afterFirst, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read after first: %v", err)
+	}
+	info, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatalf("stat after first: %v", err)
+	}
+
+	needs, err = g.NeedsEdit(profile, models)
+	if err != nil {
+		t.Fatalf("NeedsEdit second: %v", err)
+	}
+	if needs {
+		t.Fatal("matching spark config should not need edit")
+	}
+	if err := g.Edit(profile, models); err != nil {
+		t.Fatalf("second Edit: %v", err)
+	}
+	afterSecond, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read after second: %v", err)
+	}
+	if string(afterSecond) != string(afterFirst) {
+		t.Fatalf("second Edit rewrote config:\nfirst:\n%s\nsecond:\n%s", afterFirst, afterSecond)
+	}
+	info2, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatalf("stat after second: %v", err)
+	}
+	if !info2.ModTime().Equal(info.ModTime()) {
+		t.Fatal("matching Edit should not rewrite the file")
+	}
+}
+
+func TestGrokNeedsEditWhenSparkModelChanges(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := &Grok{}
+	profile := grokTestProfile()
+	if err := g.Edit(profile, []string{"gpt-4o"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	needs, err := g.NeedsEdit(profile, []string{"claude-sonnet"})
+	if err != nil {
+		t.Fatalf("NeedsEdit: %v", err)
+	}
+	if !needs {
+		t.Fatal("model change should need edit")
+	}
+
+	changedProfile := grokTestProfile()
+	changedProfile.OpenAIBaseURL = "http://127.0.0.1:9999/v1"
+	needs, err = g.NeedsEdit(changedProfile, []string{"gpt-4o"})
+	if err != nil {
+		t.Fatalf("NeedsEdit url: %v", err)
+	}
+	if !needs {
+		t.Fatal("base_url change should need edit")
+	}
+}
+
+func TestGrokNeedsEditWhenSparkDefaultMustReset(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := &Grok{}
+	profile := grokTestProfile()
+	if err := g.Edit(profile, []string{"gpt-4o"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	cfgPath := filepath.Join(home, ".grok", "config.toml")
+	root, err := loadGrokConfigMap(cfgPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	root["models"] = map[string]any{"default": "spark-gpt-4o"}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(root); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	needs, err := g.NeedsEdit(profile, []string{"gpt-4o"})
+	if err != nil {
+		t.Fatalf("NeedsEdit: %v", err)
+	}
+	if !needs {
+		t.Fatal("spark-* default should need edit so OAuth default is restored")
+	}
+}
+
+func TestGrokNeedsEditPreservesNonSparkEntries(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	g := &Grok{}
+	profile := grokTestProfile()
+	if err := g.Edit(profile, []string{"gpt-4o"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	cfgPath := filepath.Join(home, ".grok", "config.toml")
+	root, err := loadGrokConfigMap(cfgPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	modelTable := root["model"].(map[string]any)
+	modelTable["keep-me"] = map[string]any{"model": "keep"}
+	root["cli"] = map[string]any{"installer": "internal"}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(root); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	needs, err := g.NeedsEdit(profile, []string{"gpt-4o"})
+	if err != nil {
+		t.Fatalf("NeedsEdit: %v", err)
+	}
+	if needs {
+		t.Fatal("non-spark entries should not force an edit")
 	}
 }

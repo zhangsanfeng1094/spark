@@ -1,0 +1,62 @@
+---
+const installTabs = [
+  {
+    title: 'npm 全局安装 (推荐)',
+    cmd: 'npm i -g @ngominhbinh708/spark',
+    desc: '适用于拥有 Node.js 环境的所有开发者，安装后直接运行 spark 即可。'
+  },
+  {
+    title: 'bun / pnpm 安装',
+    cmd: 'pnpm add -g @ngominhbinh708/spark\n# 或\nbun add -g @ngominhbinh708/spark',
+    desc: '支持主流现代 JavaScript 包管理器快速全局安装。'
+  },
+  {
+    title: '从源码构建 (Go 1.24+)',
+    cmd: 'git clone https://github.com/ngominhbinh708/spark.git\ncd spark\ngo build -o spark ./cmd/spark',
+    desc: '本地编译单一静态二进制文件，适合无 Node.js 依赖的轻量独立环境。'
+  }
+];
+---
+
+<section id="download" class="py-20 bg-slate-50 border-t border-slate-200/70">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="text-center max-w-3xl mx-auto mb-16">
+      <h2 class="text-xs uppercase tracking-widest font-bold text-indigo-600 mb-2">Installation</h2>
+      <p class="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">安装与自升级</p>
+      <p class="mt-3 text-slate-600 text-sm sm:text-base">多种安装渠道与原地自动升级支持，开箱即用。</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+      {installTabs.map((tab) => (
+        <div class="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-all">
+          <div>
+            <h3 class="text-base font-bold text-slate-900 mb-2">{tab.title}</h3>
+            <p class="text-xs text-slate-500 mb-4 leading-relaxed">{tab.desc}</p>
+          </div>
+          <div class="bg-slate-900 text-slate-100 p-3 rounded-xl font-mono text-xs overflow-x-auto relative group">
+            <pre class="whitespace-pre-wrap">{tab.cmd}</pre>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <!-- Update & Auto-Update Banner -->
+    <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-8 shadow-lg flex flex-col md:flex-row items-center justify-between gap-6 border border-slate-800">
+      <div class="space-y-2 text-center md:text-left">
+        <div class="inline-flex items-center gap-2 text-xs font-semibold text-indigo-300 bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-400/30">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+          <span>智能原地自升级</span>
+        </div>
+        <h4 class="text-xl font-bold text-white">随时随地升级至最新特性</h4>
+        <p class="text-xs text-slate-300 max-w-xl">
+          Spark 内置了 <code>spark update</code> 命令，会自动识别当前是通过 npm 还是二进制运行，并执行原地升级与 checksums 校验。
+        </p>
+      </div>
+      <div class="flex items-center gap-3">
+        <code class="px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 font-mono text-xs text-indigo-300 font-bold">
+          spark update
+        </code>
+      </div>
+    </div>
+  </div>
+</section>

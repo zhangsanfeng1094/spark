@@ -2,27 +2,13 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
 	"spark/internal/config"
 )
 
 var (
-	colorFocus        = lipgloss.Color("#b58cff")
-	colorAccent       = lipgloss.Color("#c8aefc")
-	colorText         = lipgloss.Color("#e8e8e8")
-	colorTextSoft     = lipgloss.Color("#d7dae2")
-	colorLabel        = lipgloss.Color("#a0a6b3")
-	colorMuted        = lipgloss.Color("#7a7a8a")
-	colorDim          = colorMuted
-	colorSuccess      = lipgloss.Color("#5fd38d")
-	colorError        = lipgloss.Color("#ff6b6b")
-	colorWarning      = lipgloss.Color("#f4c95d")
-	colorBg           = lipgloss.Color("#1e1f22")
-	colorPanelBg      = lipgloss.Color("#25262b")
-	colorBorder       = lipgloss.Color("#4b4f5c")
-	colorFieldBg      = lipgloss.Color("#202127")
-	colorFieldBgFocus = lipgloss.Color("#23242a")
-
 	pmAppStyle = lipgloss.NewStyle().Margin(0, 1)
 
 	pmTitleStyle = lipgloss.NewStyle().
@@ -30,18 +16,16 @@ var (
 			Bold(true).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorBorder).
-			Background(colorBg).
 			Padding(0, 1).
 			MarginBottom(1)
 
 	pmPanelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorBorder).
-			Background(colorPanelBg).
 			Padding(0, 1)
 
 	pmFocusedPanelStyle = pmPanelStyle.Copy().
-				BorderForeground(lipgloss.Color("#6b6380"))
+				BorderForeground(colorBorderFocus)
 
 	pmItemStyle = lipgloss.NewStyle().
 			PaddingLeft(1).
@@ -52,18 +36,16 @@ var (
 				Bold(true)
 	pmFocusedItemStyle = lipgloss.NewStyle().
 				PaddingLeft(1).
-				Foreground(colorText).
-				Background(colorFocus).
+				Foreground(colorFocus).
 				Bold(true)
 	pmSelectedMutedItemStyle = lipgloss.NewStyle().
 					PaddingLeft(1).
-					Foreground(lipgloss.Color("#98d7cf")).
+					Foreground(colorAccent).
 					Bold(true)
 
 	pmBadgeStyle = lipgloss.NewStyle().
-			Foreground(colorFocus).
-			Bold(true).
-			Padding(0, 1)
+			Foreground(colorWarning).
+			Bold(true)
 
 	pmLabelStyle = lipgloss.NewStyle().
 			Foreground(colorLabel).
@@ -76,33 +58,29 @@ var (
 
 	pmInputStyle = lipgloss.NewStyle().
 			Foreground(colorTextSoft).
-			Background(colorFieldBg).
 			Padding(0, 1).
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#363842"))
+			BorderForeground(colorBorder)
 
 	pmFocusedInputStyle = pmInputStyle.Copy().
 				Foreground(colorText).
-				Background(colorFieldBgFocus).
 				BorderForeground(colorFocus).
 				Bold(true)
 	pmCompactInputStyle = lipgloss.NewStyle().
 				Foreground(colorTextSoft).
-				Background(colorFieldBg).
 				Padding(0, 1)
-	pmCompactReadOnlyInputStyle = pmCompactInputStyle.Copy().
-					Foreground(colorMuted).
-					Background(colorPanelBg)
+	pmCompactReadOnlyInputStyle = lipgloss.NewStyle().
+					Foreground(colorTextSoft).
+					Padding(0, 1)
 	pmCompactFocusedInputStyle = pmCompactInputStyle.Copy().
-					Foreground(colorText).
-					Background(colorFieldBgFocus).
+					Foreground(colorFocus).
 					Bold(true)
 
 	pmBtnStyle = lipgloss.NewStyle().
 			Foreground(colorTextSoft).
 			Padding(0, 1).
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3c3f49")).
+			BorderForeground(colorBorder).
 			MarginRight(1)
 
 	pmPrimaryBtnStyle = pmBtnStyle.Copy().
@@ -125,17 +103,14 @@ var (
 				Bold(true)
 	pmCompactBtnStyle = lipgloss.NewStyle().
 				Foreground(colorTextSoft).
-				Background(colorFieldBg).
 				Padding(0, 1)
 	pmCompactPrimaryBtnStyle = pmCompactBtnStyle.Copy().
-					Foreground(colorText).
-					Background(colorFocus).
+					Foreground(colorFocus).
 					Bold(true)
 	pmCompactActiveBtnStyle = pmCompactPrimaryBtnStyle.Copy()
 
 	pmStatusBarStyle = lipgloss.NewStyle().
 				Foreground(colorText).
-				Background(colorBg).
 				Padding(0, 1).
 				MarginTop(1)
 	pmStatusOkStyle = lipgloss.NewStyle().
@@ -152,7 +127,6 @@ var (
 	pmModalStyle = lipgloss.NewStyle().
 			Border(lipgloss.DoubleBorder()).
 			BorderForeground(colorFocus).
-			Background(colorPanelBg).
 			Padding(1, 2).
 			Align(lipgloss.Center)
 )
@@ -188,16 +162,20 @@ const (
 	pmFieldOpenAIAPIType
 	pmFieldModelListURL
 	pmFieldModelsCSV
-	pmFieldDefaultModel
+	pmFieldThinkingMode
+	pmFieldThinkingEffort
+	pmFieldThinkingBudget
 )
 
 type pmField struct {
-	label    string
-	value    string
-	cursor   int
-	masked   bool
-	readOnly bool
-	required bool
+	label       string
+	value       string
+	placeholder string
+	cursor      int
+	masked      bool
+	readOnly    bool
+	required    bool
+	input       textinput.Model
 }
 
 type pmProviderOption struct {
@@ -211,6 +189,8 @@ const (
 	pmModalKindProviderType
 	pmModalKindOpenAIAPIType
 	pmModalKindModels
+	pmModalKindThinkingMode
+	pmModalKindThinkingEffort
 )
 
 const pmModelsModalMaxVisible = 10
@@ -252,6 +232,7 @@ type pmModel struct {
 	runningTestSeq  uint64
 
 	confirmDelete bool
+	confirmQuit   bool
 
 	modalOpen   bool
 	modalCursor int
@@ -262,6 +243,7 @@ type pmModel struct {
 
 	providerOptions        []pmProviderOption
 	apiTypeOptions         []string
+	thinkingOptions        []string
 	apiTypeSelected        map[string]bool
 	modelItems             []string
 	modelsDraft            []string
@@ -269,12 +251,15 @@ type pmModel struct {
 	modelEditMode          bool
 	modelEditIndex         int
 	modelEditBuffer        string
+	modelEditInput         textinput.Model
 	modelModalNote         string
 	modelSearchQuery       string
+	modelSearchInput       textinput.Model
 	modelSearchFocused     bool
 	modelModalScroll       int
 	modelModalVisibleCount int
 	inputWidth             int
+	leftPanelWidth         int
 
 	leftContentX     int
 	leftContentY     int
@@ -295,12 +280,13 @@ type pmModel struct {
 	rightButtonsRowW int
 	rightTestBtnW    int
 	rightButtonsGapW int
-	fieldStartRelY   []int
-	fieldEndRelY     []int
-	modalX           int
-	modalY           int
-	modalW           int
-	modalH           int
+	fieldStartRelY     []int
+	fieldEndRelY       []int
+	modalX             int
+	modalY             int
+	modalW             int
+	modalH             int
+	modalOptionStartY  int
 }
 
 func ManageProfilesDashboard(cfg *config.RootConfig) error {
@@ -318,6 +304,7 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 			{name: "OpenAI", kind: "openai"},
 			{name: "Anthropic", kind: "anthropic"},
 			{name: "Gemini", kind: "gemini"},
+			{name: "Command Code", kind: "commandcode"},
 		},
 		apiTypeOptions: []string{
 			config.OpenAIAPITypeResponses,
@@ -325,6 +312,7 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 			config.OpenAIAPITypeGeminiGenerateContent,
 			config.OpenAIAPITypeAnthropicMessages,
 		},
+		thinkingOptions: []string{"client", "auto", "force", "off", "minimal", "low", "medium", "high", "xhigh", "max"},
 		apiTypeSelected: map[string]bool{},
 		focusArea:       pmFocusProfiles,
 		focusField:      0,
@@ -339,12 +327,29 @@ func newPMModel(cfg *config.RootConfig) *pmModel {
 	return m
 }
 
-func (m *pmModel) Init() tea.Cmd { return nil }
+func (m *pmModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m *pmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+
+	case cursor.BlinkMsg:
+		if m.modalOpen && m.modalKind == pmModalKindModels {
+			var cmd tea.Cmd
+			if m.modelEditMode {
+				m.modelEditInput, cmd = m.modelEditInput.Update(msg)
+			} else if m.modelSearchFocused {
+				m.modelSearchInput, cmd = m.modelSearchInput.Update(msg)
+			}
+			return m, cmd
+		}
+		if m.focusArea == pmFocusFields && m.focusField >= 0 && m.focusField < len(m.fields) {
+			var cmd tea.Cmd
+			m.fields[m.focusField].input, cmd = m.fields[m.focusField].input.Update(msg)
+			return m, cmd
+		}
 		return m, nil
 
 	case testResultMsg:
@@ -384,8 +389,8 @@ func (m *pmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		m.handleFieldEdit(msg)
-		return m, nil
+		cmd := m.handleFieldEdit(msg)
+		return m, cmd
 	}
 	return m, nil
 }

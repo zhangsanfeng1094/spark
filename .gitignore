@@ -1,10 +1,16 @@
-ollama
+/ollama
 .agents
 npm/.npm-cache
 /spark
+bin/
 .gocache
 .gomodcache
+coverage.out
+image.png
 dist
 !web/dist/
 !web/dist/.gitkeep
 .claude
+.codegraph/
+.claude/settings.local.json
+package-lock.json

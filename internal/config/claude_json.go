@@ -54,7 +54,7 @@ func SaveClaudeUserMcpServers(path string, servers map[string]*McpServerConfig) 
 		if server == nil || !server.Enabled {
 			continue
 		}
-		encodedServers[McpServerName(name)] = encodeClaudeServerMap(server)
+		encodedServers[McpServerName(name)] = EncodeClaudeServerMap(server)
 	}
 	root["mcpServers"] = encodedServers
 
@@ -126,7 +126,7 @@ func decodeClaudeServerMap(serverMap map[string]any) *McpServerConfig {
 	return cfg
 }
 
-func encodeClaudeServerMap(server *McpServerConfig) map[string]any {
+func EncodeClaudeServerMap(server *McpServerConfig) map[string]any {
 	out := map[string]any{}
 	if server == nil {
 		return out
