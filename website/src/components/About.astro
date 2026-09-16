@@ -5,7 +5,7 @@ const agents = [
     tag: 'OpenAI Responses / Chat',
     badge: '主要支持',
     badgeClass: 'bg-emerald-100 text-emerald-800',
-    desc: '支持官方 POST /v1/responses 协议直连；若上游为第三方 Chat Completions，Spark 自动起用本地兼容代理，透明转接并保留完整流式响应。',
+    desc: '支持官方 POST /v1/responses 协议直连；若上游为第三方 Chat Completions，Spark 自动通过 Bifrost 引擎以共享 Daemon 提供高保真 Ingress 适配，保留完整流式输出与 Tool Calls。',
     cmd: 'spark launch codex',
     iconColor: 'bg-emerald-50 text-emerald-600 border-emerald-200'
   },
@@ -14,7 +14,7 @@ const agents = [
     tag: 'Anthropic Messages',
     badge: '主要支持',
     badgeClass: 'bg-amber-100 text-amber-800',
-    desc: '专为 Claude Code 定制的配置注入与 Messages 代理，保留 thinking 思考过程无损往返，并无缝适配 prompt cache_control 缓存机制。',
+    desc: '专为 Claude Code 定制的 POST /v1/messages Ingress 适配层，保留 thinking 思考过程与 tool_use 结构无损往返，由常驻 Bifrost 后台统一调度。',
     cmd: 'spark launch claude',
     iconColor: 'bg-amber-50 text-amber-600 border-amber-200'
   },

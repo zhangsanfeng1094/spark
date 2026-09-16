@@ -5,8 +5,12 @@ const faqs = [
     a: '不会。Spark 启动 Codex、Claude 等 Agent 时，遵循非侵入式配置写入原则；在启动 Grok Build 或 One 时，更是使用临时 HOME 符号链接镜像机制，主系统的原生配置与 OAuth Token 始终保持干净且不受污染。'
   },
   {
-    q: '为什么需要本地兼容代理（Compat Proxy）？',
-    a: '因为不同 Agent 与上游大模型服务商使用的 Wire 协议各不相同（例如 Codex 默认使用 POST /v1/responses，Claude Code 使用 /v1/messages）。当上游是只支持 Chat Completions 的第三方服务时，Spark 自动完成流式协议转换，无需你手动部署第三方转换工具。'
+    q: '为什么需要 Bifrost 统一驱动核心与 Ingress 协议网关？',
+    a: '不同 Agent 依赖特定的 Wire 协议（例如 Codex 默认使用 POST /v1/responses，Claude Code 使用 POST /v1/messages）。Spark 引入 Bifrost 作为底层统一驱动，并构建了原生高保真 Ingress 适配层，能够将任意第三方 OpenAI-compatible、DeepSeek、Gemini 或 Anthropic 上游透明转换为对应 Agent 的原生流式协议，同时无损保留 <think> 思考链与 Tool Calls。'
+  },
+  {
+    q: '什么是 Shared Daemon（共享常驻守护进程）？',
+    a: '在过去，每个打开的终端窗口可能都需要单独启动一个代理进程。现在 Spark 提供了 Shared Daemon 架构（通过 spark daemon start/status/stop 管理，默认端口 42337）：无论你开启多少个并发终端或运行不同 Agent，所有请求都由单个后台 Daemon 动态解析 Profile 并复用连接池，大幅降低系统内存开销，实现毫秒级即开即用。'
   },
   {
     q: '如何添加和管理 MCP Server？',

@@ -9,6 +9,10 @@ export default defineConfig({
   integrations: [tailwind()],
   site,
   base,
+  server: {
+    host: '0.0.0.0',
+    port: 4321
+  },
   build: {
     format: 'directory'
   }
