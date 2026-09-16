@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"spark/internal/auth"
 	"spark/internal/config"
 )
 
@@ -22,10 +23,7 @@ func fetchModelsWithClient(profile *config.Profile, client *http.Client) ([]stri
 	if profile == nil {
 		return nil, fmt.Errorf("profile is nil")
 	}
-	baseURL := strings.TrimSpace(profile.OpenAIBaseURL)
-	if config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) && strings.TrimSpace(profile.AnthropicBaseURL) != "" {
-		baseURL = strings.TrimSpace(profile.AnthropicBaseURL)
-	}
+	baseURL := strings.TrimSpace(profile.EffectiveEndpoint())
 	if baseURL == "" {
 		return nil, fmt.Errorf("base URL is empty")
 	}
@@ -33,18 +31,92 @@ func fetchModelsWithClient(profile *config.Profile, client *http.Client) ([]stri
 		baseURL = "https://" + baseURL
 	}
 
-	apiKey := strings.TrimSpace(profile.EffectiveAPIKey())
+	mode := profile.EffectiveCredentialMode()
+	apiKey := ""
+	if mode != config.CredentialModeAuth {
+		apiKey = strings.TrimSpace(profile.EffectiveAPIKey())
+	}
+	authRef := strings.TrimSpace(profile.EffectiveAuthRef())
+	authProv, _ := auth.ParseAuthRef(authRef)
+	if apiKey == "" && mode != config.CredentialModeAPIKey {
+		if store, err := auth.DefaultStore(); err == nil && store != nil {
+			if authRef != "" {
+				if rec, err := store.GetByRef(authRef); err == nil && rec != nil && rec.AccessToken != "" {
+					apiKey = rec.AccessToken
+				}
+			}
+			if apiKey == "" {
+				lowerBase := strings.ToLower(baseURL)
+				if strings.Contains(lowerBase, "commandcode") || strings.Contains(lowerBase, ":3050") {
+					authProv = auth.ProviderCommandCode
+				} else if strings.Contains(lowerBase, "anthropic.com") {
+					authProv = auth.ProviderClaude
+				} else if strings.Contains(lowerBase, "openai.com") {
+					authProv = auth.ProviderCodex
+				} else if strings.Contains(lowerBase, "googleapis.com") {
+					authProv = auth.ProviderGemini
+				}
+				if authProv != "" {
+					if rec, err := store.Get(authProv); err == nil && rec != nil && rec.AccessToken != "" {
+						apiKey = rec.AccessToken
+					}
+				}
+			}
+		}
+	}
+
 	modelListURL := strings.TrimSpace(profile.ModelListURL)
-	if config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
+	proto := profile.EffectiveProtocol()
+	if proto == config.ProtocolAnthropic || config.SupportsOpenAIAPIType(profile.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
 		if modelListURL != "" {
 			return fetchAnthropicModelsFromURLWithClient(modelListURL, apiKey, client)
 		}
 		return fetchAnthropicModelsWithClient(baseURL, apiKey, client)
 	}
-	if modelListURL != "" {
-		return fetchOpenAIModelsFromURLWithClient(modelListURL, apiKey, strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
+
+	lowerBase := strings.ToLower(baseURL)
+	isCommandCode := authProv == auth.ProviderCommandCode || strings.Contains(lowerBase, "commandcode") || strings.Contains(lowerBase, ":3050")
+
+	if isCommandCode {
+		if modelListURL != "" {
+			return fetchOpenAIModelsFromURLWithClient(modelListURL, apiKey, strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
+		}
+		if strings.Contains(lowerBase, "commandcode.ai") {
+			return fetchOpenAIModelsFromURLWithClient("https://api.commandcode.ai/provider/v1/models", apiKey, "", "", client)
+		}
+		// Try local proxy endpoint first (e.g. localhost:3050/v1/models)
+		models, err := fetchOpenAIModelsWithClient(baseURL, apiKey, strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
+		if err == nil && len(models) > 0 {
+			return models, nil
+		}
+		// Fallback to upstream Command Code API if local proxy is not running or failed
+		if apiKey != "" {
+			if cloudModels, cloudErr := fetchOpenAIModelsFromURLWithClient("https://api.commandcode.ai/provider/v1/models", apiKey, "", "", client); cloudErr == nil && len(cloudModels) > 0 {
+				return cloudModels, nil
+			}
+		}
+		if cat, ok := auth.CatalogFor(auth.ProviderCommandCode); ok && len(cat.SuggestedModels) > 0 {
+			return cat.SuggestedModels, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return models, nil
 	}
-	return fetchOpenAIModelsWithClient(baseURL, apiKey, strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
+
+	var models []string
+	var err error
+	if modelListURL != "" {
+		models, err = fetchOpenAIModelsFromURLWithClient(modelListURL, apiKey, strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
+	} else {
+		models, err = fetchOpenAIModelsWithClient(baseURL, apiKey, strings.TrimSpace(profile.OpenAIOrg), strings.TrimSpace(profile.OpenAIProject), client)
+	}
+	if (err != nil || len(models) == 0) && authProv != "" {
+		if cat, ok := auth.CatalogFor(authProv); ok && len(cat.SuggestedModels) > 0 {
+			return cat.SuggestedModels, nil
+		}
+	}
+	return models, err
 }
 
 func fetchOpenAIModelsWithClient(baseURL, apiKey, org, project string, client *http.Client) ([]string, error) {

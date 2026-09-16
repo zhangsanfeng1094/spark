@@ -15,13 +15,25 @@ func (m *pmModel) View() string {
 
 	header := dashboardHeaderStyle.Width(m.width - 6).Render("Spark Profiles")
 	leftPanelW := 30
-	rightPanelW := m.width - leftPanelW - 10
-	if rightPanelW < 54 {
-		rightPanelW = 54
+	if m.width < 100 {
+		leftPanelW = 24
+	}
+	if leftPanelW > m.width/3 && m.width < 75 {
+		leftPanelW = max(20, m.width/3)
+	}
+	m.leftPanelWidth = leftPanelW
+
+	availableW := m.width - 10
+	if availableW < 40 {
+		availableW = 40
+	}
+	rightPanelW := availableW - leftPanelW
+	if rightPanelW < 24 {
+		rightPanelW = 24
 	}
 	inputW := rightPanelW - pmLabelWidth - 5
-	if inputW < 24 {
-		inputW = 24
+	if inputW < 14 {
+		inputW = 14
 	}
 	m.inputWidth = inputW
 
@@ -76,7 +88,10 @@ func (m *pmModel) View() string {
 }
 
 func (m *pmModel) renderLeftPane(height int) string {
-	const listWidth = 26
+	listWidth := m.leftPanelWidth - 2
+	if listWidth < 18 {
+		listWidth = 18
+	}
 
 	topLines := []string{
 		lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Profiles"),
@@ -156,6 +171,9 @@ func (m *pmModel) renderLeftPaneBottom(width int) []string {
 	}
 
 	btnGap := "  "
+	if width < 23 {
+		btnGap = " "
+	}
 	col1W := max(lipgloss.Width(addBtn), lipgloss.Width(defaultBtn))
 	col2W := max(lipgloss.Width(copyBtn), lipgloss.Width(delBtn))
 	btnRow1 := lipgloss.JoinHorizontal(
@@ -201,26 +219,69 @@ func (m *pmModel) renderRightPane(height int) string {
 	m.fieldEndRelY = make([]int, len(m.fields))
 
 	for i, f := range m.fields {
+		if height >= 26 {
+			if i == pmFieldOpenAIBaseURL {
+				sec := renderFormSectionHeader("Connection", contentWidth)
+				topLines = append(topLines, sec)
+				relY += lipgloss.Height(sec)
+			} else if i == pmFieldModelsCSV {
+				sec := renderFormSectionHeader("Models & Reasoning", contentWidth)
+				topLines = append(topLines, sec)
+				relY += lipgloss.Height(sec)
+			}
+		}
+
+		focused := m.focusArea == pmFocusFields && i == m.focusField
+		var inputView string
+		if !f.readOnly {
+			if f.input.Value() != f.value {
+				f.input.SetValue(f.value)
+				if f.cursor >= 0 && f.cursor <= len([]rune(f.value)) {
+					f.input.SetCursor(f.cursor)
+				} else {
+					f.input.CursorEnd()
+				}
+			}
+			f.input.Width = max(10, m.inputWidth-2)
+			f.input.Placeholder = f.placeholder
+			if focused {
+				f.input.Focus()
+			} else {
+				f.input.Blur()
+			}
+			inputView = f.input.View()
+		} else {
+			switch i {
+			case pmFieldThinkingMode:
+				inputView = renderSegmentedPills([]string{"client", "auto", "force", "off"}, f.value, focused, m.inputWidth)
+			case pmFieldOpenAIAPIType:
+				inputView = renderSegmentedPills(m.visibleAPITypeOptions(), f.value, focused, m.inputWidth)
+			case pmFieldThinkingEffort:
+				inputView = renderInlineStepper(f.value, []string{"", "minimal", "low", "medium", "high", "xhigh", "max"}, focused, m.inputWidth)
+			}
+		}
+
 		val := f.value
 		if f.masked && val != "" {
 			val = strings.Repeat("*", len(val))
 		}
 
-		focused := m.focusArea == pmFocusFields && i == m.focusField
 		decoratedValue := m.decorateFieldValue(i, val)
 		cursor := f.cursor
 		if focused && !f.readOnly && f.cursor >= len([]rune(val)) {
 			cursor = len([]rune(decoratedValue))
 		}
 		row := renderCompactFormRow(compactFormRowOptions{
-			Label:      f.label,
-			Value:      decoratedValue,
-			Width:      m.inputWidth,
-			Focused:    focused,
-			ReadOnly:   f.readOnly,
-			Required:   f.required,
-			Cursor:     cursor,
-			ShowCursor: focused && !f.readOnly,
+			Label:       f.label,
+			Value:       decoratedValue,
+			Placeholder: f.placeholder,
+			Width:       m.inputWidth,
+			Focused:     focused,
+			ReadOnly:    f.readOnly,
+			Required:    f.required,
+			Cursor:      cursor,
+			ShowCursor:  focused && !f.readOnly,
+			InputView:   inputView,
 		})
 		rowH := lipgloss.Height(row)
 		m.fieldStartRelY[i] = relY
@@ -240,14 +301,12 @@ func (m *pmModel) renderRightPane(height int) string {
 	}
 
 	actionTitle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Actions")
+	btnGapW := max(1, contentWidth-lipgloss.Width(testBtn)-lipgloss.Width(saveBtn))
 	btnRow := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		testBtn,
-		lipgloss.PlaceHorizontal(
-			max(2, contentWidth-lipgloss.Width(testBtn)),
-			lipgloss.Right,
-			saveBtn,
-		),
+		strings.Repeat(" ", btnGapW),
+		saveBtn,
 	)
 	var bottomLines []string
 	if help := m.contextHintText(); help != "" {
@@ -258,7 +317,7 @@ func (m *pmModel) renderRightPane(height int) string {
 	bottomLines = append(bottomLines, actionTitle, btnRow, "")
 	statusTitle := lipgloss.NewStyle().Foreground(colorLabel).Bold(true).Render("Status")
 	statusSummary, statusSummaryStyle := m.renderStatusSummaryLine()
-	bottomLines = append(bottomLines, statusTitle, statusSummaryStyle.Render(statusSummary))
+	bottomLines = append(bottomLines, statusTitle, statusSummaryStyle.Width(contentWidth).Render(statusSummary))
 
 	content := joinTopAndBottom(topLines, bottomLines, height)
 	joinedTop := lipgloss.JoinVertical(lipgloss.Left, topLines...)
@@ -277,40 +336,34 @@ func (m *pmModel) renderRightPane(height int) string {
 }
 
 func (m *pmModel) overlayModal(bg string) string {
-	_ = bg
+	if options, ok := m.selectModalOptions(bg); ok {
+		rendered, layout := renderSelectModalOverlay(options)
+		m.modalX, m.modalY, m.modalW, m.modalH = layout.X, layout.Y, layout.W, layout.H
+		m.modalOptionStartY = layout.OptionStartY
+		return rendered
+	}
 	var options []string
 	switch m.modalKind {
-	case pmModalKindOpenAIAPIType:
-		options = append(options, "Select OpenAI API Types:")
-		options = append(options, "")
-		for i, opt := range m.visibleAPITypeOptions() {
-			cursor := "   "
-			style := pmItemStyle
-			if i == m.modalCursor {
-				cursor = " ➤ "
-				style = pmSelectedItemStyle
-			}
-			check := "[ ]"
-			if m.apiTypeSelected[opt] {
-				check = "[x]"
-			}
-			options = append(options, style.Render(cursor+check+" "+opt))
-		}
-		options = append(options, "")
-		options = append(options, "[Space] Toggle  [Enter] Confirm  [Esc] Cancel")
 	case pmModalKindModels:
 		modalInnerWidth := 70
 		listWidth := 52
 		panelRow := func(content string) string {
-			return lipgloss.NewStyle().Background(colorPanelBg).Width(modalInnerWidth).Render(content)
+			return lipgloss.NewStyle().Width(modalInnerWidth).Render(content)
 		}
 		options = append(options, panelRow(lipgloss.NewStyle().Bold(true).Render("Edit Models")))
 		options = append(options, panelRow(""))
-		searchLine := "Search: " + m.modelSearchQuery
-		if m.modelSearchFocused && !m.modelEditMode {
-			searchLine += "█"
+		if m.modelSearchInput.Value() != m.modelSearchQuery {
+			m.modelSearchInput.SetValue(m.modelSearchQuery)
 		}
-		options = append(options, panelRow(pmInputStyle.Copy().Width(listWidth).Render(searchLine)))
+		var searchBoxStyle lipgloss.Style
+		if m.modelSearchFocused && !m.modelEditMode {
+			m.modelSearchInput.Focus()
+			searchBoxStyle = pmFocusedInputStyle.Copy().Width(listWidth)
+		} else {
+			m.modelSearchInput.Blur()
+			searchBoxStyle = pmInputStyle.Copy().Width(listWidth)
+		}
+		options = append(options, panelRow(searchBoxStyle.Render(m.modelSearchInput.View())))
 		options = append(options, panelRow(""))
 		filtered := m.filteredModelIndices()
 		listLines := make([]string, 0, pmModelsModalMaxVisible+2)
@@ -363,8 +416,12 @@ func (m *pmModel) overlayModal(bg string) string {
 			options = append(options, panelRow(line))
 		}
 		if m.modelEditMode {
+			if m.modelEditInput.Value() != m.modelEditBuffer {
+				m.modelEditInput.SetValue(m.modelEditBuffer)
+			}
+			m.modelEditInput.Focus()
 			options = append(options, panelRow(""))
-			options = append(options, panelRow(pmInputStyle.Copy().Width(listWidth).Render("Input: "+m.modelEditBuffer+"█")))
+			options = append(options, panelRow(pmFocusedInputStyle.Copy().Width(listWidth).Render(m.modelEditInput.View())))
 			for _, line := range renderModelModalHelpRows(true, false) {
 				options = append(options, panelRow(line))
 			}
@@ -414,6 +471,92 @@ func (m *pmModel) overlayModal(bg string) string {
 	)
 }
 
+func (m *pmModel) selectModalOptions(bg string) (selectModalOptions, bool) {
+	switch m.modalKind {
+	case pmModalKindProviderType:
+		options := make([]string, 0, len(m.providerOptions))
+		for _, option := range m.providerOptions {
+			options = append(options, option.name)
+		}
+		anchorX := 0
+		anchorY := 0
+		if pmFieldProviderType < len(m.fieldEndRelY) {
+			anchorX = m.rightContentX + pmLabelWidth + 1
+			anchorY = m.rightContentY + m.fieldEndRelY[pmFieldProviderType] + 1
+		}
+		return selectModalOptions{
+			Width:         m.width,
+			Height:        m.height,
+			Title:         "Provider Type:",
+			Options:       options,
+			SelectedValue: m.fields[pmFieldProviderType].value,
+			Cursor:        m.modalCursor,
+			Help:          "[↑/↓] Move  [Enter] Select  [Esc] Close",
+			AnchorX:       anchorX,
+			AnchorY:       anchorY,
+			Background:    bg,
+		}, true
+	case pmModalKindOpenAIAPIType:
+		anchorX := 0
+		anchorY := 0
+		if pmFieldOpenAIAPIType < len(m.fieldEndRelY) {
+			anchorX = m.rightContentX + pmLabelWidth + 1
+			anchorY = m.rightContentY + m.fieldEndRelY[pmFieldOpenAIAPIType] + 1
+		}
+		return selectModalOptions{
+			Width:         m.width,
+			Height:        m.height,
+			Title:         "OpenAI API Types:",
+			Options:       m.visibleAPITypeOptions(),
+			IsSelected:    func(option string) bool { return m.apiTypeSelected[option] },
+			Cursor:        m.modalCursor,
+			Help:          "[Space] Toggle  [Enter] Confirm  [Esc] Close",
+			AnchorX:       anchorX,
+			AnchorY:       anchorY,
+			Background:    bg,
+		}, true
+	case pmModalKindThinkingMode:
+		anchorX := 0
+		anchorY := 0
+		if pmFieldThinkingMode < len(m.fieldEndRelY) {
+			anchorX = m.rightContentX + pmLabelWidth + 1
+			anchorY = m.rightContentY + m.fieldEndRelY[pmFieldThinkingMode] + 1
+		}
+		return selectModalOptions{
+			Width:         m.width,
+			Height:        m.height,
+			Title:         "Thinking Mode:",
+			Options:       m.thinkingModalOptions(),
+			SelectedValue: m.fields[pmFieldThinkingMode].value,
+			Cursor:        m.modalCursor,
+			Help:          "[↑/↓] Move  [Enter] Select  [Esc] Close",
+			AnchorX:       anchorX,
+			AnchorY:       anchorY,
+			Background:    bg,
+		}, true
+	case pmModalKindThinkingEffort:
+		anchorX := 0
+		anchorY := 0
+		if pmFieldThinkingEffort < len(m.fieldEndRelY) {
+			anchorX = m.rightContentX + pmLabelWidth + 1
+			anchorY = m.rightContentY + m.fieldEndRelY[pmFieldThinkingEffort] + 1
+		}
+		return selectModalOptions{
+			Width:         m.width,
+			Height:        m.height,
+			Title:         "Thinking Effort:",
+			Options:       m.thinkingModalOptions(),
+			SelectedValue: m.fields[pmFieldThinkingEffort].value,
+			Cursor:        m.modalCursor,
+			Help:          "[↑/↓] Move  [Enter] Select  [Esc] Close",
+			AnchorX:       anchorX,
+			AnchorY:       anchorY,
+			Background:    bg,
+		}, true
+	}
+	return selectModalOptions{}, false
+}
+
 func centeredModalText(text string, width int, style lipgloss.Style) string {
 	pad := max(0, (width-lipgloss.Width(text))/2)
 	return strings.Repeat(" ", pad) + style.Render(text)
@@ -436,7 +579,7 @@ func renderModelModalHelpRows(editing bool, searchFocused bool) []string {
 	if searchFocused {
 		navigation += " · Tab pauses typing"
 	} else {
-		navigation += " · Tab focuses search"
+		navigation += " · Tab focuses search · Space default"
 	}
 	return []string{
 		row("Search", "type text · Backspace edit · Delete clear"),
@@ -469,11 +612,23 @@ func styleStatusMain(s string) string {
 }
 
 func (m *pmModel) helpText() string {
+	if m.width < 90 {
+		switch m.focusArea {
+		case pmFocusProfiles:
+			return "Tab Move · Enter Edit · F3 Add · F4 Copy · F6 Def · F7 Del · Esc Back"
+		case pmFocusFields:
+			return "Tab/Enter Move · ←/→ Cycle · F2 Save · Esc Back"
+		case pmFocusActions:
+			return "←/→ Action · Enter Run · Esc Back"
+		default:
+			return "Tab Move · Enter Activate"
+		}
+	}
 	switch m.focusArea {
 	case pmFocusProfiles:
 		return "Tab Focus · Enter Edit · F3 Add · F4 Copy · F6 Default · F7 Del · " + screenBackHelp
 	case pmFocusFields:
-		return "Tab Focus · Enter Edit · F2 Save · Esc Back"
+		return "Tab/Enter Next · ←/→ Cycle options · F2 Save / Ctrl+S · Esc Back"
 	case pmFocusActions:
 		return "←/→ Pick Action · Enter Run · Esc Back"
 	default:
@@ -483,16 +638,30 @@ func (m *pmModel) helpText() string {
 
 func (m *pmModel) decorateFieldValue(fieldIdx int, value string) string {
 	switch fieldIdx {
-	case pmFieldProviderType, pmFieldOpenAIAPIType:
+	case pmFieldProviderType, pmFieldOpenAIAPIType, pmFieldThinkingMode, pmFieldThinkingEffort:
 		if value == "" {
-			return "Select  ▼"
+			return "Select  ▾"
 		}
-		return value + "  ▼"
+		return value + "  ▾"
 	case pmFieldModelsCSV:
 		if value == "" {
-			return "Choose models  >"
+			return "Choose models  ▸"
 		}
-		return value + "  >"
+		return value + "  ▸"
+	case pmFieldOpenAIAPIKey:
+		if value == "" {
+			p := m.cfg.Profiles[m.currentProfileName()]
+			if p != nil {
+				prov := strings.TrimSpace(p.AuthProvider)
+				if prov == "" && detectProviderType(p) == "Command Code" {
+					prov = "commandcode"
+				}
+				if prov != "" {
+					return fmt.Sprintf("[managed: %s]", prov)
+				}
+			}
+		}
+		return value
 	default:
 		return value
 	}
@@ -543,6 +712,9 @@ func (m *pmModel) leftSummaryLines(width int) []string {
 	}
 	if provider := strings.TrimSpace(m.fields[pmFieldProviderType].value); provider != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(truncateDisplay(provider, width)))
+	}
+	if profile.AuthProvider != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(colorFocus).Width(width).Render(truncateDisplay("Auth: "+profile.AuthProvider, width)))
 	}
 	if summary := strings.TrimSpace(formatModelsSummary(m.modelsDraft, m.defaultModel)); summary != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(colorMuted).Width(width).Render(truncateDisplay(summary, width)))
@@ -698,6 +870,10 @@ func (m *pmModel) contextHintText() string {
 	case pmFieldOpenAIBaseURL:
 		return "Set the OpenAI-compatible endpoint Spark should talk to for this profile."
 	case pmFieldOpenAIAPIKey:
+		p := m.cfg.Profiles[m.currentProfileName()]
+		if p != nil && (p.AuthProvider != "" || detectProviderType(p) == "Command Code") {
+			return "Credentials managed via 'spark auth login'. Type here only to override with a static API key."
+		}
 		return "Stored API key used for test and launch operations."
 	case pmFieldOpenAIAPIType:
 		return "Choose which OpenAI-compatible API surface Spark should prefer for this provider."

@@ -149,15 +149,25 @@ func (m *launchOptionsModel) View() string {
 		),
 	)
 	visibleSlots := launchOptionsVisibleSlots(m.height, lipgloss.Height(header), lipgloss.Height(help))
+
+	maxItems := max(len(m.integrations), max(len(m.profiles), len(m.models)))
+	if maxItems < 5 {
+		maxItems = 5
+	}
+	panelHeight := maxItems + 2
+	if visibleSlots > 0 && panelHeight > visibleSlots+2 {
+		panelHeight = visibleSlots + 2
+	}
+
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.renderColumn("Integration", m.integrations, m.integrationCursor, m.activeColumn == launchOptionsColumnIntegration, columnWidth, visibleSlots),
-		m.renderColumn("Profile", m.profiles, m.profileCursor, m.activeColumn == launchOptionsColumnProfile, columnWidth, visibleSlots),
-		m.renderColumn("Model", m.models, m.modelCursor, m.activeColumn == launchOptionsColumnModel, columnWidth, visibleSlots),
+		m.renderColumn("Integration", m.integrations, m.integrationCursor, m.activeColumn == launchOptionsColumnIntegration, columnWidth, visibleSlots, panelHeight),
+		m.renderColumn("Profile", m.profiles, m.profileCursor, m.activeColumn == launchOptionsColumnProfile, columnWidth, visibleSlots, panelHeight),
+		m.renderColumn("Model", m.models, m.modelCursor, m.activeColumn == launchOptionsColumnModel, columnWidth, visibleSlots, panelHeight),
 	)
 	return fitToViewportHeight(pmAppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, body, help)), m.height)
 }
 
-func (m *launchOptionsModel) renderColumn(title string, items []string, cursor int, focused bool, width, visibleSlots int) string {
+func (m *launchOptionsModel) renderColumn(title string, items []string, cursor int, focused bool, width, visibleSlots, panelHeight int) string {
 	lines := []string{
 		dashboardSectionTitleStyle.Render(title),
 		"",
@@ -196,9 +206,9 @@ func (m *launchOptionsModel) renderColumn(title string, items []string, cursor i
 			lines = append(lines, lipgloss.NewStyle().Foreground(colorDim).Width(width-4).Render("  v more"))
 		}
 	}
-	panel := pmPanelStyle.Width(width)
+	panel := pmPanelStyle.Width(width).Height(panelHeight)
 	if focused {
-		panel = pmFocusedPanelStyle.Width(width)
+		panel = pmFocusedPanelStyle.Width(width).Height(panelHeight)
 	}
 	return panel.Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
 }

@@ -56,16 +56,23 @@ func RenderMCPManagerSnapshot(cfg *config.RootConfig, width, height int, state s
 
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "", "overview":
-	case "add", "add-stdio":
-		m.startAddEditor("stdio")
+	case "add":
+		m.openAddModal()
+	case "add-stdio":
+		m.openAddModal()
+		m.addTransport = 0
 	case "add-http":
-		m.startAddEditor("http")
+		m.openAddModal()
+		m.addTransport = 1
 	case "add-sse":
-		m.startAddEditor("sse")
+		m.openAddModal()
+		m.addTransport = 2
 	case "edit", "edit-current":
-		m.startEditCurrent()
+		m.focusArea = mcpFocusFields
 	case "transfer":
-		m.openTransferMenu()
+		m.openTransferModal()
+	case "import":
+		m.openImportModal()
 	default:
 		return "", fmt.Errorf("unknown mcp snapshot state: %s", state)
 	}

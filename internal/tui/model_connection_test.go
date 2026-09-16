@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"spark/internal/auth"
 	"spark/internal/config"
 	"spark/internal/probe"
 )
@@ -318,6 +319,113 @@ func TestHandleMainMouse_TestButtonReturnsCmd(t *testing.T) {
 	})
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd when clicking Test button")
+	}
+}
+
+func TestFetchModelsWithAuthProvider_ResolvesFromAuthStore(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	authDir := filepath.Join(tempHome, ".spark", "auth")
+	_ = os.MkdirAll(authDir, 0o700)
+	_ = os.WriteFile(filepath.Join(authDir, "commandcode.json"), []byte(`{"provider":"commandcode","kind":"oauth","access_token":"user_test_token_123"}`), 0o600)
+
+	var authHeader string
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			authHeader = req.Header.Get("Authorization")
+			return fakeResponse(req, http.StatusOK, `{"data":[{"id":"claude-3-5-sonnet"}]}`), nil
+		}),
+	}
+
+	profile := &config.Profile{
+		OpenAIBaseURL: "https://api.commandcode.ai",
+		AuthProvider:  auth.ProviderCommandCode,
+	}
+
+	models, err := fetchModelsWithClient(profile, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(models) != 1 || models[0] != "claude-3-5-sonnet" {
+		t.Fatalf("unexpected models: %v", models)
+	}
+	if authHeader != "Bearer user_test_token_123" {
+		t.Fatalf("expected 'Bearer user_test_token_123', got %q", authHeader)
+	}
+}
+
+func TestFetchModelsCommandCode_FallbackToCloudOnLocalProxyFailure(t *testing.T) {
+	var cloudRequested bool
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Host, "localhost:3050") {
+				return fakeResponse(req, http.StatusBadGateway, `{"error":"proxy down"}`), nil
+			}
+			if req.URL.String() == "https://api.commandcode.ai/provider/v1/models" {
+				cloudRequested = true
+				if req.Header.Get("Authorization") != "Bearer user_key_abc" {
+					t.Fatalf("missing auth header on cloud fallback: %s", req.Header.Get("Authorization"))
+				}
+				return fakeResponse(req, http.StatusOK, `{"data":[{"id":"gpt-5.6-sol"}]}`), nil
+			}
+			return fakeResponse(req, http.StatusNotFound, `{"error":"not found"}`), nil
+		}),
+	}
+
+	profile := &config.Profile{
+		OpenAIBaseURL: "http://localhost:3050/v1",
+		APIKey:        "user_key_abc",
+		AuthProvider:  "commandcode",
+	}
+
+	models, err := fetchModelsWithClient(profile, client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cloudRequested {
+		t.Fatal("expected cloud fallback to be requested")
+	}
+	if len(models) != 1 || models[0] != "gpt-5.6-sol" {
+		t.Fatalf("unexpected models: %v", models)
+	}
+}
+
+func TestProfileManagerFetchModels_PassesAuthProvider(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	authDir := filepath.Join(tempHome, ".spark", "auth")
+	_ = os.MkdirAll(authDir, 0o700)
+	_ = os.WriteFile(filepath.Join(authDir, "commandcode.json"), []byte(`{"provider":"commandcode","kind":"oauth","access_token":"user_stored_tok"}`), 0o600)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer user_stored_tok" {
+			t.Fatalf("expected bearer auth token from store, got %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-fable-5"}]}`))
+	}))
+	defer server.Close()
+
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "cc",
+		Profiles: map[string]*config.Profile{
+			"cc": {
+				OpenAIBaseURL: server.URL,
+				AuthProvider:  "commandcode",
+				OpenAIAPIType: config.OpenAIAPITypeChatCompletions,
+			},
+		},
+	})
+	m.openModelsModal()
+
+	cmd := m.fetchModelsFromAPI()
+	msg := cmd()
+	got := msg.(fetchModelsResultMsg)
+	if got.err != nil {
+		t.Fatalf("fetch failed: %v", got.err)
+	}
+	if len(got.models) != 1 || got.models[0] != "claude-fable-5" {
+		t.Fatalf("expected [claude-fable-5], got %v", got.models)
 	}
 }
 

@@ -23,7 +23,7 @@ func TestQuitOnScreenBackKeys(t *testing.T) {
 
 func TestMCPManagerBrowseEscQuits(t *testing.T) {
 	m := newMCPManagerModel(&config.RootConfig{})
-	cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("expected esc on MCP browse to quit")
 	}

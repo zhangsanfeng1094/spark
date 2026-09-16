@@ -101,6 +101,37 @@ func TestCreateAnthropicProfileFromProviderModal(t *testing.T) {
 	}
 }
 
+func TestCreateCommandCodeProfileFromProviderModal(t *testing.T) {
+	m := newPMModel(&config.RootConfig{
+		DefaultProfile: "default",
+		Profiles: map[string]*config.Profile{
+			"default": {OpenAIBaseURL: "https://api.openai.com/v1"},
+		},
+	})
+	m.openAddModal()
+	for i, opt := range m.providerOptions {
+		if opt.kind == "commandcode" {
+			m.modalCursor = i
+			break
+		}
+	}
+	m.createProfileFromModal()
+
+	p := m.cfg.Profiles["command-code"]
+	if p == nil {
+		t.Fatalf("expected command-code profile, got %#v", m.cfg.Profiles)
+	}
+	if p.OpenAIBaseURL != "https://api.commandcode.ai/provider/v1" {
+		t.Fatalf("base url mismatch: %#v", p)
+	}
+	if p.AuthProvider != "commandcode" {
+		t.Fatalf("auth provider mismatch: %#v", p)
+	}
+	if got := m.fields[pmFieldProviderType].value; got != "Command Code" {
+		t.Fatalf("provider field mismatch: %q", got)
+	}
+}
+
 func TestSelectProviderTypeFieldUpdatesCurrentProfileDraft(t *testing.T) {
 	m := newPMModel(&config.RootConfig{
 		DefaultProfile: "default",
@@ -273,5 +304,30 @@ func TestProfileManagerModelListURLFieldRoundTrip(t *testing.T) {
 	}
 	if got := m.cfg.Profiles["default"].ModelListURL; got != "https://gateway.example/custom-models" {
 		t.Fatalf("model list url profile mismatch: %q", got)
+	}
+}
+
+func TestProfileManagerThinkingUsesSelectorsAndPersists(t *testing.T) {
+	m := newPMModel(&config.RootConfig{DefaultProfile: "default", Profiles: map[string]*config.Profile{"default": {}}})
+	m.focusArea = pmFocusFields
+	m.focusField = pmFieldThinkingMode
+	if !m.openFieldModalIfNeeded() || m.modalKind != pmModalKindThinkingMode {
+		t.Fatalf("thinking mode should open its selector")
+	}
+	m.modalCursor = 2 // force
+	m.confirmThinkingSelection()
+	m.focusField = pmFieldThinkingEffort
+	if !m.openFieldModalIfNeeded() || m.modalKind != pmModalKindThinkingEffort {
+		t.Fatalf("thinking effort should open its selector")
+	}
+	m.modalCursor = 3 // medium; index zero is unset
+	m.confirmThinkingSelection()
+	m.fields[pmFieldThinkingBudget].value = "8192"
+	if err := m.applyFieldsToProfile("default"); err != nil {
+		t.Fatal(err)
+	}
+	got := m.cfg.Profiles["default"].Thinking
+	if got == nil || got.Mode != "force" || got.Effort != "medium" || got.BudgetTokens == nil || *got.BudgetTokens != 8192 {
+		t.Fatalf("thinking=%#v", got)
 	}
 }

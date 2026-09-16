@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,8 +40,13 @@ func (m *pmModel) runAction(action int) tea.Cmd {
 }
 
 func (m *pmModel) setCurrentProfileDefault() {
-	wasDirty := m.dirty
 	name := m.currentProfileName()
+	if m.dirty {
+		if err := m.applyFieldsToProfile(name); err != nil {
+			m.setUserStatus(pmStatusError, "Default failed: "+err.Error())
+			return
+		}
+	}
 	if err := m.cfg.SetDefaultProfile(name); err != nil {
 		m.setUserStatus(pmStatusError, "Default failed: "+err.Error())
 		return
@@ -50,7 +56,7 @@ func (m *pmModel) setCurrentProfileDefault() {
 		m.setUserStatus(pmStatusError, "Default save failed: "+err.Error())
 		return
 	}
-	m.dirty = wasDirty
+	m.dirty = false
 	m.setUserStatus(pmStatusSuccess, "Set '"+name+"' as default.")
 }
 
@@ -112,6 +118,8 @@ func (m *pmModel) openModelsModal() {
 	m.modelEditBuffer = ""
 	m.modelModalNote = ""
 	m.modelSearchQuery = ""
+	m.modelSearchInput = newFieldTextInput("type to filter models...", "", false, true, 48)
+	m.modelSearchInput.Prompt = "Search: "
 	m.modelSearchFocused = true
 	m.modelModalScroll = 0
 	m.modelModalVisibleCount = 0
@@ -124,6 +132,42 @@ func (m *pmModel) openModelsModal() {
 		}
 	}
 	m.syncModelsModalScroll()
+}
+
+func (m *pmModel) openThinkingModal(kind int, field int) {
+	m.modalOpen = true
+	m.modalKind = kind
+	m.modalCursor = 0
+	current := strings.TrimSpace(m.fields[field].value)
+	for i, option := range m.thinkingModalOptions() {
+		if option == current {
+			m.modalCursor = i
+			break
+		}
+	}
+}
+
+func (m *pmModel) thinkingModalOptions() []string {
+	if m.modalKind == pmModalKindThinkingMode {
+		return []string{"client", "auto", "force", "off"}
+	}
+	return []string{"", "minimal", "low", "medium", "high", "xhigh", "max"}
+}
+
+func (m *pmModel) confirmThinkingSelection() {
+	options := m.thinkingModalOptions()
+	if m.modalCursor < 0 || m.modalCursor >= len(options) {
+		return
+	}
+	field := pmFieldThinkingMode
+	if m.modalKind == pmModalKindThinkingEffort {
+		field = pmFieldThinkingEffort
+	}
+	m.fields[field].value = options[m.modalCursor]
+	m.fields[field].cursor = len([]rune(options[m.modalCursor]))
+	m.modalOpen = false
+	m.modalKind = pmModalKindNone
+	m.dirty = true
 }
 
 func (m *pmModel) createProfileFromModal() {
@@ -139,11 +183,7 @@ func (m *pmModel) createProfileFromModal() {
 	m.setUserStatus(pmStatusInfo, fmt.Sprintf("Created '%s'. Edit fields, then save.", name))
 }
 
-func (m *pmModel) confirmProviderTypeSelection() {
-	if m.modalCursor < 0 || m.modalCursor >= len(m.providerOptions) {
-		return
-	}
-	opt := m.providerOptions[m.modalCursor]
+func (m *pmModel) applyProviderOption(opt pmProviderOption) {
 	template := m.profileTemplate(opt.kind)
 	apiKey := ""
 	if pmFieldOpenAIAPIKey < len(m.fields) {
@@ -156,16 +196,140 @@ func (m *pmModel) confirmProviderTypeSelection() {
 	apiType := displayOpenAIAPIType(template.OpenAIAPIType)
 	m.fields[pmFieldOpenAIAPIType].value = apiType
 	m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(apiType))
+	if strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value) == "" && template.EffectiveEndpoint() != "" {
+		m.fields[pmFieldOpenAIBaseURL].value = template.EffectiveEndpoint()
+		m.fields[pmFieldOpenAIBaseURL].cursor = len([]rune(template.EffectiveEndpoint()))
+	}
 	m.modelsDraft = config.NormalizeModels(template.Models)
 	m.defaultModel = strings.TrimSpace(template.DefaultModel)
 	if m.defaultModel == "" && len(m.modelsDraft) > 0 {
 		m.defaultModel = m.modelsDraft[0]
 	}
 	m.syncModelFieldViews()
+	m.dirty = true
+	m.setUserStatus(pmStatusInfo, fmt.Sprintf("Provider type set to %s. Save to persist.", opt.name))
+}
+
+func (m *pmModel) confirmProviderTypeSelection() {
+	if m.modalCursor < 0 || m.modalCursor >= len(m.providerOptions) {
+		return
+	}
+	m.applyProviderOption(m.providerOptions[m.modalCursor])
 	m.modalOpen = false
 	m.modalKind = pmModalKindNone
+}
+
+func (m *pmModel) cycleProviderType(forward bool) {
+	if len(m.providerOptions) == 0 {
+		return
+	}
+	curName := m.fields[pmFieldProviderType].value
+	curIdx := 0
+	for i, opt := range m.providerOptions {
+		if strings.EqualFold(opt.name, curName) {
+			curIdx = i
+			break
+		}
+	}
+	if forward {
+		curIdx = (curIdx + 1) % len(m.providerOptions)
+	} else {
+		curIdx = (curIdx - 1 + len(m.providerOptions)) % len(m.providerOptions)
+	}
+	m.applyProviderOption(m.providerOptions[curIdx])
+}
+
+func (m *pmModel) cycleThinkingMode(forward bool) {
+	modes := []string{"client", "auto", "force", "off"}
+	cur := strings.TrimSpace(m.fields[pmFieldThinkingMode].value)
+	curIdx := 0
+	for i, v := range modes {
+		if v == cur {
+			curIdx = i
+			break
+		}
+	}
+	if forward {
+		curIdx = (curIdx + 1) % len(modes)
+	} else {
+		curIdx = (curIdx - 1 + len(modes)) % len(modes)
+	}
+	m.fields[pmFieldThinkingMode].value = modes[curIdx]
+	m.fields[pmFieldThinkingMode].cursor = len([]rune(modes[curIdx]))
 	m.dirty = true
-	m.setUserStatus(pmStatusInfo, "Provider type updated. Save to persist.")
+	m.setUserStatus(pmStatusInfo, fmt.Sprintf("Thinking mode: %s. Save to persist.", modes[curIdx]))
+}
+
+func (m *pmModel) cycleThinkingEffort(forward bool) {
+	efforts := []string{"", "minimal", "low", "medium", "high", "xhigh", "max"}
+	cur := strings.TrimSpace(m.fields[pmFieldThinkingEffort].value)
+	curIdx := 0
+	for i, v := range efforts {
+		if v == cur {
+			curIdx = i
+			break
+		}
+	}
+	if forward {
+		curIdx = (curIdx + 1) % len(efforts)
+	} else {
+		curIdx = (curIdx - 1 + len(efforts)) % len(efforts)
+	}
+	m.fields[pmFieldThinkingEffort].value = efforts[curIdx]
+	m.fields[pmFieldThinkingEffort].cursor = len([]rune(efforts[curIdx]))
+	m.dirty = true
+	label := efforts[curIdx]
+	if label == "" {
+		label = "default"
+	}
+	m.setUserStatus(pmStatusInfo, fmt.Sprintf("Thinking effort: %s. Save to persist.", label))
+}
+
+func (m *pmModel) cycleAPIType(forward bool) {
+	options := m.visibleAPITypeOptions()
+	if len(options) == 0 {
+		return
+	}
+	cur := strings.TrimSpace(m.fields[pmFieldOpenAIAPIType].value)
+	curIdx := 0
+	for i, v := range options {
+		if strings.EqualFold(v, cur) {
+			curIdx = i
+			break
+		}
+	}
+	if forward {
+		curIdx = (curIdx + 1) % len(options)
+	} else {
+		curIdx = (curIdx - 1 + len(options)) % len(options)
+	}
+	m.fields[pmFieldOpenAIAPIType].value = options[curIdx]
+	m.fields[pmFieldOpenAIAPIType].cursor = len([]rune(options[curIdx]))
+	m.apiTypeSelected = map[string]bool{options[curIdx]: true}
+	m.dirty = true
+	m.setUserStatus(pmStatusInfo, fmt.Sprintf("API type: %s. Save to persist.", options[curIdx]))
+}
+
+func (m *pmModel) cycleSelectField(forward bool) bool {
+	if m.focusArea != pmFocusFields {
+		return false
+	}
+	switch m.focusField {
+	case pmFieldProviderType:
+		m.cycleProviderType(forward)
+		return true
+	case pmFieldOpenAIAPIType:
+		m.cycleAPIType(forward)
+		return true
+	case pmFieldThinkingMode:
+		m.cycleThinkingMode(forward)
+		return true
+	case pmFieldThinkingEffort:
+		m.cycleThinkingEffort(forward)
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *pmModel) toggleAPITypeOptionAtCursor() {
@@ -188,6 +352,9 @@ func (m *pmModel) startModelAdd() {
 	m.modelEditMode = true
 	m.modelEditIndex = -1
 	m.modelEditBuffer = ""
+	m.modelEditInput = newFieldTextInput("e.g. gpt-4o, claude-3-7-sonnet", "", false, true, 48)
+	m.modelEditInput.Prompt = "Input: "
+	m.modelEditInput.Focus()
 	m.modelModalNote = "Input model id and press Enter to add."
 }
 
@@ -199,10 +366,17 @@ func (m *pmModel) startModelEdit() {
 	m.modelEditMode = true
 	m.modelEditIndex = m.modalCursor
 	m.modelEditBuffer = m.modelItems[m.modalCursor]
+	m.modelEditInput = newFieldTextInput("model id", m.modelEditBuffer, false, true, 48)
+	m.modelEditInput.Prompt = "Input: "
+	m.modelEditInput.Focus()
+	m.modelEditInput.CursorEnd()
 	m.modelModalNote = "Editing selected model. Press Enter to save."
 }
 
 func (m *pmModel) confirmModelEdit() {
+	if m.modelEditInput.Value() != "" || m.modelEditBuffer == "" {
+		m.modelEditBuffer = m.modelEditInput.Value()
+	}
 	value := strings.TrimSpace(m.modelEditBuffer)
 	if value == "" {
 		m.modelModalNote = "Model id cannot be empty."
@@ -305,9 +479,34 @@ func (m *pmModel) fetchModelsFromAPI() tea.Cmd {
 		profileCopy.AnthropicBaseURL = profileCopy.OpenAIBaseURL
 	}
 	name := m.currentProfileName()
+	var authProvider string
 	if p := m.cfg.Profiles[name]; p != nil {
 		profileCopy.OpenAIOrg = strings.TrimSpace(p.OpenAIOrg)
 		profileCopy.OpenAIProject = strings.TrimSpace(p.OpenAIProject)
+	}
+	switch m.fields[pmFieldProviderType].value {
+	case "Command Code":
+		authProvider = "commandcode"
+	case "Claude", "Anthropic":
+		authProvider = "claude"
+	case "Codex":
+		authProvider = "codex"
+	case "Gemini":
+		authProvider = "gemini"
+	default:
+		if strings.Contains(profileCopy.OpenAIBaseURL, ":3050") || strings.Contains(profileCopy.OpenAIBaseURL, "commandcode") {
+			authProvider = "commandcode"
+		}
+	}
+	profileCopy.AuthProvider = authProvider
+	profileCopy.Endpoint = profileCopy.OpenAIBaseURL
+	profileCopy.Protocol = config.NormalizeAPIProtocol(profileCopy.OpenAIAPIType)
+	profileCopy.Credential.APIKey = profileCopy.APIKey
+	if profileCopy.Credential.AuthRef == "" && authProvider != "" {
+		profileCopy.Credential.AuthRef = authProvider + ":default"
+	}
+	if profileCopy.Credential.Mode == "" {
+		profileCopy.Credential.Mode = config.CredentialModeAuto
 	}
 	return func() tea.Msg {
 		models, err := FetchOpenAIModels(profileCopy)
@@ -376,6 +575,9 @@ func (m *pmModel) deleteSelectedProfile() {
 			ic.Profile = m.cfg.DefaultProfile
 		}
 	}
+	if m.cfg.History.LastProfile == name {
+		m.cfg.History.LastProfile = m.cfg.DefaultProfile
+	}
 
 	if m.selected >= len(m.profileNames) {
 		m.selected = len(m.profileNames) - 1
@@ -401,6 +603,9 @@ func (m *pmModel) handleConfirmDeleteKey(msg tea.KeyMsg) tea.Cmd {
 
 func (m *pmModel) copySelectedProfile() {
 	name := m.currentProfileName()
+	if m.dirty {
+		_ = m.applyFieldsToProfile(name)
+	}
 	profile, ok := m.cfg.Profiles[name]
 	if !ok {
 		m.setUserStatus(pmStatusError, "Profile not found.")
@@ -410,9 +615,23 @@ func (m *pmModel) copySelectedProfile() {
 	// Generate a unique name for the copied profile
 	newName := m.uniqueProfileName(name + "-copy")
 
-	// Deep copy the profile
+	// Deep copy the profile including v2 and thinking config
+	var thinkingCopy *config.ThinkingConfig
+	if profile.Thinking != nil {
+		tc := *profile.Thinking
+		if profile.Thinking.BudgetTokens != nil {
+			budget := *profile.Thinking.BudgetTokens
+			tc.BudgetTokens = &budget
+		}
+		thinkingCopy = &tc
+	}
+
 	newProfile := &config.Profile{
-		OpenAIBaseURL:    profile.OpenAIBaseURL,
+		Endpoint:         profile.EffectiveEndpoint(),
+		Protocol:         profile.EffectiveProtocol(),
+		Credential:       profile.Credential,
+		Thinking:         thinkingCopy,
+		OpenAIBaseURL:    profile.EffectiveEndpoint(),
 		APIKey:           profile.EffectiveAPIKey(),
 		OpenAIAPIType:    profile.OpenAIAPIType,
 		OpenAIOrg:        profile.OpenAIOrg,
@@ -421,6 +640,17 @@ func (m *pmModel) copySelectedProfile() {
 		AnthropicBaseURL: profile.AnthropicBaseURL,
 		Models:           append([]string{}, profile.Models...),
 		DefaultModel:     profile.DefaultModel,
+		AuthProvider:     profile.AuthProvider,
+		AuthRef:          profile.EffectiveAuthRef(),
+	}
+	if newProfile.Credential.APIKey == "" {
+		newProfile.Credential.APIKey = newProfile.APIKey
+	}
+	if newProfile.Credential.AuthRef == "" {
+		newProfile.Credential.AuthRef = newProfile.AuthRef
+	}
+	if newProfile.Credential.Mode == "" {
+		newProfile.Credential.Mode = newProfile.EffectiveCredentialMode()
 	}
 
 	m.cfg.Profiles[newName] = newProfile
@@ -452,6 +682,9 @@ func (m *pmModel) save() {
 		if m.cfg.DefaultProfile == oldName {
 			m.cfg.DefaultProfile = newName
 		}
+		if m.cfg.History.LastProfile == oldName {
+			m.cfg.History.LastProfile = newName
+		}
 		for _, ic := range m.cfg.Integrations {
 			if ic != nil && ic.Profile == oldName {
 				ic.Profile = newName
@@ -473,12 +706,21 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 	if p == nil {
 		return fmt.Errorf("profile not found")
 	}
-	p.OpenAIBaseURL = strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value)
+	baseURL := strings.TrimSpace(m.fields[pmFieldOpenAIBaseURL].value)
+	p.OpenAIBaseURL = baseURL
+	p.Endpoint = baseURL
 	p.APIKey = strings.TrimSpace(m.fields[pmFieldOpenAIAPIKey].value)
 	p.OpenAIAPIKey = p.APIKey
+	p.Credential.APIKey = p.APIKey
 	p.AnthropicAuthToken = ""
 	p.OpenAIAPIType = config.CanonicalizeOpenAIAPITypes(m.fields[pmFieldOpenAIAPIType].value)
+	p.Protocol = config.NormalizeAPIProtocol(p.OpenAIAPIType)
 	p.ModelListURL = strings.TrimSpace(m.fields[pmFieldModelListURL].value)
+	thinkingConfig, err := thinkingConfigFromFields(m.fields)
+	if err != nil {
+		return err
+	}
+	p.Thinking = thinkingConfig
 	if config.SupportsOpenAIAPIType(p.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
 		p.AnthropicBaseURL = p.OpenAIBaseURL
 	} else {
@@ -486,7 +728,71 @@ func (m *pmModel) applyFieldsToProfile(name string) error {
 	}
 	p.Models = append([]string{}, m.modelsDraft...)
 	p.DefaultModel = strings.TrimSpace(m.defaultModel)
+	switch m.fields[pmFieldProviderType].value {
+	case "Command Code":
+		p.AuthProvider = "commandcode"
+	case "Claude", "Anthropic":
+		p.AuthProvider = "claude"
+	case "Codex":
+		p.AuthProvider = "codex"
+	case "Gemini":
+		p.AuthProvider = "gemini"
+	default:
+		if strings.Contains(p.OpenAIBaseURL, ":3050") || strings.Contains(p.OpenAIBaseURL, "commandcode") {
+			p.AuthProvider = "commandcode"
+		} else {
+			p.AuthProvider = ""
+			p.AuthRef = ""
+			p.Credential.AuthRef = ""
+		}
+	}
+	if p.Credential.AuthRef == "" && p.AuthProvider != "" {
+		p.Credential.AuthRef = p.AuthProvider + ":default"
+	}
+	if p.AuthRef == "" && p.AuthProvider != "" {
+		p.AuthRef = p.Credential.AuthRef
+	}
+	if p.Credential.Mode == "" {
+		p.Credential.Mode = config.CredentialModeAuto
+	}
 	return nil
+}
+
+func thinkingConfigFromFields(fields []pmField) (*config.ThinkingConfig, error) {
+	if pmFieldThinkingBudget >= len(fields) {
+		return nil, nil
+	}
+	mode := strings.ToLower(strings.TrimSpace(fields[pmFieldThinkingMode].value))
+	if mode == "" || mode == "client" {
+		return nil, nil
+	}
+	if mode != "auto" && mode != "force" && mode != "off" {
+		return nil, fmt.Errorf("thinking mode must be client, auto, force, or off")
+	}
+	cfg := &config.ThinkingConfig{Mode: mode}
+	if mode == "off" {
+		return cfg, nil
+	}
+	cfg.Effort = strings.ToLower(strings.TrimSpace(fields[pmFieldThinkingEffort].value))
+	if cfg.Effort != "" && !validThinkingEffort(cfg.Effort) {
+		return nil, fmt.Errorf("thinking effort must be minimal, low, medium, high, xhigh, or max")
+	}
+	if raw := strings.TrimSpace(fields[pmFieldThinkingBudget].value); raw != "" {
+		budget, err := strconv.Atoi(raw)
+		if err != nil || budget <= 0 {
+			return nil, fmt.Errorf("thinking budget must be a positive integer")
+		}
+		cfg.BudgetTokens = &budget
+	}
+	return cfg, nil
+}
+
+func validThinkingEffort(value string) bool {
+	switch value {
+	case "minimal", "low", "medium", "high", "xhigh", "max":
+		return true
+	}
+	return false
 }
 
 // testResultMsg is sent when a connection test completes
@@ -531,6 +837,39 @@ func (m *pmModel) testConnection() tea.Cmd {
 		Models:        append([]string{}, m.modelsDraft...),
 		DefaultModel:  model,
 	}
+	if config.SupportsOpenAIAPIType(profileCopy.OpenAIAPIType, config.OpenAIAPITypeAnthropicMessages) {
+		profileCopy.AnthropicBaseURL = profileCopy.OpenAIBaseURL
+	}
+	var authProvider string
+	if p := m.cfg.Profiles[name]; p != nil {
+		profileCopy.OpenAIOrg = strings.TrimSpace(p.OpenAIOrg)
+		profileCopy.OpenAIProject = strings.TrimSpace(p.OpenAIProject)
+	}
+	switch m.fields[pmFieldProviderType].value {
+	case "Command Code":
+		authProvider = "commandcode"
+	case "Claude", "Anthropic":
+		authProvider = "claude"
+	case "Codex":
+		authProvider = "codex"
+	case "Gemini":
+		authProvider = "gemini"
+	default:
+		if strings.Contains(profileCopy.OpenAIBaseURL, ":3050") || strings.Contains(profileCopy.OpenAIBaseURL, "commandcode") {
+			authProvider = "commandcode"
+		}
+	}
+	profileCopy.AuthProvider = authProvider
+	profileCopy.Endpoint = profileCopy.OpenAIBaseURL
+	profileCopy.Protocol = config.NormalizeAPIProtocol(profileCopy.OpenAIAPIType)
+	profileCopy.Credential.APIKey = profileCopy.APIKey
+	if profileCopy.Credential.AuthRef == "" && authProvider != "" {
+		profileCopy.Credential.AuthRef = authProvider + ":default"
+	}
+	if profileCopy.Credential.Mode == "" {
+		profileCopy.Credential.Mode = config.CredentialModeAuto
+	}
+	profileCopy.Thinking, _ = thinkingConfigFromFields(m.fields)
 	return func() tea.Msg {
 		result := probe.TestModelConnection(profileCopy, model)
 		return testResultMsg{statusSeq: statusSeq, result: result}

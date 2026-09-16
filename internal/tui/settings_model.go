@@ -163,12 +163,6 @@ func (m *settingsModel) View() string {
 		rightW = 54
 	}
 
-	left := m.renderSectionList(leftW)
-	right := m.renderFields(rightW)
-	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		pmPanelStyle.Width(leftW).Render(left),
-		pmFocusedPanelStyle.Width(rightW).Render(right),
-	)
 	status := m.status
 	if m.dirty {
 		status = status + " Unsaved changes."
@@ -178,6 +172,19 @@ func (m *settingsModel) View() string {
 			lipgloss.NewStyle().Foreground(colorText).Render(status),
 			lipgloss.NewStyle().Width(max(0, width-lipgloss.Width(status)-8)).Align(lipgloss.Right).Foreground(colorMuted).Render("Tab Section | Up/Down Field | Enter Change | F2/Ctrl+S Save | Esc/Q Back"),
 		),
+	)
+
+	left := m.renderSectionList(leftW)
+	right := m.renderFields(rightW)
+	paneInnerH := max(lipgloss.Height(left), lipgloss.Height(right))
+	availableOuterH := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+	if availableOuterH > 2 {
+		paneInnerH = availableOuterH - 2
+	}
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top,
+		pmPanelStyle.Width(leftW).Height(paneInnerH).Render(left),
+		pmFocusedPanelStyle.Width(rightW).Height(paneInnerH).Render(right),
 	)
 
 	return fitToViewportHeight(pmAppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, body, footer)), m.height)
@@ -448,33 +455,16 @@ func (m *settingsModel) handleFocusedTextKey(msg tea.KeyMsg) bool {
 }
 
 func (m *settingsModel) insertCatalogRunes(in []rune) {
-	r := []rune(m.draft.CodexModelCatalogJSON)
-	m.catalogCursor = clampIndexInclusive(m.catalogCursor, len(r))
-	next := make([]rune, 0, len(r)+len(in))
-	next = append(next, r[:m.catalogCursor]...)
-	next = append(next, in...)
-	next = append(next, r[m.catalogCursor:]...)
-	m.draft.CodexModelCatalogJSON = string(next)
-	m.catalogCursor += len(in)
+	m.draft.CodexModelCatalogJSON, m.catalogCursor = InsertAtCursor(m.draft.CodexModelCatalogJSON, m.catalogCursor, in)
 	m.markDirty("Codex model catalog changed. Save to persist.")
 }
 
 func (m *settingsModel) deleteCatalogRune(direction int) {
-	r := []rune(m.draft.CodexModelCatalogJSON)
-	m.catalogCursor = clampIndexInclusive(m.catalogCursor, len(r))
 	if direction < 0 {
-		if m.catalogCursor == 0 {
-			return
-		}
-		r = append(r[:m.catalogCursor-1], r[m.catalogCursor:]...)
-		m.catalogCursor--
+		m.draft.CodexModelCatalogJSON, m.catalogCursor = DeleteBeforeCursor(m.draft.CodexModelCatalogJSON, m.catalogCursor)
 	} else {
-		if m.catalogCursor >= len(r) {
-			return
-		}
-		r = append(r[:m.catalogCursor], r[m.catalogCursor+1:]...)
+		m.draft.CodexModelCatalogJSON, m.catalogCursor = DeleteAtCursor(m.draft.CodexModelCatalogJSON, m.catalogCursor)
 	}
-	m.draft.CodexModelCatalogJSON = string(r)
 	m.markDirty("Codex model catalog changed. Save to persist.")
 }
 

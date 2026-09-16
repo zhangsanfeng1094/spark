@@ -245,10 +245,8 @@ func (m *skillManagerModel) handleInstallKey(msg tea.KeyMsg) tea.Cmd {
 			m.installFocus = len(m.installFields) - 1
 		}
 	case "backspace":
-		value := []rune(m.installFields[m.installFocus].value)
-		if len(value) > 0 {
-			m.installFields[m.installFocus].value = string(value[:len(value)-1])
-		}
+		f := &m.installFields[m.installFocus]
+		f.value, _ = DeleteBeforeCursor(f.value, len([]rune(f.value)))
 	case "enter":
 		if m.installFocus == len(m.installFields)-1 {
 			return m.installLocalSkill()
@@ -256,7 +254,8 @@ func (m *skillManagerModel) handleInstallKey(msg tea.KeyMsg) tea.Cmd {
 		m.installFocus++
 	default:
 		if len(msg.Runes) > 0 {
-			m.installFields[m.installFocus].value += string(msg.Runes)
+			f := &m.installFields[m.installFocus]
+			f.value, _ = InsertAtCursor(f.value, len([]rune(f.value)), msg.Runes)
 		}
 	}
 	return nil
@@ -276,10 +275,7 @@ func (m *skillManagerModel) handleCatalogKey(msg tea.KeyMsg) tea.Cmd {
 			m.catalogIndex++
 		}
 	case "backspace":
-		value := []rune(m.catalogQuery)
-		if len(value) > 0 {
-			m.catalogQuery = string(value[:len(value)-1])
-		}
+		m.catalogQuery, _ = DeleteBeforeCursor(m.catalogQuery, len([]rune(m.catalogQuery)))
 	case "enter":
 		if len(m.catalogItems) > 0 {
 			return m.installCatalogSelection()
@@ -287,7 +283,7 @@ func (m *skillManagerModel) handleCatalogKey(msg tea.KeyMsg) tea.Cmd {
 		return m.searchCatalog()
 	default:
 		if len(msg.Runes) > 0 {
-			m.catalogQuery += string(msg.Runes)
+			m.catalogQuery, _ = InsertAtCursor(m.catalogQuery, len([]rune(m.catalogQuery)), msg.Runes)
 		}
 	}
 	return nil
@@ -449,27 +445,34 @@ func (m *skillManagerModel) View() string {
 	if rightW < 50 {
 		rightW = 50
 	}
+	statusBar := pmStatusBarStyle.Width(m.width - 4).Render(m.renderStatusBar())
+	leftContent := m.renderSkillList()
+	rightContent := m.renderDetails()
+	paneInnerH := max(lipgloss.Height(leftContent), lipgloss.Height(rightContent))
+	availableOuterH := m.height - lipgloss.Height(header) - lipgloss.Height(subtitle) - lipgloss.Height(statusBar)
+	if availableOuterH > 2 {
+		paneInnerH = availableOuterH - 2
+	}
 	body := lipgloss.JoinHorizontal(
 		lipgloss.Top,
-		m.leftPaneStyle(leftW).Render(m.renderSkillList()),
-		m.rightPaneStyle(rightW).Render(m.renderDetails()),
+		m.leftPaneStyle(leftW, paneInnerH).Render(leftContent),
+		m.rightPaneStyle(rightW, paneInnerH).Render(rightContent),
 	)
-	statusBar := pmStatusBarStyle.Width(m.width - 4).Render(m.renderStatusBar())
 	return fitToViewportHeight(pmAppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, header, subtitle, body, statusBar)), m.height)
 }
 
-func (m *skillManagerModel) leftPaneStyle(width int) lipgloss.Style {
-	style := pmPanelStyle.Width(width)
+func (m *skillManagerModel) leftPaneStyle(width, height int) lipgloss.Style {
+	style := pmPanelStyle.Width(width).Height(height)
 	if !m.installing && !m.transferring && !m.cataloging {
-		return pmFocusedPanelStyle.Width(width)
+		return pmFocusedPanelStyle.Width(width).Height(height)
 	}
 	return style
 }
 
-func (m *skillManagerModel) rightPaneStyle(width int) lipgloss.Style {
-	style := pmPanelStyle.Width(width)
+func (m *skillManagerModel) rightPaneStyle(width, height int) lipgloss.Style {
+	style := pmPanelStyle.Width(width).Height(height)
 	if m.installing || m.transferring || m.cataloging {
-		return pmFocusedPanelStyle.Width(width)
+		return pmFocusedPanelStyle.Width(width).Height(height)
 	}
 	return style
 }

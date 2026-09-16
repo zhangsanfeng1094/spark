@@ -10,46 +10,39 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// 定义样式
+// Styles aligned with Theme Tokens
 var (
-	// 标题样式：加粗，下划线，前景色
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FAFAFA")).
-			Background(lipgloss.Color("#7D56F4")).
+			Foreground(colorAccent).
 			Padding(0, 1).
 			MarginBottom(1).
 			Render
 
-	// 普通选项样式
 	itemStyle = lipgloss.NewStyle().
 			PaddingLeft(2).
+			Foreground(colorTextSoft).
 			Render
 
-	// 选中选项样式：高亮背景，加粗
 	selectedItemStyle = lipgloss.NewStyle().
 				PaddingLeft(1).
-				Foreground(lipgloss.Color("#FF6B6B")).
-				Background(lipgloss.Color("#3C3C3C")).
+				Foreground(colorFocus).
 				Bold(true).
 				Render
 
-	// 帮助提示样式：变灰，斜体
 	helpStyle = lipgloss.NewStyle().
-			Faint(true).
+			Foreground(colorMuted).
 			Italic(true).
 			MarginTop(1).
 			Render
 
-	// 输入框样式
 	inputPromptStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#7D56F4")).
+				Foreground(colorFocus).
 				Bold(true).
 				Render
 
 	inputValueStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#4B4B4B")).
+			Foreground(colorText).
 			Padding(0, 1).
 			Render
 )
@@ -405,14 +398,14 @@ func (m *confirmModel) View() string {
 
 var (
 	confirmSummaryStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#E8E8E8")).
+				Foreground(colorText).
 				Bold(true).
 				Render
 	confirmDetailStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#B8B8C8")).
+				Foreground(colorTextSoft).
 				Render
 	confirmFootnoteStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#7A7A8A")).
+				Foreground(colorMuted).
 				Italic(true).
 				MarginTop(1).
 				Render
