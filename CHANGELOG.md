@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.0](https://github.com/zhangsanfeng1094/spark/compare/v0.16.1...v0.17.0) (2026-09-28)
+
+
+### Features
+
+* **compat:** default Bifrost proxy config from proxy env vars ([e81b8b8](https://github.com/zhangsanfeng1094/spark/commit/e81b8b8eaafc5f7f826d05cd48316ef7e59002f3))
+* **mcp:** per-agent bindings on shared MCP server definitions ([a1b8455](https://github.com/zhangsanfeng1094/spark/commit/a1b8455ca91c4b9d261b83bdb95a07dc15049ebf))
+
 ## [0.16.1](https://github.com/zhangsanfeng1094/spark/compare/v0.16.0...v0.16.1) (2026-09-16)
 
 
