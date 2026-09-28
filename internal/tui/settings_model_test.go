@@ -26,8 +26,6 @@ func TestSettingsInitialRenderShowsGlobalConfig(t *testing.T) {
 		"work",
 		"Effective default model",
 		"work-default",
-		"Prompt injection enabled",
-		"enabled",
 		"Codex model catalog JSON",
 		"/tmp/catalog.json",
 		"Config path",
@@ -47,7 +45,6 @@ func TestSettingsSaveAppliesGlobalDraft(t *testing.T) {
 	m := newSettingsModel(cfg, []string{"claude", "codex"})
 	m.draft.DefaultIntegration = "codex"
 	m.draft.DefaultProfile = "default"
-	m.draft.PromptEnabled = false
 	m.draft.CodexModelCatalogJSON = " /tmp/codex-models.json "
 	m.save()
 
@@ -56,9 +53,6 @@ func TestSettingsSaveAppliesGlobalDraft(t *testing.T) {
 	}
 	if cfg.DefaultProfile != "default" {
 		t.Fatalf("DefaultProfile=%q", cfg.DefaultProfile)
-	}
-	if cfg.Prompts.IsEnabled() {
-		t.Fatalf("prompt injection should be disabled")
 	}
 	if got := cfg.Integration("codex").ModelCatalogJSON; got != "/tmp/codex-models.json" {
 		t.Fatalf("ModelCatalogJSON=%q", got)
@@ -121,7 +115,6 @@ func testSettingsConfig() *config.RootConfig {
 		},
 		Integrations: map[string]*config.IntegrationConfig{},
 	}
-	cfg.Prompts.SetEnabled(true)
 	config.Normalize(cfg)
 	return cfg
 }

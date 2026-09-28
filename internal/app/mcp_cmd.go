@@ -2,17 +2,19 @@ package app
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"spark/internal/config"
+	"spark/internal/mcp"
 	"spark/internal/tui"
 )
 
 func newMcpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "Manage MCP servers",
+		Short: "Manage MCP servers (per-agent bindings)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return manageMcpServers()
 		},
@@ -24,6 +26,7 @@ func newMcpCmd() *cobra.Command {
 	cmd.AddCommand(newMcpRemoveCmd())
 	cmd.AddCommand(newMcpEnableCmd())
 	cmd.AddCommand(newMcpDisableCmd())
+	cmd.AddCommand(newMcpTestCmd())
 	cmd.AddCommand(newMcpImportCmd())
 	cmd.AddCommand(newMcpSyncCmd())
 	cmd.AddCommand(newMcpExportCmd())
@@ -31,9 +34,10 @@ func newMcpCmd() *cobra.Command {
 }
 
 func newMcpListCmd() *cobra.Command {
-	return &cobra.Command{
+	var agent string
+	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List MCP servers",
+		Short: "List MCP servers and their per-agent bindings",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -43,16 +47,22 @@ func newMcpListCmd() *cobra.Command {
 				fmt.Println("No MCP servers configured.")
 				return nil
 			}
+			if agent != "" {
+				fmt.Println(describeMcpServersForAgent("MCP servers enabled for "+agent, cfg, agent))
+				return nil
+			}
 			fmt.Println(describeMcpServers("MCP servers", cfg.McpServers))
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&agent, "agent", "", "Only show servers enabled for this agent (codex|claude|one|grok|agy)")
+	return cmd
 }
 
 func newMcpShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <name>",
-		Short: "Show MCP server details",
+		Short: "Show MCP server definition and agent bindings",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -63,7 +73,7 @@ func newMcpShowCmd() *cobra.Command {
 			if server == nil {
 				return fmt.Errorf("MCP server not found: %s", args[0])
 			}
-			fmt.Printf("name: %s\nenabled: %t\n", config.McpServerName(args[0]), server.Enabled)
+			fmt.Printf("name: %s\n", config.McpServerName(args[0]))
 			if server.Command != "" {
 				fmt.Printf("command: %s\n", server.Command)
 			}
@@ -78,6 +88,28 @@ func newMcpShowCmd() *cobra.Command {
 					fmt.Printf("env.%s=%s\n", key, value)
 				}
 			}
+			fmt.Println("agents:")
+			for _, agent := range config.McpAgents() {
+				enabled := cfg.McpAgentEnabled(args[0], agent)
+				state := "off"
+				if enabled {
+					state = "on"
+				}
+				overrides := ""
+				if binding := cfg.McpBinding(args[0], agent); binding != nil {
+					var parts []string
+					if binding.Command != "" {
+						parts = append(parts, "command="+binding.Command)
+					}
+					if binding.URL != "" {
+						parts = append(parts, "url="+binding.URL)
+					}
+					if len(parts) > 0 {
+						overrides = " (" + strings.Join(parts, ", ") + ")"
+					}
+				}
+				fmt.Printf("  %-8s %s%s\n", agent, state, overrides)
+			}
 			return nil
 		},
 	}
@@ -87,6 +119,7 @@ func newMcpAddCmd() *cobra.Command {
 	var command string
 	var url string
 	var argsCSV string
+	var agents string
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add an MCP server",
@@ -101,6 +134,18 @@ func newMcpAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if agents != "" {
+				// Explicit --agent list: disable definition default, enable
+				// only the listed agents.
+				server.Enabled = false
+				for _, agent := range strings.Split(agents, ",") {
+					agent = config.McpCanonicalAgent(agent)
+					if agent == "" {
+						continue
+					}
+					cfg.ToggleMcpAgent(name, agent, true)
+				}
+			}
 			cfg.SetMcpServer(name, server)
 			return config.Save(cfg)
 		},
@@ -108,13 +153,14 @@ func newMcpAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&command, "command", "", "Command for stdio transport")
 	cmd.Flags().StringVar(&url, "url", "", "URL for HTTP transport")
 	cmd.Flags().StringVar(&argsCSV, "args", "", "Comma-separated args for stdio transport")
+	cmd.Flags().StringVar(&agents, "agents", "", "Comma-separated agents to enable (codex,claude,one,grok,agy); default: enabled for all agents")
 	return cmd
 }
 
 func newMcpRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <name>",
-		Short: "Remove an MCP server",
+		Short: "Remove an MCP server (definition + all bindings)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -130,39 +176,122 @@ func newMcpRemoveCmd() *cobra.Command {
 }
 
 func newMcpEnableCmd() *cobra.Command {
-	return &cobra.Command{
+	var agent string
+	cmd := &cobra.Command{
 		Use:   "enable <name>",
-		Short: "Enable an MCP server",
+		Short: "Enable an MCP server (definition default or one agent binding)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			if err := cfg.EnableMcpServer(args[0]); err != nil {
+			if agent != "" {
+				if cfg.GetMcpServer(args[0]) == nil {
+					return fmt.Errorf("MCP server not found: %s", args[0])
+				}
+				cfg.ToggleMcpAgent(args[0], agent, true)
+			} else if err := cfg.EnableMcpServer(args[0]); err != nil {
 				return err
 			}
 			return config.Save(cfg)
 		},
 	}
+	cmd.Flags().StringVar(&agent, "agent", "", "Enable only for this agent (codex|claude|one|grok|agy)")
+	return cmd
 }
 
 func newMcpDisableCmd() *cobra.Command {
-	return &cobra.Command{
+	var agent string
+	cmd := &cobra.Command{
 		Use:   "disable <name>",
-		Short: "Disable an MCP server",
+		Short: "Disable an MCP server (definition default or one agent binding)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-			if err := cfg.DisableMcpServer(args[0], "disabled by spark"); err != nil {
+			if agent != "" {
+				if cfg.GetMcpServer(args[0]) == nil {
+					return fmt.Errorf("MCP server not found: %s", args[0])
+				}
+				cfg.ToggleMcpAgent(args[0], agent, false)
+			} else if err := cfg.DisableMcpServer(args[0], "disabled by spark"); err != nil {
 				return err
 			}
 			return config.Save(cfg)
 		},
 	}
+	cmd.Flags().StringVar(&agent, "agent", "", "Disable only for this agent (codex|claude|one|grok|agy)")
+	return cmd
+}
+
+// newMcpTestCmd implements `spark mcp test <name> [--agent]`.
+//
+// The test itself is server-level: spawn/initialize/tools-list against the
+// shared definition (with binding overrides applied when --agent is given).
+// It does not validate the agent's own runtime wiring, so the flag only
+// changes which effective config is tested, never the test mechanics.
+func newMcpTestCmd() *cobra.Command {
+	var agent string
+	cmd := &cobra.Command{
+		Use:   "test <name>",
+		Short: "Test an MCP server (server-level initialize + tools/list)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			name := config.McpServerName(args[0])
+			server := cfg.GetMcpServer(name)
+			if server == nil {
+				return fmt.Errorf("MCP server not found: %s", name)
+			}
+			target := server
+			scope := "server"
+			if agent != "" {
+				key := config.McpCanonicalAgent(agent)
+				if key == "" || !isKnownMcpAgent(key) {
+					return fmt.Errorf("unsupported agent: %s (expected codex|claude|one|grok|agy)", agent)
+				}
+				eff := cfg.McpEffectiveServer(name, key)
+				if eff == nil {
+					return fmt.Errorf("MCP server not found: %s", name)
+				}
+				target = eff
+				scope = key + " binding (effective config)"
+			}
+			fmt.Printf("Testing %s (%s)...\n", name, scope)
+			result := mcp.Test(target)
+			if result.Err != "" {
+				status := mcp.Summarize(target, result)
+				fmt.Printf("✕ %s — %s failed\n", status.Headline, result.Stage)
+				fmt.Println("  " + result.Err)
+				for _, s := range status.Suggestions {
+					fmt.Println("  Tip: " + s)
+				}
+				return fmt.Errorf("mcp test failed: %s", status.Headline)
+			}
+			fmt.Printf("✓ OK · %d tool(s) · %s\n", result.ToolsCount, result.Latency)
+			if len(result.ToolNames) > 0 {
+				fmt.Println("  tools: " + strings.Join(result.ToolNames, ", "))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&agent, "agent", "", "Test the effective config for this agent binding (codex|claude|one|grok|agy)")
+	return cmd
+}
+
+func isKnownMcpAgent(agent string) bool {
+	for _, a := range config.McpAgents() {
+		if a == agent {
+			return true
+		}
+	}
+	return false
 }
 
 func newMcpImportCmd() *cobra.Command {
@@ -285,4 +414,25 @@ func manageMcpServers() error {
 		return err
 	}
 	return tui.ManageMCPDashboard(cfg)
+}
+
+// describeMcpServersForAgent lists servers enabled for one agent.
+func describeMcpServersForAgent(title string, cfg *config.RootConfig, agent string) string {
+	servers := cfg.McpServersForAgent(config.McpCanonicalAgent(agent))
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	lines := []string{fmt.Sprintf("%s (%d):", title, len(names))}
+	for _, name := range names {
+		server := servers[name]
+		transport := strings.TrimSpace(server.Command)
+		if transport == "" {
+			transport = strings.TrimSpace(server.URL)
+		}
+		lines = append(lines, fmt.Sprintf("- %s [%s] %s", name, "enabled", transport))
+	}
+	return strings.Join(lines, "\n")
 }

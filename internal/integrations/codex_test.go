@@ -1,10 +1,7 @@
 package integrations
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	compatproxy "spark/internal/compat/proxy"
@@ -29,78 +26,11 @@ func TestCodexArgs(t *testing.T) {
 	}
 }
 
-func TestCodexPromptArgsReplace(t *testing.T) {
-	c := &Codex{}
-	got := c.argsWithPrompt("gpt-5", "https://api.example.com/v1", []string{"resume"}, &config.PromptInjection{
-		Mode: config.PromptModeReplace,
-		Path: "/tmp/prompt.md",
-	})
-	wantTail := []string{"-c", "model_instructions_file=/tmp/prompt.md", "resume"}
-	if !reflect.DeepEqual(got[len(got)-len(wantTail):], wantTail) {
-		t.Fatalf("unexpected replace prompt args: %v", got)
-	}
-}
-
-func TestCodexPromptArgsNilPath(t *testing.T) {
-	got := codexPromptArgs(&config.PromptInjection{
-		Mode:    config.PromptModeReplace,
-		Content: "some content",
-	})
-	if got != nil {
-		t.Fatalf("expected nil args when path is empty, got %v", got)
-	}
-}
-
-func TestCodexPromptArgsNil(t *testing.T) {
-	if got := codexPromptArgs(nil); got != nil {
-		t.Fatalf("expected nil for nil prompt, got %v", got)
-	}
-}
-
-func TestExtractDeveloperPrompt(t *testing.T) {
-	input := []byte(`[
-		{"type":"message","role":"developer","content":[
-			{"type":"input_text","text":"You are a helpful assistant."},
-			{"type":"input_text","text":"Be concise."}
-		]},
-		{"type":"message","role":"user","content":[
-			{"type":"input_text","text":"hello"}
-		]}
-	]`)
-	got, err := extractDeveloperPrompt(input)
-	if err != nil {
-		t.Fatalf("extractDeveloperPrompt failed: %v", err)
-	}
-	want := "You are a helpful assistant.\nBe concise."
-	if got != want {
-		t.Fatalf("extractDeveloperPrompt = %q, want %q", got, want)
-	}
-}
-
-func TestExtractDeveloperPromptNoDeveloper(t *testing.T) {
-	input := []byte(`[
-		{"type":"message","role":"user","content":[
-			{"type":"input_text","text":"hello"}
-		]}
-	]`)
-	_, err := extractDeveloperPrompt(input)
-	if err == nil {
-		t.Fatal("expected error for missing developer message")
-	}
-}
-
-func TestExtractDeveloperPromptInvalidJSON(t *testing.T) {
-	_, err := extractDeveloperPrompt([]byte(`not json`))
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
 func TestCodexModelCatalogArgs(t *testing.T) {
 	c := &Codex{}
-	got := c.argsWithConfigAndPrompt("glm-5.1", "https://api.example.com/v1", &config.IntegrationConfig{
+	got := c.argsWithIntegration("glm-5.1", "https://api.example.com/v1", &config.IntegrationConfig{
 		ModelCatalogJSON: " /home/me/.codex/custom_models.json ",
-	}, []string{"resume"}, nil)
+	}, []string{"resume"})
 	wantTail := []string{
 		"-c", `model_catalog_json="/home/me/.codex/custom_models.json"`,
 		"-m", "glm-5.1",
@@ -208,277 +138,36 @@ func TestResolveOpenAIAPIKey(t *testing.T) {
 	})
 }
 
-func TestFetchCodexModelCatalog(t *testing.T) {
-	// Create a temporary test directory
-	tmpDir := t.TempDir()
-	t.Setenv("CODEX_HOME", tmpDir)
-
-	// Create test models_cache.json
-	cacheContent := `{
-		"fetched_at": "2024-01-15T10:30:00Z",
-		"etag": "abc123",
-		"client_version": "1.0.0",
-		"models": [
-			{
-				"slug": "test-model-1",
-				"display_name": "Test Model 1",
-				"description": "First test model",
-				"base_instructions": "You are test model 1.",
-				"context_window": 100000
-			},
-			{
-				"slug": "test-model-2",
-				"display_name": "Test Model 2",
-				"description": "Second test model",
-				"base_instructions": "You are test model 2.",
-				"context_window": 200000
-			}
-		]
-	}`
-
-	cachePath := tmpDir + "/models_cache.json"
-	if err := os.WriteFile(cachePath, []byte(cacheContent), 0644); err != nil {
-		t.Fatalf("failed to write test cache file: %v", err)
+func TestCodexMCPArgs(t *testing.T) {
+	startupTimeout := 15
+	servers := map[string]*config.McpServerConfig{
+		"stdio": {
+			Command:        "npx",
+			Args:           []string{"-y", "@modelcontextprotocol/server-filesystem"},
+			Env:            map[string]string{"API_TOKEN": "sec"},
+			StartupTimeout: &startupTimeout,
+			Enabled:        true,
+		},
+		"remote": {
+			URL:     "https://mcp.example.com/sse",
+			Enabled: true,
+		},
+		"disabled": {
+			Command: "ignored",
+			Enabled: false,
+		},
 	}
 
-	models, err := fetchCodexModelCatalog()
-	if err != nil {
-		t.Fatalf("fetchCodexModelCatalog failed: %v", err)
+	got := codexMCPArgs(servers)
+	want := []string{
+		"-c", `mcp_servers.remote.url="https://mcp.example.com/sse"`,
+		"-c", `mcp_servers.stdio.command="npx"`,
+		"-c", `mcp_servers.stdio.args=["-y", "@modelcontextprotocol/server-filesystem"]`,
+		"-c", `mcp_servers.stdio.env.API_TOKEN="sec"`,
+		"-c", `mcp_servers.stdio.startup_timeout_sec=15`,
 	}
-
-	if len(models) != 2 {
-		t.Fatalf("expected 2 models, got %d", len(models))
-	}
-
-	if models[0].Slug != "test-model-1" {
-		t.Errorf("expected first model slug 'test-model-1', got %q", models[0].Slug)
-	}
-
-	if models[0].BaseInstructions != "You are test model 1." {
-		t.Errorf("expected first model instructions 'You are test model 1.', got %q", models[0].BaseInstructions)
-	}
-
-	if models[1].Slug != "test-model-2" {
-		t.Errorf("expected second model slug 'test-model-2', got %q", models[1].Slug)
-	}
-}
-
-func TestFetchCodexModelInstructions(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("CODEX_HOME", tmpDir)
-
-	cacheContent := `{
-		"models": [
-			{
-				"slug": "gpt-5.2",
-				"base_instructions": "You are GPT 5.2."
-			},
-			{
-				"slug": "gpt-4o",
-				"base_instructions": "You are GPT 4o."
-			}
-		]
-	}`
-
-	cachePath := tmpDir + "/models_cache.json"
-	if err := os.WriteFile(cachePath, []byte(cacheContent), 0644); err != nil {
-		t.Fatalf("failed to write test cache file: %v", err)
-	}
-
-	t.Run("exact match", func(t *testing.T) {
-		got, err := fetchCodexModelInstructions("gpt-4o")
-		if err != nil {
-			t.Fatalf("fetchCodexModelInstructions failed: %v", err)
-		}
-		want := "You are GPT 4o."
-		if got != want {
-			t.Errorf("got %q, want %q", got, want)
-		}
-	})
-
-	t.Run("prefix match", func(t *testing.T) {
-		got, err := fetchCodexModelInstructions("gpt-5")
-		if err != nil {
-			t.Fatalf("fetchCodexModelInstructions failed: %v", err)
-		}
-		want := "You are GPT 5.2."
-		if got != want {
-			t.Errorf("got %q, want %q", got, want)
-		}
-	})
-
-	t.Run("empty slug returns first model", func(t *testing.T) {
-		got, err := fetchCodexModelInstructions("")
-		if err != nil {
-			t.Fatalf("fetchCodexModelInstructions failed: %v", err)
-		}
-		want := "You are GPT 5.2."
-		if got != want {
-			t.Errorf("got %q, want %q", got, want)
-		}
-	})
-
-	t.Run("model not found", func(t *testing.T) {
-		_, err := fetchCodexModelInstructions("nonexistent-model")
-		if err == nil {
-			t.Fatal("expected error for nonexistent model")
-		}
-	})
-}
-
-func TestFetchCodexModelCatalogMissingFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("CODEX_HOME", tmpDir)
-
-	_, err := fetchCodexModelCatalog()
-	if err == nil {
-		t.Fatal("expected error when models_cache.json doesn't exist")
-	}
-}
-
-func TestFetchCodexModelCatalogInvalidJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("CODEX_HOME", tmpDir)
-
-	cachePath := tmpDir + "/models_cache.json"
-	if err := os.WriteFile(cachePath, []byte("invalid json"), 0644); err != nil {
-		t.Fatalf("failed to write test cache file: %v", err)
-	}
-
-	_, err := fetchCodexModelCatalog()
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
-func TestGetCodexHome(t *testing.T) {
-	t.Run("uses CODEX_HOME env var", func(t *testing.T) {
-		t.Setenv("CODEX_HOME", "/custom/codex/path")
-		got, err := getCodexHome()
-		if err != nil {
-			t.Fatalf("getCodexHome failed: %v", err)
-		}
-		if got != "/custom/codex/path" {
-			t.Errorf("expected '/custom/codex/path', got %q", got)
-		}
-	})
-
-	t.Run("defaults to ~/.codex", func(t *testing.T) {
-		t.Setenv("CODEX_HOME", "")
-		got, err := getCodexHome()
-		if err != nil {
-			t.Fatalf("getCodexHome failed: %v", err)
-		}
-		// Should end with .codex
-		if !strings.HasSuffix(got, ".codex") {
-			t.Errorf("expected path to end with '.codex', got %q", got)
-		}
-	})
-}
-
-func TestWriteCodexLaunchHome(t *testing.T) {
-	tmpDir := t.TempDir()
-	realCodex := filepath.Join(tmpDir, ".codex")
-	if err := os.MkdirAll(filepath.Join(realCodex, "skills"), 0o755); err != nil {
-		t.Fatalf("create skills: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(realCodex, "sessions"), 0o755); err != nil {
-		t.Fatalf("create sessions: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(realCodex, "config.toml"), []byte("[model_providers]\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(realCodex, "auth.json"), []byte("{}"), 0o600); err != nil {
-		t.Fatalf("write auth: %v", err)
-	}
-
-	t.Setenv("HOME", tmpDir)
-	t.Setenv("CODEX_HOME", "")
-
-	launchHome := filepath.Join(tmpDir, "launch-codex")
-	profile := &config.Profile{
-		OpenAIBaseURL: "https://api.example.com/v1",
-		APIKey:        "sk-test-key",
-	}
-
-	err := writeCodexLaunchHome(launchHome, profile, "https://api.example.com/v1", "sk-test-key", nil, "gpt-4o")
-	if err != nil {
-		t.Fatalf("writeCodexLaunchHome failed: %v", err)
-	}
-
-	// Verify skills is symlinked
-	skillsLink := filepath.Join(launchHome, "skills")
-	fi, err := os.Lstat(skillsLink)
-	if err != nil {
-		t.Fatalf("skills link missing: %v", err)
-	}
-	if fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("skills should be a symlink")
-	}
-
-	// Verify auth.json is excluded
-	if _, err := os.Lstat(filepath.Join(launchHome, "auth.json")); err == nil {
-		t.Fatalf("auth.json should not be mirrored")
-	}
-
-	// Verify config.toml was generated with Spark provider
-	data, err := os.ReadFile(filepath.Join(launchHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("read config.toml: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, `model_provider = "spark"`) {
-		t.Fatalf("expected model_provider = spark, got: %s", content)
-	}
-}
-
-func TestCodexHookTrustStateMapping(t *testing.T) {
-	tmpDir := t.TempDir()
-	realCodex := filepath.Join(tmpDir, ".codex")
-	t.Setenv("CODEX_HOME", realCodex)
-	if err := os.MkdirAll(realCodex, 0o755); err != nil {
-		t.Fatalf("create real codex: %v", err)
-	}
-	realConfig := `
-[hooks.state]
-"` + realCodex + `/hooks.json:pre_tool_use:0:0" = { enabled = true, trusted_hash = "sha256:12345" }
-`
-	if err := os.WriteFile(filepath.Join(realCodex, "config.toml"), []byte(realConfig), 0o644); err != nil {
-		t.Fatalf("write real config: %v", err)
-	}
-
-	launchHome := filepath.Join(tmpDir, "launch-codex")
-	profile := &config.Profile{}
-	if err := writeCodexLaunchHome(launchHome, profile, "https://api.example.com", "key", nil, "model"); err != nil {
-		t.Fatalf("writeCodexLaunchHome failed: %v", err)
-	}
-
-	launchData, err := os.ReadFile(filepath.Join(launchHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("read launch config: %v", err)
-	}
-	launchContent := string(launchData)
-	wantKey := launchHome + `/hooks.json:pre_tool_use:0:0`
-	if !strings.Contains(launchContent, wantKey) {
-		t.Fatalf("expected mapped hook trust key %q in launch config, got:\n%s", wantKey, launchContent)
-	}
-}
-
-func TestShouldSkipCodexMirror(t *testing.T) {
-	if !shouldSkipCodexMirror("config.toml") {
-		t.Errorf("config.toml should be skipped")
-	}
-	if !shouldSkipCodexMirror("auth.json") {
-		t.Errorf("auth.json should be skipped")
-	}
-	if !shouldSkipCodexMirror("auth.json.lock") {
-		t.Errorf("auth.json.lock should be skipped")
-	}
-	if shouldSkipCodexMirror("skills") {
-		t.Errorf("skills should not be skipped")
-	}
-	if shouldSkipCodexMirror("sessions") {
-		t.Errorf("sessions should not be skipped")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("codexMCPArgs mismatch:\ngot:  %v\nwant: %v", got, want)
 	}
 }
 

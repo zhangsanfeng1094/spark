@@ -44,11 +44,6 @@ type grokLaunchRoute struct {
 	Degraded       bool
 }
 
-var (
-	_ Editor      = (*Grok)(nil)
-	_ EditChecker = (*Grok)(nil)
-)
-
 type Grok struct{}
 
 func (g *Grok) String() string { return "Grok Build" }
@@ -146,25 +141,9 @@ func (g *Grok) Run(profile *config.Profile, model string, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Persistent ~/.grok/config.toml spark-* entries are owned by Editor
-	// (spark launch confirm-and-write). Run only builds the isolated GROK_HOME.
-
-	// Launch in an isolated GROK_HOME without auth.json. When ~/.grok/auth.json
-	// is present, Grok Build's agent harness often prefers the OAuth session JWT
-	// over model api_key/env_key and then 401s against third-party gateways.
-	// Isolation preserves plain `grok` OAuth while making Spark launches BYOK-only.
-	//
-	// The launch home mirrors the real ~/.grok (skills, MCP credentials, plugins,
-	// sessions, marketplace, …) via symlinks, and reuses the real config.toml
-	// with only the spark model default overridden for this process.
-	launchHome, err := createLaunchTempDir("spark-grok-home-*")
-	if err != nil {
-		return fmt.Errorf("create grok launch home: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(launchHome) }()
 
 	modelKey := grokModelKey(modelID)
-	if err := writeGrokLaunchHome(launchHome, launchProfile, modelID, modelKey); err != nil {
+	if err := syncGrokLaunchConfig(launchProfile, modelID, modelKey); err != nil {
 		return err
 	}
 
@@ -175,7 +154,11 @@ func (g *Grok) Run(profile *config.Profile, model string, args []string) error {
 	if !cliArgsHasModelFlag(cmdArgs) {
 		cmdArgs = append([]string{"--model", modelKey}, cmdArgs...)
 	}
-	env := append(grokEnv(launchProfile), "GROK_HOME="+launchHome)
+	env := append(grokEnv(launchProfile),
+		"GROK_AUTH={}",
+		"GROK_DEFAULT_MODEL="+modelKey,
+		"GROK_WEB_SEARCH_MODEL="+modelKey,
+	)
 	return runCmd(bin, cmdArgs, env)
 }
 
@@ -215,52 +198,19 @@ func grokProfileForDaemon(profile *config.Profile, daemonBaseURL string) *config
 	return &copy
 }
 
-// writeGrokLaunchHome builds a launch-time GROK_HOME that:
-//   - reuses the user's real ~/.grok assets (MCP, skills, plugins, sessions, …)
-//   - never links auth.json (forces BYOK / env_key for the spark model)
-//   - writes a config.toml cloned from the real one with the spark model as default
-func writeGrokLaunchHome(home string, profile *config.Profile, modelID, modelKey string) error {
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		return err
-	}
+// syncGrokLaunchConfig ensures the active spark model entry and enabled Spark
+// MCP servers are present in ~/.grok/config.toml without changing models.default
+// or touching ~/.grok/auth.json.
+func syncGrokLaunchConfig(profile *config.Profile, modelID, modelKey string) error {
 	realHome, err := realGrokHome()
 	if err != nil {
 		return err
 	}
-	if err := mirrorGrokHome(realHome, home); err != nil {
+	cfgPath := filepath.Join(realHome, "config.toml")
+	if err := ensureDir(cfgPath); err != nil {
 		return err
 	}
-	return writeGrokLaunchConfig(home, realHome, profile, modelID, modelKey)
-}
-
-func realGrokHome() (string, error) {
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(userHome, ".grok"), nil
-}
-
-// mirrorGrokHome symlinks every entry from the real GROK home into the launch
-// home, except auth artifacts and config.toml (which is rewritten for BYOK).
-func mirrorGrokHome(src, dst string) error {
-	return symlinkEntries(src, dst, shouldSkipGrokMirror)
-}
-
-func shouldSkipGrokMirror(name string) bool {
-	switch name {
-	case "config.toml", "auth.json", "auth.json.lock":
-		return true
-	}
-	// Any other auth.* lock/backup must stay out of the BYOK launch home.
-	return strings.HasPrefix(name, "auth.json")
-}
-
-// writeGrokLaunchConfig clones the real config.toml, injects the spark model
-// entry, and sets models.default to that entry for this launch only.
-func writeGrokLaunchConfig(launchHome, realHome string, profile *config.Profile, modelID, modelKey string) error {
-	cfgPath := filepath.Join(launchHome, "config.toml")
-	root, err := loadGrokConfigMap(filepath.Join(realHome, "config.toml"))
+	root, err := loadGrokConfigMap(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -275,31 +225,23 @@ func writeGrokLaunchConfig(launchHome, realHome string, profile *config.Profile,
 	modelTable[modelKey] = grokSparkModelEntry(modelID, grokLaunchRouteForProfile(profile))
 	root["model"] = modelTable
 
-	modelsSection, _ := root["models"].(map[string]any)
-	if modelsSection == nil {
-		modelsSection = map[string]any{}
+	// Never persist a spark-* model as models.default on disk so plain `grok`
+	// keeps using native OAuth defaults.
+	if modelsSection, ok := root["models"].(map[string]any); ok {
+		if def, _ := modelsSection["default"].(string); strings.HasPrefix(strings.TrimSpace(def), grokSparkModelPrefix) {
+			modelsSection["default"] = "grok-4.5"
+			root["models"] = modelsSection
+		}
 	}
-	modelsSection["default"] = modelKey
-	modelsSection["web_search"] = modelKey
-	root["models"] = modelsSection
 
-	uiSection, _ := root["ui"].(map[string]any)
-	if uiSection == nil {
-		uiSection = map[string]any{}
-	}
-	uiSection["fork_secondary_model"] = modelKey
-	root["ui"] = uiSection
-
-	// Injects enabled MCP servers from Spark config into mcp_servers table.
+	// Merge MCP servers whose grok binding is enabled into mcp_servers table.
 	if sparkCfg, _ := config.Load(); sparkCfg != nil && len(sparkCfg.McpServers) > 0 {
 		mcpTable, _ := root["mcp_servers"].(map[string]any)
 		if mcpTable == nil {
 			mcpTable = map[string]any{}
 		}
-		for name, srv := range sparkCfg.McpServers {
-			if srv != nil && srv.Enabled {
-				mcpTable[name] = config.EncodeCodexServerMap(srv)
-			}
+		for name, srv := range sparkCfg.McpServersForAgent("grok") {
+			mcpTable[name] = config.EncodeCodexServerMap(srv)
 		}
 		root["mcp_servers"] = mcpTable
 	}
@@ -309,6 +251,14 @@ func writeGrokLaunchConfig(launchHome, realHome string, profile *config.Profile,
 		return err
 	}
 	return os.WriteFile(cfgPath, buf.Bytes(), 0o644)
+}
+
+func realGrokHome() (string, error) {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(userHome, ".grok"), nil
 }
 
 // grokEnv injects the profile API key for spark-managed models (env_key).

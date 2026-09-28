@@ -23,7 +23,6 @@ const (
 
 const (
 	settingsSectionGeneral = iota
-	settingsSectionPrompt
 	settingsSectionIntegration
 	settingsSectionHistory
 	settingsSectionConfig
@@ -39,7 +38,6 @@ const (
 type settingsDraft struct {
 	DefaultIntegration    string
 	DefaultProfile        string
-	PromptEnabled         bool
 	CodexModelCatalogJSON string
 	History               config.History
 }
@@ -198,7 +196,6 @@ func (m *settingsModel) loadDraftFromConfig() {
 	m.draft = settingsDraft{
 		DefaultIntegration:    strings.ToLower(strings.TrimSpace(m.cfg.DefaultIntegration)),
 		DefaultProfile:        m.cfg.DefaultProfile,
-		PromptEnabled:         m.cfg.Prompts.IsEnabled(),
 		CodexModelCatalogJSON: strings.TrimSpace(codexCatalog),
 		History:               m.cfg.History,
 	}
@@ -213,14 +210,6 @@ func (m *settingsModel) sections() []settingsSection {
 				{label: "Default integration", kind: settingsFieldSelect, value: m.draft.DefaultIntegration, options: defaultIntegrationOptions(m.integrationNames)},
 				{label: "Default profile", kind: settingsFieldSelect, value: m.draft.DefaultProfile, options: m.profileNames},
 				{label: "Effective default model", kind: settingsFieldReadOnly, value: effectiveModelForProfile(m.cfg, m.draft.DefaultProfile)},
-			},
-		},
-		{
-			title: "Prompt",
-			fields: []settingsField{
-				{label: "Prompt injection enabled", kind: settingsFieldToggle, value: boolLabel(m.draft.PromptEnabled)},
-				{label: "Prompt presets", kind: settingsFieldReadOnly, value: strconv.Itoa(len(m.cfg.Prompts.Presets))},
-				{label: "Prompt bindings", kind: settingsFieldReadOnly, value: strconv.Itoa(len(m.cfg.Prompts.Bindings))},
 			},
 		},
 		{
@@ -383,9 +372,6 @@ func (m *settingsModel) activateField() {
 	switch field.kind {
 	case settingsFieldSelect:
 		m.cycleSelect(field)
-	case settingsFieldToggle:
-		m.draft.PromptEnabled = !m.draft.PromptEnabled
-		m.markDirty("Prompt injection setting changed. Save to persist.")
 	case settingsFieldAction:
 		if field.action == settingsActionClearHistory {
 			m.draft.History = config.History{}
@@ -499,7 +485,6 @@ func (m *settingsModel) applyDraftToConfig() error {
 		return fmt.Errorf("default profile: %w", err)
 	}
 	m.cfg.DefaultIntegration = defaultIntegration
-	m.cfg.Prompts.SetEnabled(m.draft.PromptEnabled)
 	m.cfg.History = config.History{
 		LastSelection:  strings.ToLower(strings.TrimSpace(m.draft.History.LastSelection)),
 		LastModelInput: config.NormalizeModel(m.draft.History.LastModelInput),

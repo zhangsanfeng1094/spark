@@ -154,3 +154,96 @@ func TestResolveProfileModel(t *testing.T) {
 		})
 	}
 }
+
+func clearProxyEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"} {
+		t.Setenv(key, "")
+	}
+}
+
+func TestSparkAccountEnvProxyConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		wantNil  bool
+		wantType schemas.ProxyType
+		wantURL  string
+	}{
+		{
+			name:    "no proxy env vars",
+			wantNil: true,
+		},
+		{
+			name:     "HTTPS_PROXY enables EnvProxy",
+			env:      map[string]string{"HTTPS_PROXY": "http://127.0.0.1:7890"},
+			wantType: schemas.EnvProxy,
+		},
+		{
+			name:     "HTTP_PROXY enables EnvProxy",
+			env:      map[string]string{"HTTP_PROXY": "http://127.0.0.1:7890"},
+			wantType: schemas.EnvProxy,
+		},
+		{
+			name:     "http_proxy enables EnvProxy",
+			env:      map[string]string{"http_proxy": "http://127.0.0.1:7890"},
+			wantType: schemas.EnvProxy,
+		},
+		{
+			name:     "ALL_PROXY socks5 maps to Socks5Proxy",
+			env:      map[string]string{"ALL_PROXY": "socks5://127.0.0.1:1080"},
+			wantType: schemas.Socks5Proxy,
+			wantURL:  "socks5://127.0.0.1:1080",
+		},
+		{
+			name:     "all_proxy http maps to HTTPProxy",
+			env:      map[string]string{"all_proxy": "http://127.0.0.1:7890"},
+			wantType: schemas.HTTPProxy,
+			wantURL:  "http://127.0.0.1:7890",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearProxyEnv(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			acct := NewSparkAccount()
+			cfg, err := acct.GetConfigForProvider(schemas.OpenAI)
+			if err != nil {
+				t.Fatalf("GetConfigForProvider(OpenAI): %v", err)
+			}
+			fallbackCfg, err := acct.GetConfigForProvider(schemas.ModelProvider("custom-provider"))
+			if err != nil {
+				t.Fatalf("GetConfigForProvider(custom-provider): %v", err)
+			}
+
+			for label, gotCfg := range map[string]*schemas.ProviderConfig{
+				"configured": cfg,
+				"fallback":   fallbackCfg,
+			} {
+				if tt.wantNil {
+					if gotCfg.ProxyConfig != nil {
+						t.Fatalf("%s: expected nil ProxyConfig, got %+v", label, gotCfg.ProxyConfig)
+					}
+					continue
+				}
+				if gotCfg.ProxyConfig == nil {
+					t.Fatalf("%s: expected non-nil ProxyConfig", label)
+				}
+				if gotCfg.ProxyConfig.Type != tt.wantType {
+					t.Fatalf("%s: ProxyConfig.Type = %q, want %q", label, gotCfg.ProxyConfig.Type, tt.wantType)
+				}
+				gotURL := ""
+				if gotCfg.ProxyConfig.URL != nil {
+					gotURL = gotCfg.ProxyConfig.URL.GetValue()
+				}
+				if gotURL != tt.wantURL {
+					t.Fatalf("%s: ProxyConfig.URL = %q, want %q", label, gotURL, tt.wantURL)
+				}
+			}
+		})
+	}
+}

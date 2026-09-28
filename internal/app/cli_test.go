@@ -328,20 +328,15 @@ func TestRootCmdIncludesSkillCommand(t *testing.T) {
 }
 
 func TestProfileSelectionFlagsConflictBeforePrompt(t *testing.T) {
-	for _, args := range [][]string{
-		{"launch", "--profile", "foo", "--select-profile"},
-		{"config", "--profile", "foo", "--select-profile"},
-	} {
-		root := NewRootCmd()
-		buf := &bytes.Buffer{}
-		root.SetOut(buf)
-		root.SetErr(buf)
-		root.SetArgs(args)
+	root := NewRootCmd()
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"launch", "--profile", "foo", "--select-profile"})
 
-		err := root.Execute()
-		if err == nil || !strings.Contains(err.Error(), "--profile and --select-profile cannot be used together") {
-			t.Fatalf("expected conflicting flags error for %v, got %v", args, err)
-		}
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--profile and --select-profile cannot be used together") {
+		t.Fatalf("expected conflicting flags error, got %v", err)
 	}
 }
 
@@ -383,9 +378,9 @@ func TestDebugNestedSnapshotsRenderSubscreens(t *testing.T) {
 			want: []string{"Spark Profiles", "Base URL", "Actions"},
 		},
 		{
-			name: "mcp add http",
-			args: []string{"debug", "snapshot", "mcp", "--state", "add-http", "--width", "120", "--height", "18"},
-			want: []string{"MCP Manager", "Create MCP Server", "http"},
+			name: "mcp add remote",
+			args: []string{"debug", "snapshot", "mcp", "--state", "add-remote", "--width", "120", "--height", "18"},
+			want: []string{"Add MCP server", "Remote URL", "Paste config"},
 		},
 		{
 			name: "skills transfer",

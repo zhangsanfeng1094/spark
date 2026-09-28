@@ -86,6 +86,70 @@ func TestOneEditWritesSparkProviderWithoutKey(t *testing.T) {
 	}
 }
 
+func TestOneNeedsEditSkipsMatchingSparkProvider(t *testing.T) {
+	home := oneTempHome(t)
+	one := &One{}
+	profile := &config.Profile{
+		OpenAIBaseURL: "http://127.0.0.1:8317/v1",
+		OpenAIAPIKey:  "sk-first",
+		OpenAIAPIType: config.OpenAIAPITypeResponses,
+	}
+	models := []string{"spark/glm-5.3"}
+
+	needs, err := one.NeedsEdit(profile, models)
+	if err != nil {
+		t.Fatalf("NeedsEdit before edit: %v", err)
+	}
+	if !needs {
+		t.Fatal("missing spark provider must require edit")
+	}
+
+	if err := one.Edit(profile, models); err != nil {
+		t.Fatalf("edit failed: %v", err)
+	}
+	needs, err = one.NeedsEdit(profile, models)
+	if err != nil {
+		t.Fatalf("NeedsEdit after edit: %v", err)
+	}
+	if needs {
+		t.Fatal("matching spark provider should skip edit confirmation")
+	}
+
+	// The real models.json intentionally contains no API key. A rotated key is
+	// injected into the isolated launch HOME and must not force a config rewrite.
+	profile.OpenAIAPIKey = "sk-rotated"
+	needs, err = one.NeedsEdit(profile, models)
+	if err != nil {
+		t.Fatalf("NeedsEdit after key rotation: %v", err)
+	}
+	if needs {
+		t.Fatal("API key rotation alone must not require editing real models.json")
+	}
+
+	profile.OpenAIBaseURL = "http://127.0.0.1:9999/v1"
+	needs, err = one.NeedsEdit(profile, models)
+	if err != nil {
+		t.Fatalf("NeedsEdit after endpoint change: %v", err)
+	}
+	if !needs {
+		t.Fatal("endpoint change must require edit")
+	}
+
+	// Restore endpoint and change the managed model set.
+	profile.OpenAIBaseURL = "http://127.0.0.1:8317/v1"
+	needs, err = one.NeedsEdit(profile, []string{"glm-5.4"})
+	if err != nil {
+		t.Fatalf("NeedsEdit after model change: %v", err)
+	}
+	if !needs {
+		t.Fatal("model change must require edit")
+	}
+
+	if _, err := os.Stat(oneModelsPath(home)); err != nil {
+		t.Fatalf("models.json disappeared: %v", err)
+	}
+}
+
 func TestOneEditWireMapping(t *testing.T) {
 	home := oneTempHome(t)
 	one := &One{}
@@ -166,111 +230,34 @@ func TestOneEditWithoutModelsFails(t *testing.T) {
 	}
 }
 
-func TestWriteOneLaunchHome(t *testing.T) {
-	userHome := oneTempHome(t)
-
-	realAgent := filepath.Join(userHome, ".one", "agent")
-	if err := os.MkdirAll(filepath.Join(realAgent, "sessions"), 0o755); err != nil {
-		t.Fatalf("mkdir sessions: %v", err)
-	}
-	// Real provider catalog plus the user's own selection state.
-	writeJSON(oneModelsPath(userHome), map[string]any{
-		"includeDefaults": false,
-		"providers": map[string]any{
-			"cpa": map[string]any{
-				"api":     "openai-responses",
-				"baseUrl": "http://example.invalid/v1",
-				"models":  []any{map[string]any{"id": "gpt-5.5"}},
-			},
-		},
-	})
-	writeJSON(oneSettingsPath(userHome), map[string]any{
-		"provider":     "cpa",
-		"model":        "gpt-5.5",
-		"auto_approve": true,
-	})
-	// MCP servers and auth must behave differently in the launch home:
-	// mcp.json survives, auth.json must never appear.
-	if err := os.WriteFile(filepath.Join(realAgent, "mcp.json"), []byte(`{"mcpServers":{}}`), 0o644); err != nil {
-		t.Fatalf("write mcp: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(realAgent, "auth.json"), []byte(`{"token":"oauth"}`), 0o600); err != nil {
-		t.Fatalf("write auth: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(realAgent, "auth.json.lock"), []byte("lock"), 0o644); err != nil {
-		t.Fatalf("write auth lock: %v", err)
-	}
-	// Non-.one home entries (ssh keys, caches) must be mirrored so tooling works.
-	if err := os.MkdirAll(filepath.Join(userHome, ".ssh"), 0o700); err != nil {
-		t.Fatalf("mkdir ssh: %v", err)
-	}
-
-	dir := t.TempDir()
+func TestOneLaunchArgsAndEnv(t *testing.T) {
 	profile := &config.Profile{
 		OpenAIBaseURL: "http://gw.example/v1",
 		OpenAIAPIKey:  "sk-test",
 		OpenAIAPIType: "chat_completions",
 	}
-	if err := writeOneLaunchHome(dir, profile, "mock-model"); err != nil {
-		t.Fatalf("write launch home: %v", err)
+
+	args := oneLaunchArgs(profile, "mock-model", []string{"--resume"})
+	wantArgs := []string{
+		"--provider", "openai",
+		"--openai-api", "openai-completions",
+		"--base-url", "http://gw.example/v1",
+		"--model", "mock-model",
+		"--resume",
+	}
+	if strings.Join(args, " ") != strings.Join(wantArgs, " ") {
+		t.Fatalf("oneLaunchArgs = %v, want %v", args, wantArgs)
 	}
 
-	// models.json: real providers preserved, spark entry carries the key.
-	root := readMap(filepath.Join(dir, ".one", "agent", "models.json"))
-	providers := root["providers"].(map[string]any)
-	if _, ok := providers["cpa"]; !ok {
-		t.Fatalf("cpa provider missing from launch models.json: %#v", providers)
-	}
-	spark := providers["spark"].(map[string]any)
-	if got := spark["api"]; got != "openai-completions" {
-		t.Fatalf("unexpected launch wire: %v", got)
-	}
-	if got := spark["baseUrl"]; got != "http://gw.example/v1" {
-		t.Fatalf("unexpected launch baseUrl: %v", got)
-	}
-	if got := spark["apiKey"]; got != "sk-test" {
-		t.Fatalf("launch entry must embed the key: %v", got)
-	}
-	launchModels := spark["models"].([]any)
-	if len(launchModels) != 1 || launchModels[0].(map[string]any)["id"] != "mock-model" {
-		t.Fatalf("unexpected launch models: %#v", launchModels)
-	}
-
-	// settings.json: spark selected, other user prefs preserved.
-	settings := readMap(filepath.Join(dir, ".one", "agent", "settings.json"))
-	if got := settings["provider"]; got != "spark" {
-		t.Fatalf("unexpected launch provider: %v", got)
-	}
-	if got := settings["model"]; got != "mock-model" {
-		t.Fatalf("unexpected launch model: %v", got)
-	}
-	if settings["auto_approve"] != true {
-		t.Fatalf("user settings not preserved: %#v", settings)
-	}
-	prefs := readMap(filepath.Join(dir, ".one", "agent", "preferences.json"))
-	if prefs["provider"] != "spark" || prefs["model"] != "mock-model" {
-		t.Fatalf("unexpected preferences: %#v", prefs)
-	}
-
-	// Mirrored assets: mcp.json present, auth excluded, home dotfiles linked.
-	if _, err := os.Lstat(filepath.Join(dir, ".one", "agent", "mcp.json")); err != nil {
-		t.Fatalf("mcp.json not mirrored: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(dir, ".one", "agent", "sessions")); err != nil {
-		t.Fatalf("sessions not mirrored: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(dir, ".one", "agent", "auth.json")); err == nil {
-		t.Fatal("auth.json must not appear in the launch home")
-	}
-	if _, err := os.Lstat(filepath.Join(dir, ".one", "agent", "auth.json.lock")); err == nil {
-		t.Fatal("auth.json.lock must not appear in the launch home")
-	}
-	if _, err := os.Lstat(filepath.Join(dir, ".ssh")); err != nil {
-		t.Fatalf(".ssh not mirrored: %v", err)
-	}
-	// .one itself must be a rebuilt directory, not a link to the real one.
-	if fi, err := os.Lstat(filepath.Join(dir, ".one")); err != nil || fi.Mode()&os.ModeSymlink != 0 {
-		t.Fatalf(".one must be a real dir in the launch home: %v", err)
+	env := oneLaunchEnv(profile)
+	for _, want := range []string{
+		"ONE_OPENAI_API=openai-completions",
+		"OPENAI_BASE_URL=http://gw.example/v1",
+		"OPENAI_API_KEY=sk-test",
+	} {
+		if !containsEnvEntry(env, want) {
+			t.Fatalf("expected %q in env %v", want, env)
+		}
 	}
 }
 

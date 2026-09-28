@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"spark/internal/config"
@@ -33,6 +34,32 @@ func (o *One) Paths() []string {
 
 func (o *One) Models() []string { return nil }
 
+func (o *One) NeedsEdit(profile *config.Profile, models []string) (bool, error) {
+	normalized := normalizeOneModels(models)
+	if len(normalized) == 0 {
+		return false, fmt.Errorf("no models selected")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	root := readMap(filepath.Join(home, ".one", "agent", "models.json"))
+	return oneConfigNeedsSparkEdit(root, profile, normalized), nil
+}
+
+func oneConfigNeedsSparkEdit(root map[string]any, profile *config.Profile, models []string) bool {
+	providers, _ := root["providers"].(map[string]any)
+	if providers == nil {
+		return true
+	}
+	existing, _ := providers[oneProviderID].(map[string]any)
+	if existing == nil {
+		return true
+	}
+	expected := oneSparkProviderEntry(profile, models, false)
+	return !reflect.DeepEqual(existing, expected)
+}
+
 // Edit syncs the real ~/.one/agent/models.json with a spark provider entry so
 // the models show up in one's own picker. The entry carries no apiKey and
 // settings.json is never touched: provider selection happens only in the
@@ -52,6 +79,9 @@ func (o *One) Edit(profile *config.Profile, models []string) error {
 		return err
 	}
 	root := readMap(modelsPath)
+	if !oneConfigNeedsSparkEdit(root, profile, normalized) {
+		return nil
+	}
 	providers, _ := root["providers"].(map[string]any)
 	if providers == nil {
 		providers = map[string]any{}
@@ -71,98 +101,89 @@ func (o *One) Run(profile *config.Profile, model string, args []string) error {
 		return fmt.Errorf("model cannot be empty")
 	}
 
-	// one resolves ~/.one from $HOME and has no per-launch provider override
-	// (custom models.json providers are only selectable via settings.json), so
-	// launch in an isolated HOME: mirror the real home via symlinks, rewrite
-	// .one/agent provider/selection files for this process only, and drop the
-	// temp home when the agent exits. The real ~/.one stays untouched.
-	launchHome, err := createLaunchTempDir("spark-one-home-*")
-	if err != nil {
-		return fmt.Errorf("create one launch home: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(launchHome) }()
-
-	if err := writeOneLaunchHome(launchHome, profile, modelID); err != nil {
+	if err := syncOneMCP(); err != nil {
 		return err
 	}
 
 	logOneLaunchRoute(profile)
 
-	cmdArgs := append([]string{}, args...)
-	if !cliArgsHasModelFlag(cmdArgs) {
-		cmdArgs = append([]string{"--model", modelID}, cmdArgs...)
-	}
-	env := []string{"HOME=" + launchHome}
+	cmdArgs := oneLaunchArgs(profile, modelID, args)
+	env := oneLaunchEnv(profile)
 	return runCmd(bin, cmdArgs, env)
 }
 
-// writeOneLaunchHome builds a launch-time $HOME that:
-//   - mirrors the real home (dotfiles, .ssh, .npm, .cache, …) via symlinks so
-//     git/ssh and MCP tooling keep working
-//   - rebuilds .one/agent with the real assets (mcp.json, sessions, skills, …)
-//     except auth artifacts and the provider/selection JSON files
-//   - writes a models.json clone carrying the spark provider; the apiKey lives
-//     only in this temp copy (never in ~/.one), removed when the agent exits
-//   - writes settings.json/preferences.json clones selecting the spark model
-func writeOneLaunchHome(home string, profile *config.Profile, modelID string) error {
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		return err
+func oneLaunchArgs(profile *config.Profile, modelID string, extra []string) []string {
+	wire := oneWireAPIForProfile(profile)
+	baseURL := oneBaseURLForProfile(profile, wire)
+	var cmdArgs []string
+	if !cliArgsHasFlag(extra, "--provider") {
+		cmdArgs = append(cmdArgs, "--provider", "openai")
 	}
-	userHome, err := os.UserHomeDir()
+	if !cliArgsHasFlag(extra, "--openai-api") {
+		cmdArgs = append(cmdArgs, "--openai-api", wire)
+	}
+	if baseURL != "" && !cliArgsHasFlag(extra, "--base-url") {
+		cmdArgs = append(cmdArgs, "--base-url", baseURL)
+	}
+	if !cliArgsHasModelFlag(extra) {
+		cmdArgs = append(cmdArgs, "--model", modelID)
+	}
+	cmdArgs = append(cmdArgs, extra...)
+	return cmdArgs
+}
+
+func oneLaunchEnv(profile *config.Profile) []string {
+	wire := oneWireAPIForProfile(profile)
+	baseURL := oneBaseURLForProfile(profile, wire)
+	env := []string{
+		"ONE_OPENAI_API=" + wire,
+	}
+	if baseURL != "" {
+		env = append(env, "OPENAI_BASE_URL="+baseURL)
+	}
+	if key := strings.TrimSpace(profileKey(profile)); key != "" {
+		env = append(env, "OPENAI_API_KEY="+key)
+	}
+	return env
+}
+
+func cliArgsHasFlag(args []string, flag string) bool {
+	prefix := flag + "="
+	for _, a := range args {
+		if a == flag || strings.HasPrefix(a, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func syncOneMCP() error {
+	sparkCfg, _ := config.Load()
+	enabled := map[string]*config.McpServerConfig{}
+	if sparkCfg != nil {
+		enabled = sparkCfg.McpServersForAgent("one")
+	}
+	if len(enabled) == 0 {
+		return nil
+	}
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	if err := symlinkEntries(userHome, home, func(name string) bool {
-		return name == ".one"
-	}); err != nil {
+	mcpPath := filepath.Join(home, ".one", "agent", "mcp.json")
+	if err := ensureDir(mcpPath); err != nil {
 		return err
 	}
-	agentDir := filepath.Join(home, ".one", "agent")
-	if err := os.MkdirAll(agentDir, 0o755); err != nil {
-		return err
+	root := readMap(mcpPath)
+	servers, _ := root["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
 	}
-	realAgent := filepath.Join(userHome, ".one", "agent")
-	if err := symlinkEntries(realAgent, agentDir, shouldSkipOneAgentMirror); err != nil {
-		return err
+	for name, srv := range enabled {
+		servers[name] = config.EncodeClaudeServerMap(srv)
 	}
-	return writeOneLaunchConfigs(agentDir, realAgent, profile, modelID)
-}
-
-// shouldSkipOneAgentMirror keeps auth artifacts and provider/selection state
-// out of the BYOK launch home. Without auth.json no OAuth token can be sent
-// to the spark base_url (same rule as the Grok launch home).
-func shouldSkipOneAgentMirror(name string) bool {
-	switch name {
-	case "models.json", "settings.json", "preferences.json":
-		return true
-	}
-	return strings.HasPrefix(name, "auth.json")
-}
-
-// writeOneLaunchConfigs clones the real provider catalog and selection state,
-// injecting the spark provider (with apiKey — temp copy only) and selecting it
-// for this launch.
-func writeOneLaunchConfigs(agentDir, realAgent string, profile *config.Profile, modelID string) error {
-	root := readMap(filepath.Join(realAgent, "models.json"))
-	providers, _ := root["providers"].(map[string]any)
-	if providers == nil {
-		providers = map[string]any{}
-	}
-	providers[oneProviderID] = oneSparkProviderEntry(profile, []string{modelID}, true)
-	root["providers"] = providers
-	if err := writeJSON(filepath.Join(agentDir, "models.json"), root); err != nil {
-		return err
-	}
-
-	for _, name := range []string{"settings.json", "preferences.json"} {
-		sel := readMap(filepath.Join(realAgent, name))
-		sel["provider"] = oneProviderID
-		sel["model"] = modelID
-		if err := writeJSON(filepath.Join(agentDir, name), sel); err != nil {
-			return err
-		}
-	}
-	return nil
+	root["mcpServers"] = servers
+	return writeJSON(mcpPath, root)
 }
 
 // oneSparkProviderEntry builds the models.json provider entry for spark. With

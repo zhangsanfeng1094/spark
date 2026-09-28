@@ -445,7 +445,6 @@ type RootConfig struct {
 	Integrations       map[string]*IntegrationConfig `json:"integrations"`
 	History            History                       `json:"history,omitempty"`
 	McpServers         map[string]*McpServerConfig   `json:"mcp_servers,omitempty"`
-	Prompts            PromptConfig                  `json:"prompts,omitempty"`
 }
 
 func defaultConfig() *RootConfig {
@@ -459,11 +458,6 @@ func defaultConfig() *RootConfig {
 		},
 		Integrations: map[string]*IntegrationConfig{},
 		McpServers:   map[string]*McpServerConfig{},
-		Prompts: PromptConfig{
-			Enabled:  boolPtr(false),
-			Presets:  map[string]*PromptPreset{},
-			Bindings: []PromptBinding{},
-		},
 	}
 }
 
@@ -531,7 +525,9 @@ func Normalize(cfg *RootConfig) {
 	if cfg.McpServers == nil {
 		cfg.McpServers = map[string]*McpServerConfig{}
 	}
-	normalizePromptConfig(&cfg.Prompts)
+	for _, server := range cfg.McpServers {
+		normalizeMcpServer(server)
+	}
 	for _, ic := range cfg.Integrations {
 		if ic == nil {
 			continue

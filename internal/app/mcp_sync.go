@@ -59,13 +59,16 @@ func exportMcpToPeer(peer string, dryRun bool) (string, error) {
 		return "", err
 	}
 	label := transferPeerLabel(peer)
+	// Exports are per-agent: the target peer receives the servers whose
+	// binding for that agent is enabled.
+	servers := cfg.McpServersForAgent(peer)
 	if dryRun {
-		return describeMcpServers("Export to "+label, cfg.McpServers), nil
+		return describeMcpServers("Export to "+label, servers), nil
 	}
-	if err := saveMcpServersToPeer(peer, cfg.McpServers); err != nil {
+	if err := saveMcpServersToPeer(peer, servers); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Exported %d MCP server(s) to %s.", config.CountEnabledMcpServers(cfg.McpServers), label), nil
+	return fmt.Sprintf("Exported %d MCP server(s) enabled for %s to %s config.", len(servers), peer, label), nil
 }
 
 func mergeImportedMcpServers(cfg *config.RootConfig, servers map[string]*config.McpServerConfig) mcpImportResult {
@@ -137,6 +140,7 @@ func describeMcpServers(title string, servers map[string]*config.McpServerConfig
 	}
 	sort.Strings(names)
 
+	agents := config.McpAgents()
 	lines := []string{title + ":"}
 	for _, name := range names {
 		server := servers[name]
@@ -145,10 +149,20 @@ func describeMcpServers(title string, servers map[string]*config.McpServerConfig
 			transport = strings.TrimSpace(server.URL)
 		}
 		state := "disabled"
-		if server.Enabled {
+		if config.CountEnabledMcpServers(map[string]*config.McpServerConfig{name: server}) > 0 {
 			state = "enabled"
 		}
 		lines = append(lines, fmt.Sprintf("- %s [%s] %s", name, state, transport))
+		// Per-agent binding summary (definition default shown as base).
+		var cells []string
+		for _, agent := range agents {
+			enabled := server.Enabled
+			if binding := server.Agents[agent]; binding != nil && binding.Enabled != nil {
+				enabled = *binding.Enabled
+			}
+			cells = append(cells, fmt.Sprintf("%s=%t", agent, enabled))
+		}
+		lines = append(lines, "    "+strings.Join(cells, " "))
 	}
 	return strings.Join(lines, "\n")
 }

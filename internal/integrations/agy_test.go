@@ -69,26 +69,22 @@ func TestWriteAgyLaunchHomeSelectsGeminiAndMergesMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	launchHome := t.TempDir()
-	if err := writeAgyLaunchHome(launchHome); err != nil {
-		t.Fatalf("writeAgyLaunchHome: %v", err)
+	if err := syncAgyConfig(); err != nil {
+		t.Fatalf("syncAgyConfig: %v", err)
 	}
 
-	settings := readMap(filepath.Join(launchHome, ".gemini", "antigravity-cli", "settings.json"))
+	settings := readMap(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"))
 	if got := settings["modelProvider"]; got != agyModelProvider {
 		t.Fatalf("modelProvider=%v", got)
 	}
 	if _, ok := settings["trustedWorkspaces"]; !ok {
 		t.Fatalf("trustedWorkspaces not preserved: %#v", settings)
 	}
-	if _, err := os.Lstat(filepath.Join(launchHome, ".gemini", "antigravity-cli", "antigravity-oauth-token")); !os.IsNotExist(err) {
-		t.Fatal("OAuth token must not be linked into the launch home")
-	}
-	if _, err := os.Stat(filepath.Join(launchHome, ".gemini", "antigravity-cli", "skills", "keep.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".gemini", "antigravity-cli", "skills", "keep.txt")); err != nil {
 		t.Fatalf("skills not preserved: %v", err)
 	}
 
-	mcp := readMap(filepath.Join(launchHome, ".gemini", "config", "mcp_config.json"))
+	mcp := readMap(filepath.Join(home, ".gemini", "config", "mcp_config.json"))
 	servers := mcp["mcpServers"].(map[string]any)
 	if _, ok := servers["user"]; !ok {
 		t.Fatalf("user MCP missing: %#v", servers)
@@ -129,6 +125,9 @@ func TestAgyRunInjectsGeminiProfile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("SPARK_DIRECT", "1")
+	// resolveOpenAIAPIKey prefers env OPENAI_API_KEY over the profile key;
+	// keep ambient env out so the profile key is what gets injected.
+	t.Setenv("OPENAI_API_KEY", "")
 	binDir := t.TempDir()
 	capture := filepath.Join(t.TempDir(), "capture.txt")
 	script := filepath.Join(binDir, "agy")
@@ -156,8 +155,8 @@ func TestAgyRunInjectsGeminiProfile(t *testing.T) {
 	if len(lines) != 7 {
 		t.Fatalf("capture=%q", string(data))
 	}
-	if lines[0] == home || !strings.Contains(lines[0], "spark-agy-home-") {
-		t.Fatalf("HOME=%q", lines[0])
+	if lines[0] != home {
+		t.Fatalf("HOME=%q want %q", lines[0], home)
 	}
 	if lines[1] != "secret-key" {
 		t.Fatalf("GEMINI_API_KEY=%q", lines[1])
@@ -193,6 +192,7 @@ func TestAgyRunDirectEscapeHatchForNonGeminiProfile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("SPARK_DIRECT", "1")
+	t.Setenv("OPENAI_API_KEY", "")
 	binDir := t.TempDir()
 	capture := filepath.Join(t.TempDir(), "capture.txt")
 	script := filepath.Join(binDir, "agy")

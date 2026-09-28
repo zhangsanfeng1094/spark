@@ -58,21 +58,44 @@ func RenderMCPManagerSnapshot(cfg *config.RootConfig, width, height int, state s
 	case "", "overview":
 	case "add":
 		m.openAddModal()
-	case "add-stdio":
+	case "add-paste":
 		m.openAddModal()
-		m.addTransport = 0
-	case "add-http":
+		m.addChoice = 0
+		_ = m.activateAddChoice()
+	case "add-local":
 		m.openAddModal()
-		m.addTransport = 1
-	case "add-sse":
+		m.addChoice = 1
+	case "add-remote":
 		m.openAddModal()
-		m.addTransport = 2
-	case "edit", "edit-current":
-		m.focusArea = mcpFocusFields
-	case "transfer":
-		m.openTransferModal()
+		m.addChoice = 2
+	case "add-import":
+		m.openAddModal()
+		m.addChoice = 3
+		_ = m.activateAddChoice()
+	case "detail", "details":
+		if len(m.filtered) > 0 {
+			m.page = mcpPageDetail
+			m.detailFocus = mcpDetailFocusBindings
+			m.detailCursor = 0
+		}
+	case "binding", "binding-codex":
+		if len(m.filtered) > 0 {
+			m.page = mcpPageDetail
+			_ = m.openBindingEditor("codex")
+		}
+	case "binding-claude":
+		if len(m.filtered) > 0 {
+			m.page = mcpPageDetail
+			_ = m.openBindingEditor("claude")
+		}
 	case "import":
-		m.openImportModal()
+		m.modalKind = mcpModalImportPeer
+		m.importPeer = 0
+	case "test":
+		if len(m.filtered) > 0 {
+			m.page = mcpPageDetail
+			m.modalKind = mcpModalTestDetail
+		}
 	default:
 		return "", fmt.Errorf("unknown mcp snapshot state: %s", state)
 	}

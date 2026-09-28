@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,68 @@ type SparkAccount struct {
 	keys      map[schemas.ModelProvider][]schemas.Key
 }
 
+// envProxyURL reports the first configured HTTP/HTTPS proxy environment variable.
+func envProxyURL() string {
+	for _, key := range []string{"https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// allProxyURL reports the configured ALL_PROXY / all_proxy environment variable.
+func allProxyURL() string {
+	for _, key := range []string{"all_proxy", "ALL_PROXY"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// defaultProxyConfig resolves the Bifrost proxy configuration from standard
+// proxy environment variables. On hosts where DNS returns fake-ip answers
+// (only routable via the proxy), the default dial path resolves DNS itself and
+// dials the resolved IP directly, which hangs. Enabling proxy configuration
+// hands the hostname to the proxy instead.
+func defaultProxyConfig() *schemas.ProxyConfig {
+	if envProxyURL() != "" {
+		return &schemas.ProxyConfig{Type: schemas.EnvProxy}
+	}
+	if raw := allProxyURL(); raw != "" {
+		lower := strings.ToLower(raw)
+		if strings.HasPrefix(lower, "socks5://") || strings.HasPrefix(lower, "socks5h://") {
+			return &schemas.ProxyConfig{
+				Type: schemas.Socks5Proxy,
+				URL:  &schemas.SecretVar{Val: raw},
+			}
+		}
+		return &schemas.ProxyConfig{
+			Type: schemas.HTTPProxy,
+			URL:  &schemas.SecretVar{Val: raw},
+		}
+	}
+	return nil
+}
+
+func defaultProviderConfig() *schemas.ProviderConfig {
+	return &schemas.ProviderConfig{
+		NetworkConfig: schemas.NetworkConfig{
+			DefaultRequestTimeoutInSeconds: 300,
+			MaxRetries:                     3,
+			RetryBackoffInitial:            500 * time.Millisecond,
+			RetryBackoffMax:                5 * time.Second,
+			AllowPrivateNetwork:            true,
+		},
+		ConcurrencyAndBufferSize: schemas.ConcurrencyAndBufferSize{
+			Concurrency: 16,
+			BufferSize:  16,
+		},
+		ProxyConfig: defaultProxyConfig(),
+	}
+}
+
 // NewSparkAccount creates an initialized SparkAccount with default provider configs and dummy keys.
 func NewSparkAccount() *SparkAccount {
 	a := &SparkAccount{
@@ -49,19 +112,7 @@ func NewSparkAccount() *SparkAccount {
 	copy(a.providers, SupportedProviders)
 
 	for _, p := range SupportedProviders {
-		a.configs[p] = &schemas.ProviderConfig{
-			NetworkConfig: schemas.NetworkConfig{
-				DefaultRequestTimeoutInSeconds: 300,
-				MaxRetries:                     3,
-				RetryBackoffInitial:            500 * time.Millisecond,
-				RetryBackoffMax:                5 * time.Second,
-				AllowPrivateNetwork:            true,
-			},
-			ConcurrencyAndBufferSize: schemas.ConcurrencyAndBufferSize{
-				Concurrency: 16,
-				BufferSize:  16,
-			},
-		}
+		a.configs[p] = defaultProviderConfig()
 		a.keys[p] = []schemas.Key{
 			{
 				ID:    string(p) + "-default",
@@ -106,19 +157,7 @@ func (a *SparkAccount) GetConfigForProvider(providerKey schemas.ModelProvider) (
 	defer a.mu.RUnlock()
 	cfg, ok := a.configs[providerKey]
 	if !ok || cfg == nil {
-		return &schemas.ProviderConfig{
-			NetworkConfig: schemas.NetworkConfig{
-				DefaultRequestTimeoutInSeconds: 300,
-				MaxRetries:                     3,
-				RetryBackoffInitial:            500 * time.Millisecond,
-				RetryBackoffMax:                5 * time.Second,
-				AllowPrivateNetwork:            true,
-			},
-			ConcurrencyAndBufferSize: schemas.ConcurrencyAndBufferSize{
-				Concurrency: 16,
-				BufferSize:  16,
-			},
-		}, nil
+		return defaultProviderConfig(), nil
 	}
 	return cfg, nil
 }
@@ -199,6 +238,7 @@ func (e *Engine) ConfigureProviderWithHeaders(providerKey schemas.ModelProvider,
 	newCfg := *cfg
 	newCfg.NetworkConfig.BaseURL = baseURL
 	newCfg.NetworkConfig.ExtraHeaders = extraHeaders
+	newCfg.ProxyConfig = defaultProxyConfig()
 	e.account.SetProviderConfig(providerKey, &newCfg)
 	e.account.SetProviderKey(providerKey, apiKey)
 	return e.client.UpdateProvider(providerKey)
