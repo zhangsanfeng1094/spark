@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"spark/internal/config"
 )
 
 var registry = map[string]Runner{
@@ -52,4 +54,17 @@ func GetOrErr(name string) (Runner, error) {
 		return nil, fmt.Errorf("unknown integration: %s", name)
 	}
 	return r, nil
+}
+
+// McpAgentKeyFor maps an integration name to its canonical MCP binding agent
+// key. Agents that do not consume Spark MCP bindings (e.g. opencode in this
+// phase) return "".
+func McpAgentKeyFor(name string) string {
+	key := config.McpCanonicalAgent(name)
+	switch key {
+	case "codex", "claude", "one", "grok", "agy":
+		return key
+	default:
+		return ""
+	}
 }

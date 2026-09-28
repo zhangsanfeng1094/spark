@@ -2,103 +2,39 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"spark/internal/config"
+	"spark/internal/mcp"
 )
 
-// mcpFocusArea defines which area of the workbench currently has keyboard focus.
-type mcpFocusArea int
+// MCP Manager: single server list + Agent Matrix on the main screen, with a
+// detail page per server and per-agent binding editors reached from there.
+// Transport/config forms never live on the main screen.
+
+type mcpPage int
 
 const (
-	mcpFocusList mcpFocusArea = iota
-	mcpFocusFields
-	mcpFocusActions
+	mcpPageList mcpPage = iota
+	mcpPageDetail
+	mcpPageBinding
 )
 
-// mcpModalKind defines active popups/modals.
 type mcpModalKind int
 
 const (
-	mcpModalNone mcpModalKind = iota
-	mcpModalAdd
-	mcpModalImport
-	mcpModalTransfer
+	mcpModalNone       mcpModalKind = iota
+	mcpModalAdd                     // Add flow: Paste config / Local command / Remote URL / Import existing
+	mcpModalPaste                   // paste buffer (auto-detect JSON/YAML/TOML)
+	mcpModalImportPeer              // import from codex/claude existing configs
 	mcpModalDeleteConfirm
-	mcpModalProbeDetail
+	mcpModalTestDetail // detailed test result (tools list)
 )
-
-// mcpStatusKind represents the health status of an MCP server.
-type mcpStatusKind int
-
-const (
-	mcpStatusUnknown mcpStatusKind = iota
-	mcpStatusConfigured
-	mcpStatusReachable
-	mcpStatusBroken
-)
-
-// mcpFilterOption represents filtering mode.
-type mcpFilterOption int
-
-const (
-	mcpFilterAll mcpFilterOption = iota
-	mcpFilterHealthy
-	mcpFilterError
-	mcpFilterUnknown
-	mcpFilterDisabled
-	mcpFilterStdio
-	mcpFilterHTTP
-)
-
-type mcpProbeStage string
-
-const (
-	mcpProbeStageSpawn      mcpProbeStage = "spawn"
-	mcpProbeStageInitialize mcpProbeStage = "initialize"
-	mcpProbeStageToolsList  mcpProbeStage = "tools/list"
-)
-
-type mcpProbeResult struct {
-	Stage      mcpProbeStage
-	Err        string
-	ToolsCount int
-	ToolNames  []string
-	Latency    time.Duration
-	ProbedAt   time.Time
-}
-
-type mcpStatusSummary struct {
-	Kind        mcpStatusKind
-	Badge       string
-	Headline    string
-	Detail      string
-	Suggestions []string
-}
-
-type mcpProbeFinishedMsg struct {
-	Name       string
-	Result     *mcpProbeResult
-	OpenResult bool
-}
-
-type mcpExternalEditorFinishedMsg struct {
-	Target string // "import" or server name
-	Path   string
-	Err    error
-}
-
-type mcpSaveFinishedMsg struct {
-	Status     string
-	Err        error
-	Cfg        *config.RootConfig
-	ProbeName  string
-	Result     *mcpProbeResult
-	OpenResult bool
-}
 
 type mcpFieldKind int
 
@@ -115,108 +51,92 @@ type mcpFormField struct {
 	Placeholder string
 	Kind        mcpFieldKind
 	Options     []string
-	Required    bool
-	ReadOnly    bool
 	Input       textinput.Model
 }
 
+// Detail page sections focus.
+type mcpDetailFocus int
+
 const (
-	mcpFieldKeyName      = 0
-	mcpFieldKeyTransport = 1
-	mcpFieldKeyEnabled   = 2
-	mcpFieldKeyCommand   = 3
-	mcpFieldKeyArgs      = 4
-	mcpFieldKeyURL       = 5
-	mcpFieldKeyEnv       = 6
-	mcpFieldKeyReason    = 7
+	mcpDetailFocusBindings mcpDetailFocus = iota // agent binding rows
+	mcpDetailFocusActions                        // Test / Edit definition / Delete
 )
 
-type mcpTransferItem struct {
-	Key         string
-	Label       string
-	Description string
+// Binding page field indices.
+const (
+	bindFieldEnabled = 0
+	bindFieldCommand = 1
+	bindFieldArgs    = 2
+	bindFieldURL     = 3
+	bindFieldEnv     = 4
+	bindFieldStartup = 5
+	bindFieldTool    = 6
+	bindFieldEnableT = 7
+	bindFieldDisablT = 8
+	bindFieldCount   = 9
+)
+
+type mcpTestFinishedMsg struct {
+	Name   string
+	Result *mcp.Result
+	Open   bool
 }
 
-// mcpManagerModel is the clean, robust state model for the MCP Manager workbench.
+type mcpSaveFinishedMsg struct {
+	Status string
+	Err    error
+	Cfg    *config.RootConfig
+}
+
+type mcpExternalEditorFinishedMsg struct {
+	Target string // "paste" | "definition" | server name
+	Path   string
+	Err    error
+}
+
 type mcpManagerModel struct {
-	cfg      *config.RootConfig
+	cfg *config.RootConfig
+
+	// List page
 	names    []string
 	filtered []string
 	selected int
 
-	// Focus Management
-	focusArea  mcpFocusArea
-	focusField int // index in visibleFields
-	actionIdx  int // 0: Probe, 1: Save, 2: Vim, 3: Delete
+	// Search
+	searchQuery string
+	searching   bool
 
-	// Search & Filter
-	searchQuery  string
-	searching    bool
-	filterOption mcpFilterOption
+	// Pages
+	page         mcpPage
+	detailFocus  mcpDetailFocus
+	detailCursor int // index into agents on detail page (bindings) or actions
+	bindAgent    string
+	bindFields   []mcpFormField
+	bindCursor   int
 
-	// Modal State
+	// Modals
 	modalKind   mcpModalKind
 	modalCursor int
+	addChoice   int
+	pasteBuffer string
+	pasteCursor int
+	importPeer  int
 
-	// Add Modal drafts
-	addName      string
-	addTransport int // 0: stdio, 1: http, 2: sse
+	// Definition editor (detail page) — common fields of the definition.
+	defFields []mcpFormField
+	defCursor int
 
-	// Import Modal draft
-	importBuffer string
-	importCursor int
+	// Tests
+	tests   map[string]*mcp.Result
+	testing map[string]bool
+	testAll bool
 
-	// Active drafts for current selected server
-	draftFields []mcpFormField
-	fieldCursor map[int]int
-	dirty       bool
+	// Matrix cursor: which agent column Space toggles (index into agents()).
+	matrixCursor int
 
-	// Probes
-	probes  map[string]*mcpProbeResult
-	running map[string]bool
-
-	// UI Layout dimensions & status
-	width          int
-	height         int
-	status         string
-	leftPanelWidth int
-	inputWidth     int
-
-	// Mouse interaction coordinates and layout hitboxes
-	leftContentX       int
-	leftContentY       int
-	leftVisibleRows    []int
-	leftVisibleIdxs    []int
-	leftButtonsRelY    int
-	leftButtonsRelH    int
-	leftButtonsRowW    int
-	leftButtonsRow2Y   int
-	leftButtonsRow2W   int
-	leftAddBtnW        int
-	leftImportBtnW     int
-	leftTransferBtnW   int
-	leftRefreshBtnW    int
-	rightContentX      int
-	rightContentY      int
-	fieldStartRelY     []int
-	fieldEndRelY       []int
-	fieldActualIndices []int
-	rightButtonsRelY   int
-	rightButtonsRelH   int
-	rightButtonsRowW   int
-	rightProbeBtnW     int
-	rightSaveBtnW      int
-	rightVimBtnW       int
-	rightDeleteBtnW    int
-	modalX             int
-	modalY             int
-	modalW             int
-	modalH             int
-	modalOptionStartY  int
-
-	// Transfer Items
-	transferItems []mcpTransferItem
-	transferIndex int
+	width  int
+	height int
+	status string
 }
 
 func ManageMCPDashboard(cfg *config.RootConfig) error {
@@ -232,44 +152,216 @@ func newMCPManagerModel(cfg *config.RootConfig) *mcpManagerModel {
 	}
 	config.Normalize(cfg)
 	m := &mcpManagerModel{
-		cfg:         cfg,
-		focusArea:   mcpFocusList,
-		probes:      map[string]*mcpProbeResult{},
-		running:     map[string]bool{},
-		fieldCursor: map[int]int{},
-		transferItems: []mcpTransferItem{
-			{Key: "import_raw", Label: "Paste JSON / YAML / TOML", Description: "Import from raw snippet or file path"},
-			{Key: "import_codex", Label: "Import from Codex", Description: "Load missing servers from Codex config"},
-			{Key: "import_claude", Label: "Import from Claude", Description: "Load missing user servers from ~/.claude.json"},
-			{Key: "export_codex", Label: "Export to Codex", Description: "Write Spark servers to Codex config"},
-			{Key: "export_claude", Label: "Export to Claude", Description: "Write Spark servers to ~/.claude.json"},
-		},
+		cfg:     cfg,
+		tests:   map[string]*mcp.Result{},
+		testing: map[string]bool{},
 	}
 	m.refreshNames()
-	m.loadCurrentDraft()
 	return m
 }
 
 func (m *mcpManagerModel) Init() tea.Cmd { return nil }
+
+func (m *mcpManagerModel) agents() []string { return config.McpAgents() }
+
+func (m *mcpManagerModel) agentLabel(agent string) string {
+	switch agent {
+	case "codex":
+		return "Codex"
+	case "claude":
+		return "Claude"
+	case "one":
+		return "One"
+	case "grok":
+		return "Grok"
+	case "agy":
+		return "Agy"
+	default:
+		return agent
+	}
+}
+
+// currentName returns the selected server name on the list page (or the
+// server whose detail/binding page is open).
+func (m *mcpManagerModel) currentName() string {
+	if len(m.filtered) == 0 {
+		return ""
+	}
+	if m.selected < 0 || m.selected >= len(m.filtered) {
+		m.selected = 0
+	}
+	return m.filtered[m.selected]
+}
+
+func (m *mcpManagerModel) currentServer() *config.McpServerConfig {
+	return m.cfg.GetMcpServer(m.currentName())
+}
+
+// cellStatus computes the matrix cell state for one server×agent.
+func (m *mcpManagerModel) cellStatus(name, agent string) mcp.Status {
+	if !m.cfg.McpAgentEnabled(name, agent) {
+		return mcp.Status{Kind: mcp.StatusDisabled}
+	}
+	eff := m.cfg.McpEffectiveServer(name, agent)
+	return mcp.Summarize(eff, m.tests[name])
+}
+
+// matrixIssues counts server×agent cells that are enabled but failing.
+func (m *mcpManagerModel) matrixIssues() int {
+	issues := 0
+	for name := range m.cfg.McpServers {
+		for _, agent := range m.agents() {
+			status := m.cellStatus(name, agent)
+			if status.Kind == mcp.StatusError {
+				issues++
+			}
+		}
+	}
+	return issues
+}
+
+// headerSummary renders "MCP · N servers · M issues".
+func (m *mcpManagerModel) headerSummary() string {
+	total := len(m.cfg.McpServers)
+	issues := m.matrixIssues()
+	parts := []string{fmt.Sprintf("%d servers", total)}
+	if issues > 0 {
+		parts = append(parts, fmt.Sprintf("%d issues", issues))
+	} else {
+		parts = append(parts, "no issues")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (m *mcpManagerModel) refreshNames() {
+	m.names = make([]string, 0, len(m.cfg.McpServers))
+	for name := range m.cfg.McpServers {
+		m.names = append(m.names, name)
+	}
+	// Sort: servers with issues first, then enabled-anywhere, then name.
+	sort.SliceStable(m.names, func(i, j int) bool {
+		ri, rj := mcpServerRank(m.names[i], m), mcpServerRank(m.names[j], m)
+		if ri != rj {
+			return ri < rj
+		}
+		return m.names[i] < m.names[j]
+	})
+	m.refreshFiltered()
+}
+
+func mcpServerRank(name string, m *mcpManagerModel) int {
+	issueRank := 2
+	for _, agent := range m.agents() {
+		switch m.cellStatus(name, agent).Kind {
+		case mcp.StatusError:
+			return 0
+		case mcp.StatusNotChecked:
+			issueRank = 1
+		}
+	}
+	if issueRank < 2 {
+		return issueRank
+	}
+	if m.cfg.McpEnabledAgentCount(name) == 0 {
+		return 3
+	}
+	return 2
+}
+
+func (m *mcpManagerModel) refreshFiltered() {
+	prev := m.currentName()
+	if m.searchQuery == "" {
+		m.filtered = append([]string{}, m.names...)
+	} else {
+		m.filtered = nil
+		q := strings.ToLower(strings.TrimSpace(m.searchQuery))
+		for _, name := range m.names {
+			server := m.cfg.GetMcpServer(name)
+			match := strings.Contains(strings.ToLower(name), q)
+			if !match && server != nil {
+				match = strings.Contains(strings.ToLower(server.Command), q) ||
+					strings.Contains(strings.ToLower(server.URL), q)
+			}
+			if match {
+				m.filtered = append(m.filtered, name)
+			}
+		}
+	}
+	if len(m.filtered) == 0 {
+		m.selected = 0
+	} else if m.selected >= len(m.filtered) {
+		m.selected = len(m.filtered) - 1
+	}
+	// Re-sorting can move the previously selected server; keep the cursor on it.
+	if prev != "" {
+		for i, n := range m.filtered {
+			if n == prev {
+				m.selected = i
+				break
+			}
+		}
+	}
+}
+
+func (m *mcpManagerModel) selectByName(name string) {
+	for i, n := range m.filtered {
+		if n == name {
+			m.selected = i
+			return
+		}
+	}
+}
+
+// matrixCellGlyph returns the glyph shown in the agent matrix for a status.
+func matrixCellGlyph(status mcp.Status) string {
+	switch status.Kind {
+	case mcp.StatusOK:
+		return "●" // enabled & tested OK
+	case mcp.StatusError:
+		return "!" // enabled but failing
+	case mcp.StatusNotChecked:
+		return "?" // enabled but never tested
+	default: // disabled
+		return "○"
+	}
+}
+
+// renderCell returns the styled glyph for one server×agent matrix cell.
+func (m *mcpManagerModel) renderCell(name, agent string) string {
+	status := m.cellStatus(name, agent)
+	glyph := matrixCellGlyph(status)
+	switch status.Kind {
+	case mcp.StatusOK:
+		return lipgloss.NewStyle().Foreground(colorSuccess).Bold(true).Render(glyph)
+	case mcp.StatusError:
+		return lipgloss.NewStyle().Foreground(colorError).Bold(true).Render(glyph)
+	case mcp.StatusNotChecked:
+		return lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Render(glyph)
+	default:
+		return lipgloss.NewStyle().Foreground(colorDim).Render(glyph)
+	}
+}
 
 func (m *mcpManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
-	case mcpProbeFinishedMsg:
-		delete(m.running, msg.Name)
+	case mcpTestFinishedMsg:
+		delete(m.testing, msg.Name)
 		if msg.Result != nil {
-			m.probes[msg.Name] = msg.Result
-			status := summarizeMCPStatus(msg.Name, m.cfg.GetMcpServer(msg.Name), msg.Result)
+			m.tests[msg.Name] = msg.Result
+			status := mcp.Summarize(m.cfg.GetMcpServer(msg.Name), msg.Result)
 			m.status = fmt.Sprintf("%s → %s", msg.Name, status.Headline)
 		}
-		if msg.OpenResult {
-			m.modalKind = mcpModalProbeDetail
+		if msg.Open {
+			m.modalKind = mcpModalTestDetail
+		}
+		if m.testAll && len(m.testing) == 0 {
+			m.testAll = false
+			m.refreshNames()
 		}
 		return m, nil
-	case mcpExternalEditorFinishedMsg:
-		return m, m.handleExternalEditorFinished(msg)
 	case mcpSaveFinishedMsg:
 		if msg.Err != nil {
 			m.status = errorStatus(msg.Err.Error())
@@ -283,113 +375,68 @@ func (m *mcpManagerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Status != "" {
 			m.status = msg.Status
 		}
-		if msg.ProbeName != "" && msg.Result != nil {
-			m.probes[msg.ProbeName] = msg.Result
-			status := summarizeMCPStatus(msg.ProbeName, m.cfg.GetMcpServer(msg.ProbeName), msg.Result)
-			m.status = fmt.Sprintf("%s → %s", msg.ProbeName, status.Headline)
-			if msg.OpenResult {
-				m.modalKind = mcpModalProbeDetail
-			}
-		}
 		return m, nil
+	case mcpExternalEditorFinishedMsg:
+		return m, m.handleExternalEditorFinished(msg)
 	case tea.MouseMsg:
-		if m.modalKind != mcpModalNone {
-			if isPrimaryClick(msg.Type) {
-				m.handleModalMouse(msg)
-			}
-			return m, nil
-		}
-		if isPrimaryClick(msg.Type) {
-			return m, m.handleMainMouse(msg)
-		}
-		return m, nil
+		return m, m.handleMouse(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m *mcpManagerModel) currentName() string {
-	if len(m.filtered) == 0 {
+// saveCfgCmd persists the model's config copy.
+func (m *mcpManagerModel) saveCfgCmd(status string) tea.Cmd {
+	cfgCopy := *m.cfg
+	cfgCopy.McpServers = make(map[string]*config.McpServerConfig, len(m.cfg.McpServers))
+	for k, v := range m.cfg.McpServers {
+		cfgCopy.McpServers[k] = config.CloneMcpServerConfig(v)
+	}
+	return func() tea.Msg {
+		if err := config.Save(&cfgCopy); err != nil {
+			return mcpSaveFinishedMsg{Err: err}
+		}
+		return mcpSaveFinishedMsg{Status: status, Cfg: &cfgCopy}
+	}
+}
+
+// testCurrentCmd runs a server-level test.
+func (m *mcpManagerModel) testServerCmd(name string, open bool) tea.Cmd {
+	server := m.cfg.GetMcpServer(name)
+	if server == nil {
+		return nil
+	}
+	m.testing[name] = true
+	m.status = "Testing " + name + "..."
+	def := config.CloneMcpServerConfig(server)
+	return func() tea.Msg {
+		return mcpTestFinishedMsg{Name: name, Result: mcp.Test(def), Open: open}
+	}
+}
+
+// testAllCmd tests every configured server.
+func (m *mcpManagerModel) testAllCmd() tea.Cmd {
+	var cmds []tea.Cmd
+	for _, name := range m.names {
+		if m.testing[name] {
+			continue
+		}
+		cmds = append(cmds, m.testServerCmd(name, false))
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	m.testAll = true
+	m.status = "Testing all MCP servers..."
+	return tea.Batch(cmds...)
+}
+
+// timestamp formatting helper for detail pages.
+func fmtTestAge(t time.Time) string {
+	if t.IsZero() {
 		return ""
 	}
-	if m.selected < 0 || m.selected >= len(m.filtered) {
-		m.selected = 0
-	}
-	return m.filtered[m.selected]
-}
-
-func (m *mcpManagerModel) currentStatus() mcpStatusSummary {
-	name := m.currentName()
-	if name == "" {
-		return mcpStatusSummary{Kind: mcpStatusUnknown, Headline: "No server", Detail: "No server selected"}
-	}
-	return summarizeMCPStatus(name, m.cfg.GetMcpServer(name), m.probes[name])
-}
-
-func (m *mcpManagerModel) refreshNames() {
-	m.names = make([]string, 0, len(m.cfg.McpServers))
-	for name := range m.cfg.McpServers {
-		m.names = append(m.names, name)
-	}
-	sortMCPNames(m.names, m.cfg, m.probes)
-	m.refreshFiltered()
-}
-
-func (m *mcpManagerModel) refreshFiltered() {
-	if m.searchQuery == "" && m.filterOption == mcpFilterAll {
-		m.filtered = append([]string{}, m.names...)
-	} else {
-		m.filtered = nil
-		q := strings.ToLower(strings.TrimSpace(m.searchQuery))
-		for _, name := range m.names {
-			server := m.cfg.GetMcpServer(name)
-			if q != "" {
-				matches := strings.Contains(strings.ToLower(name), q)
-				if server != nil {
-					if strings.Contains(strings.ToLower(server.Command), q) || strings.Contains(strings.ToLower(server.URL), q) {
-						matches = true
-					}
-				}
-				if !matches {
-					continue
-				}
-			}
-			if m.filterOption != mcpFilterAll {
-				status := summarizeMCPStatus(name, server, m.probes[name])
-				switch m.filterOption {
-				case mcpFilterHealthy:
-					if status.Kind != mcpStatusReachable && status.Kind != mcpStatusConfigured {
-						continue
-					}
-				case mcpFilterError:
-					if status.Kind != mcpStatusBroken {
-						continue
-					}
-				case mcpFilterUnknown:
-					if status.Kind != mcpStatusUnknown {
-						continue
-					}
-				case mcpFilterDisabled:
-					if server != nil && server.Enabled {
-						continue
-					}
-				case mcpFilterStdio:
-					if isHTTPMCPServer(server) {
-						continue
-					}
-				case mcpFilterHTTP:
-					if !isHTTPMCPServer(server) {
-						continue
-					}
-				}
-			}
-			m.filtered = append(m.filtered, name)
-		}
-	}
-	if len(m.filtered) == 0 {
-		m.selected = 0
-	} else if m.selected >= len(m.filtered) {
-		m.selected = len(m.filtered) - 1
-	}
+	age := time.Since(t).Round(time.Second)
+	return age.String() + " ago"
 }
