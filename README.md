@@ -64,7 +64,7 @@ Spark 的目标不是替代 Codex 或 Claude，而是让这些工具在多模型
 
 ### 1. Web 配置中心 (`spark httpserver`)
 
-Spark 内置了可视化 Web 管理后台，可在浏览器中便捷管理 Prompts 预设与 Profiles 配置：
+Spark 内置了可视化 Web 管理后台，可在浏览器中便捷管理 Profiles 配置：
 
 ```bash
 # 启动本地 Web 配置服务（默认监听 127.0.0.1:8765）
@@ -152,7 +152,6 @@ spark launch agy --model gemini-3.7-flash
 ```bash
 spark                                     # 进入交互式 TUI
 spark launch [agent] [--model <m>]       # 启动指定 Agent
-spark config [agent] [--model <m>]       # 写入目标 Agent 配置但不启动
 spark profile                             # 打开 Profile 管理界面
 spark httpserver                          # 启动本地 Web 配置服务
 spark usage [--model <m>]                 # 查看 Token 使用统计
@@ -165,23 +164,39 @@ spark update                              # 自动检查并升级到最新版
 
 ## MCP Servers 管理
 
-集中管理 MCP Server 并双向同步至 Codex 与 Claude Code：
+Spark 统一管理 MCP Server 定义，每个 Agent 独立决定是否启用：
+
+- **MCP definition（公共定义）**：name、transport、command、args、env、url —— 所有 Agent 共享。
+- **Agent binding（Agent 绑定）**：每个 Agent（Codex / Claude / One / Grok / Agy）独立设置 `enabled`，并可携带 agent 专属 overrides（如 Codex 的 startup_timeout / tool_timeout / enabled_tools 等，已收敛为 Codex binding 的 advanced 字段，不再是全局语义）。
+- **向后兼容**：旧配置里只有全局 `enabled` 的 server 会作为默认值被所有 Agent 继承，不会失效。
 
 ```bash
-spark mcp                                 # 进入 MCP 交互式管理面板
-spark mcp list                            # 列出所有已配置的 MCP Server
-spark mcp show <name>                     # 查看指定 MCP Server 详情
+spark mcp                                 # 进入 MCP 管理面板（单列表 + Agent Matrix）
+spark mcp list                            # 列出所有 MCP Server 及各 Agent 启用状态
+spark mcp list --agent codex              # 只看某个 Agent 启用的 server
+spark mcp show <name>                     # 查看定义与各 Agent binding
 spark mcp add <name> --command <cmd> --args <a,b,c>  # 添加 stdio 类型 MCP
 spark mcp add <name> --url <http-url>     # 添加 SSE / HTTP 类型 MCP
-spark mcp enable <name>                   # 启用 MCP Server
-spark mcp disable <name>                  # 禁用 MCP Server
-spark mcp remove <name>                   # 移除 MCP Server
+spark mcp add <name> --command <cmd> --agents codex,claude  # 只给指定 Agent 启用
+spark mcp enable <name>                   # 启用默认定义（所有未显式设置的 Agent 继承）
+spark mcp enable <name> --agent grok      # 只为 Grok 启用该 binding
+spark mcp disable <name> --agent claude   # 只为 Claude 禁用该 binding
+spark mcp test <name>                     # server 级测试（initialize + tools/list）
+spark mcp test <name> --agent codex       # 按 codex binding 的生效配置测试
+spark mcp remove <name>                   # 移除 MCP Server（定义 + 全部 binding）
 spark mcp import codex                    # 从 Codex 导入 MCP 配置
 spark mcp import claude                   # 从 Claude Code 导入 MCP 配置
-spark mcp sync codex                      # 将 MCP 配置同步写入 Codex
-spark mcp sync claude                     # 将 MCP 配置同步写入 Claude
-spark mcp export claude                   # 导出为 Claude 配置格式
+spark mcp sync codex                      # 将 codex binding 启用的 server 写入 Codex 配置
+spark mcp sync claude                     # 将 claude binding 启用的 server 写入 Claude 配置
 ```
+
+TUI 主界面是单列表 + Agent Matrix（`●` 启用且测试通过 · `!` 启用但异常 · `?` 启用未测试 · `○` 未启用），
+底部操作：`Enter` 详情 · `Space` 切换选中 Agent 的 binding · `T` 测试 · `A` 添加 · `I` 导入 · `/` 搜索。
+详情页展示公共定义、各 Agent binding、最近一次测试状态与工具数量；进入某个 Agent binding 后才编辑该 Agent 的专属配置。
+
+启动注入按 Agent 生效：Codex 走 `-c mcp_servers.*`、Claude 走 `--mcp-config` 临时文件、
+Grok 写入 `~/.grok/config.toml` 的 `mcp_servers`、One 写入 `~/.one/agent/mcp.json`、
+Agy 写入 `~/.gemini/config/mcp_config.json` —— 只包含该 Agent binding `enabled=true` 的 server。
 
 ---
 
