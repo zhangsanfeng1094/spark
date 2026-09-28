@@ -1,31 +1,3 @@
-export type PromptIssue = {
-  severity: 'error' | 'warning';
-  active: boolean;
-  message: string;
-};
-
-export type PromptPreset = {
-  name: string;
-  description: string;
-  file: string;
-  mode: 'append' | 'replace';
-  content?: string;
-};
-
-export type PromptBinding = {
-  integration: string;
-  model: string;
-  preset: string;
-  enabled: boolean;
-};
-
-export type PromptsResponse = {
-  enabled: boolean;
-  presets: PromptPreset[];
-  bindings: PromptBinding[];
-  issues: PromptIssue[];
-};
-
 export type Profile = {
   name: string;
   provider_type?: string;
@@ -76,24 +48,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const encode = encodeURIComponent;
 
 export const api = {
-  getPrompts: () => request<PromptsResponse>('/api/prompts'),
-  setPromptsEnabled: (enabled: boolean) =>
-    request<PromptsResponse>('/api/prompts/enabled', { method: 'PUT', body: JSON.stringify({ enabled }) }),
-  createPreset: (preset: PromptPreset) =>
-    request<PromptsResponse>('/api/prompts/presets', { method: 'POST', body: JSON.stringify(preset) }),
-  updatePreset: (name: string, preset: PromptPreset) =>
-    request<PromptsResponse>(`/api/prompts/presets/${encode(name)}`, { method: 'PUT', body: JSON.stringify(preset) }),
-  deletePreset: (name: string) => request<PromptsResponse>(`/api/prompts/presets/${encode(name)}`, { method: 'DELETE' }),
-  createBinding: (binding: PromptBinding) =>
-    request<PromptsResponse>('/api/prompts/bindings', { method: 'POST', body: JSON.stringify(binding) }),
-  updateBinding: (old: PromptBinding, binding: PromptBinding) =>
-    request<PromptsResponse>(`/api/prompts/bindings/${encode(old.integration)}/${encode(old.model)}`, {
-      method: 'PUT',
-      body: JSON.stringify(binding)
-    }),
-  deleteBinding: (binding: PromptBinding) =>
-    request<PromptsResponse>(`/api/prompts/bindings/${encode(binding.integration)}/${encode(binding.model)}`, { method: 'DELETE' }),
-  validatePrompts: () => request<{ issues: PromptIssue[] }>('/api/prompts/validate', { method: 'POST' }),
   getProfiles: () => request<ProfilesResponse>('/api/profiles'),
   createProfile: (profile: Profile) =>
     request<ProfilesResponse>('/api/profiles', { method: 'POST', body: JSON.stringify(profile) }),
@@ -103,9 +57,5 @@ export const api = {
   setDefaultProfile: (name: string) =>
     request<ProfilesResponse>('/api/profiles/default', { method: 'PUT', body: JSON.stringify({ name }) }),
   fetchModelsForProfile: (profile: Partial<Profile>) =>
-    request<{ models: string[] }>('/api/profiles/fetch-models', { method: 'POST', body: JSON.stringify(profile) }),
-  getCodexModels: () => request<{ models: string[] }>('/api/codex/models'),
-  getCodexPrompt: (model: string) => request<{ prompt: string }>(`/api/codex/prompt?model=${encode(model)}`),
-  getClaudeModels: () => request<{ models: string[] }>('/api/claude/models'),
-  getClaudePrompt: (model: string) => request<{ prompt: string }>(`/api/claude/prompt?model=${encode(model)}`)
+    request<{ models: string[] }>('/api/profiles/fetch-models', { method: 'POST', body: JSON.stringify(profile) })
 };

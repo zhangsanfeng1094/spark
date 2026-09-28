@@ -23,7 +23,6 @@ type DashboardSummary struct {
 	TotalMCPServers        int
 	EnabledMCPServers      int
 	TotalSkills            int
-	PromptEnabled          bool
 }
 
 type dashboardModel struct {
@@ -202,7 +201,7 @@ func (m *dashboardModel) renderDetailPane(width int) string {
 			renderRow("Quick launch: ", emptyFallback(m.summary.QuickLaunchIntegration, "not set"), dashboardQuickLaunchValueStyle),
 			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
 			renderRow("Default model: ", emptyFallback(m.summary.DefaultModel, "not set"), dashboardDefaultModelValueStyle),
-			dashboardMutedTextStyle.Width(width - 4).Render("Config file: " + emptyFallback(m.summary.ConfigPath, "unavailable")),
+			dashboardMutedTextStyle.Width(width-4).Render("Config file: "+emptyFallback(m.summary.ConfigPath, "unavailable")),
 		)
 	case "Launch options":
 		lines = append(lines,
@@ -249,23 +248,18 @@ func (m *dashboardModel) renderDetailPane(width int) string {
 			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultModelValueStyle),
 		)
 	case "Manage settings":
-		promptStatus := "disabled"
-		if m.summary.PromptEnabled {
-			promptStatus = "enabled"
-		}
 		lines = append(lines,
 			dashboardSectionTitleStyle.Render("Global Settings"),
 			renderRow("Default client: ", emptyFallback(m.summary.QuickLaunchIntegration, "not set"), dashboardQuickLaunchValueStyle),
 			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
-			renderRow("Prompt injection: ", promptStatus, dashboardDefaultModelValueStyle),
-			dashboardMutedTextStyle.Width(width - 4).Render("Config file: " + emptyFallback(m.summary.ConfigPath, "unavailable")),
+			dashboardMutedTextStyle.Width(width-4).Render("Config file: "+emptyFallback(m.summary.ConfigPath, "unavailable")),
 		)
 	case "Quit":
 		lines = append(lines,
 			dashboardSectionTitleStyle.Render("Session"),
 			renderRow("Status: ", "Ready to exit", dashboardMutedTextStyle),
 			renderRow("Default profile: ", emptyFallback(summaryDefaultProfile(m.summary), "not set"), dashboardDefaultProfileValueStyle),
-			dashboardMutedTextStyle.Width(width - 4).Render("Config file: " + emptyFallback(m.summary.ConfigPath, "unavailable")),
+			dashboardMutedTextStyle.Width(width-4).Render("Config file: "+emptyFallback(m.summary.ConfigPath, "unavailable")),
 		)
 	default:
 		lines = append(lines,

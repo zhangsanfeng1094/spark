@@ -107,10 +107,6 @@ func selectClaudeDirectAuth(token, tokenSource string) (string, string, string, 
 }
 
 func (c *Claude) Run(profile *config.Profile, model string, args []string) error {
-	return c.RunWithPrompt(profile, model, args, nil)
-}
-
-func (c *Claude) RunWithPrompt(profile *config.Profile, model string, args []string, prompt *config.PromptInjection) error {
 	claudePath, err := c.findPath()
 	if err != nil {
 		return fmt.Errorf("claude is not installed, install from https://code.claude.com/docs/en/quickstart")
@@ -120,25 +116,18 @@ func (c *Claude) RunWithPrompt(profile *config.Profile, model string, args []str
 		return fmt.Errorf("claude model is empty: configure profile default_model or pass --model")
 	}
 
-	// Launch in an isolated CLAUDE_CONFIG_DIR mirroring the real ~/.claude
-	// (skills, plugins, sessions, projects, ...) via symlinks, and injecting
-	// Spark's enabled MCP servers dynamically via --mcp-config.
-	launchHome, err := createLaunchTempDir("spark-claude-home-*")
-	if err != nil {
-		return fmt.Errorf("create claude launch home: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(launchHome) }()
-
-	mcpPath, err := writeClaudeLaunchHome(launchHome)
+	mcpPath, err := writeClaudeTempMCP()
 	if err != nil {
 		return err
+	}
+	if mcpPath != "" {
+		defer func() { _ = os.Remove(mcpPath) }()
 	}
 
 	cmdArgs := []string{}
 	if effectiveModel != "" {
 		cmdArgs = append(cmdArgs, "--model", effectiveModel)
 	}
-	cmdArgs = append(cmdArgs, claudePromptArgs(prompt)...)
 	if mcpPath != "" && !cliArgsHasMcpConfigFlag(args) {
 		cmdArgs = append(cmdArgs, "--mcp-config", mcpPath)
 	}
@@ -182,7 +171,6 @@ func (c *Claude) RunWithPrompt(profile *config.Profile, model string, args []str
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + effectiveModel,
 		"CLAUDE_CODE_SUBAGENT_MODEL=" + effectiveModel,
 		"CLAUDE_CODE_ATTRIBUTION_HEADER=0",
-		"CLAUDE_CONFIG_DIR=" + launchHome,
 	}
 	if strings.TrimSpace(token) != "" {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN="+token)
@@ -193,80 +181,9 @@ func (c *Claude) RunWithPrompt(profile *config.Profile, model string, args []str
 	return runCmd(claudePath, cmdArgs, env)
 }
 
-// writeClaudeLaunchHome builds a launch-time CLAUDE_CONFIG_DIR that:
-//   - reuses the user's real ~/.claude assets (skills, plugins, sessions, projects, history, …) via symlinks
-//   - seeds an isolated .claude.json cloned from the host config with hasCompletedOnboarding=true to skip welcome prompts without tampering with host files
-//   - writes an mcp.json in the launch home combining Spark's enabled MCP servers and user Claude MCP servers
-//   - returns the path to mcp.json (if any servers exist)
-func writeClaudeLaunchHome(launchHome string) (string, error) {
-	if err := os.MkdirAll(launchHome, 0o755); err != nil {
-		return "", err
-	}
-	realHome, err := realClaudeHome()
-	if err != nil {
-		return "", err
-	}
-	if err := mirrorClaudeHome(realHome, launchHome); err != nil {
-		return "", err
-	}
-	if err := writeClaudeLaunchConfig(launchHome); err != nil {
-		return "", err
-	}
-	return writeClaudeLaunchMCP(launchHome)
-}
-
-func realClaudeHome() (string, error) {
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(userHome, ".claude"), nil
-}
-
-// mirrorClaudeHome symlinks every entry from the real Claude home into the launch home.
-func mirrorClaudeHome(src, dst string) error {
-	return symlinkEntries(src, dst, shouldSkipClaudeMirror)
-}
-
-func shouldSkipClaudeMirror(name string) bool {
-	switch name {
-	case "mcp.json", "claude.json", "config.json", ".claude.json":
-		return true
-	}
-	return strings.HasPrefix(name, ".auth") || strings.HasSuffix(name, ".lock")
-}
-
-// writeClaudeLaunchConfig seeds an isolated .claude.json in the launch home.
-// It clones the host ~/.claude.json (if present) and guarantees hasCompletedOnboarding=true,
-// ensuring Claude Code does not display the first-time welcome/theme onboarding wizard.
-// By creating a regular file copy instead of a symlink, runtime modifications from Claude Code
-// remain strictly confined to launchHome and will never tamper with the host config.
-func writeClaudeLaunchConfig(launchHome string) error {
-	cfgPath := filepath.Join(launchHome, ".claude.json")
-	realCfgPath, err := config.DefaultClaudeConfigPath()
-	var root map[string]any
-	if err == nil {
-		if data, err := os.ReadFile(realCfgPath); err == nil {
-			var parsed map[string]any
-			if json.Unmarshal(data, &parsed) == nil && parsed != nil {
-				root = parsed
-			}
-		}
-	}
-	if root == nil {
-		root = make(map[string]any)
-	}
-	root["hasCompletedOnboarding"] = true
-	root["mcpServers"] = map[string]any{}
-
-	data, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(cfgPath, data, 0o600)
-}
-
-func writeClaudeLaunchMCP(launchHome string) (string, error) {
+// writeClaudeTempMCP writes a temporary MCP config file combining enabled user
+// Claude MCP servers and enabled Spark MCP servers for --mcp-config injection.
+func writeClaudeTempMCP() (string, error) {
 	userServers, _ := config.LoadClaudeUserMcpServers("")
 	sparkCfg, _ := config.Load()
 
@@ -277,10 +194,8 @@ func writeClaudeLaunchMCP(launchHome string) (string, error) {
 		}
 	}
 	if sparkCfg != nil {
-		for name, srv := range sparkCfg.McpServers {
-			if srv != nil && srv.Enabled {
-				merged[name] = srv
-			}
+		for name, srv := range sparkCfg.McpServersForAgent("claude") {
+			merged[name] = srv
 		}
 	}
 
@@ -296,12 +211,22 @@ func writeClaudeLaunchMCP(launchHome string) (string, error) {
 		"mcpServers": encodedServers,
 	}
 
-	mcpPath := filepath.Join(launchHome, "mcp.json")
 	data, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(mcpPath, data, 0o644); err != nil {
+	f, err := os.CreateTemp("", "spark-claude-mcp-*.json")
+	if err != nil {
+		return "", err
+	}
+	mcpPath := f.Name()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(mcpPath)
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(mcpPath)
 		return "", err
 	}
 	return mcpPath, nil
@@ -314,22 +239,4 @@ func cliArgsHasMcpConfigFlag(args []string) bool {
 		}
 	}
 	return false
-}
-
-// claudePromptArgs returns CLI args for file-based prompt injection.
-func claudePromptArgs(prompt *config.PromptInjection) []string {
-	if prompt == nil {
-		return nil
-	}
-	if prompt.Path == "" {
-		return nil
-	}
-	switch prompt.Mode {
-	case config.PromptModeReplace:
-		return []string{"--system-prompt-file", prompt.Path}
-	case config.PromptModeAppend:
-		return []string{"--append-system-prompt-file", prompt.Path}
-	default:
-		return nil
-	}
 }

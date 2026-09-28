@@ -60,8 +60,19 @@ func TestProfileManagerQQuitsFromProfilesFocus(t *testing.T) {
 
 func TestMCPManagerHelpMentionsScreenBack(t *testing.T) {
 	m := newMCPManagerModel(&config.RootConfig{})
-	help := m.contextHelpText()
-	if !strings.Contains(help, "Esc/Q Back") {
-		t.Fatalf("browse help should mention Esc/Q Back, got %q", help)
+	m.width = 100
+	m.height = 26
+	view := m.View()
+	if !strings.Contains(view, "search") {
+		t.Fatalf("main screen help should mention actions incl. search, got %q", view)
+	}
+
+	// Detail page help mentions Esc back navigation.
+	if len(m.filtered) > 0 {
+		m.page = mcpPageDetail
+		view = m.View()
+		if !strings.Contains(view, "Esc back") {
+			t.Fatalf("detail help should mention Esc back, got %q", view)
+		}
 	}
 }

@@ -46,7 +46,6 @@ func NewRootCmd() *cobra.Command {
 	root.Flags().BoolVarP(&showVersion, "version", "V", false, "Print version information")
 
 	root.AddCommand(newLaunchCmd())
-	root.AddCommand(newConfigCmd())
 	root.AddCommand(newMcpCmd())
 	root.AddCommand(newSkillCmd())
 	root.AddCommand(newUsageCmd())
@@ -118,7 +117,6 @@ func newLaunchCmd() *cobra.Command {
 	var profileFlag string
 	var thinkFlag string
 	var selectProfileFlag bool
-	var configOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "launch [integration] [-- [extra args...]]",
@@ -162,7 +160,6 @@ Rule: Arguments before -- are for spark, arguments after -- are passed to the in
 				Model:         modelFlag,
 				Profile:       profileFlag,
 				SelectProfile: selectProfileFlag,
-				ConfigOnly:    configOnly,
 				Think:         thinkFlag,
 				PassArgs:      passArgs,
 			})
@@ -172,43 +169,6 @@ Rule: Arguments before -- are for spark, arguments after -- are passed to the in
 	cmd.Flags().StringVar(&profileFlag, "profile", "", "Profile name")
 	cmd.Flags().StringVar(&thinkFlag, "think", "", "Thinking override: off, low, medium, high, xhigh, max, or token budget (for example 8k)")
 	cmd.Flags().BoolVar(&selectProfileFlag, "select-profile", false, "Select profile before launching")
-	cmd.Flags().BoolVar(&configOnly, "config", false, "Configure without launching")
-	return cmd
-}
-func newConfigCmd() *cobra.Command {
-	var profileFlag string
-	var selectProfileFlag bool
-	var modelFlag string
-	cmd := &cobra.Command{
-		Use:   "config [integration]",
-		Short: "Configure integration only",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateProfileSelectionFlags(profileFlag, selectProfileFlag); err != nil {
-				return err
-			}
-			name := ""
-			if len(args) == 1 {
-				name = args[0]
-			}
-			if name == "" {
-				selected, err := tui.SelectOne("Select integration:", integrations.Names())
-				if err != nil {
-					return err
-				}
-				name = selected
-			}
-			return launchIntegration(name, LaunchOptions{
-				Model:         modelFlag,
-				Profile:       profileFlag,
-				SelectProfile: selectProfileFlag,
-				ConfigOnly:    true,
-			})
-		},
-	}
-	cmd.Flags().StringVar(&modelFlag, "model", "", "Model name")
-	cmd.Flags().StringVar(&profileFlag, "profile", "", "Profile name")
-	cmd.Flags().BoolVar(&selectProfileFlag, "select-profile", false, "Select profile before configuring")
 	return cmd
 }
 
@@ -252,7 +212,7 @@ func interactiveMenuDescriptions() map[string]string {
 		"Manage skills":                 "Browse, install, and manage extensible agent skills and tools.",
 		"Manage logins":                 "Manage upstream OAuth & Device login sessions (Claude, Codex, Gemini, Grok).",
 		"Token usage":                   "Inspect recorded proxy token usage across models and time windows.",
-		interactiveActionManageSettings: "Manage global defaults, prompt injection, Codex catalog, and history.",
+		interactiveActionManageSettings: "Manage global defaults, Codex catalog, and history.",
 		"Quit":                          "Exit Spark CLI.",
 	}
 }
@@ -341,14 +301,7 @@ func applyDashboardConfigSummary(summary *tui.DashboardSummary, cfg *config.Root
 	summary.DefaultModel = defaultProfileModel(cfg)
 	summary.TotalProfiles = len(cfg.Profiles)
 	summary.TotalMCPServers = len(cfg.McpServers)
-	enabledMCP := 0
-	for _, s := range cfg.McpServers {
-		if s != nil && s.Enabled {
-			enabledMCP++
-		}
-	}
-	summary.EnabledMCPServers = enabledMCP
-	summary.PromptEnabled = cfg.Prompts.IsEnabled()
+	summary.EnabledMCPServers = config.CountEnabledMcpServers(cfg.McpServers)
 	if reg, err := skills.LoadRegistry(); err == nil && reg != nil {
 		summary.TotalSkills = len(reg.Skills)
 	}
@@ -785,7 +738,6 @@ type LaunchOptions struct {
 	Profile       string
 	Think         string
 	SelectProfile bool
-	ConfigOnly    bool
 	PassArgs      []string
 }
 
@@ -908,40 +860,20 @@ func launchIntegration(name string, opts LaunchOptions) error {
 	profile = &profileCopy
 
 	models := resolveModels(opts.Model, profile)
-
-	if ed, isEditor := r.(integrations.Editor); isEditor {
-		if len(models) == 0 {
-			models, err = tui.InputCSV("Models for "+name, cfg.History.ModelInputs)
-			if err != nil {
-				return err
-			}
-		}
-		if len(models) == 0 {
-			return fmt.Errorf("at least one model required")
-		}
-		continueLaunch, err := applyEditorIfNeeded(r, ed, profile, profileName, models, confirmEditorLaunch)
+	model := ""
+	if len(models) > 0 {
+		model = models[0]
+	}
+	if model == "" {
+		model, err = tui.InputWithDefault("Model", cfg.History.LastModelInput)
 		if err != nil {
 			return err
 		}
-		if !continueLaunch {
-			return nil
-		}
-	} else {
-		model := ""
-		if len(models) > 0 {
-			model = models[0]
-		}
+		model = strings.TrimSpace(model)
 		if model == "" {
-			model, err = tui.InputWithDefault("Model", cfg.History.LastModelInput)
-			if err != nil {
-				return err
-			}
-			model = strings.TrimSpace(model)
-			if model == "" {
-				return fmt.Errorf("model cannot be empty")
-			}
-			models = []string{model}
+			return fmt.Errorf("model cannot be empty")
 		}
+		models = []string{model}
 	}
 
 	if len(models) == 0 || strings.TrimSpace(models[0]) == "" {
@@ -953,58 +885,20 @@ func launchIntegration(name string, opts LaunchOptions) error {
 		return err
 	}
 
-	if opts.ConfigOnly {
-		launchNow, err := tui.ConfirmDetails(tui.ConfirmRequest{
-			Title:   "Config written — launch " + r.String() + "?",
-			Summary: "Spark already updated this integration's config for the selected model.",
-			Details: []string{
-				"Integration: " + r.String(),
-				"Profile:     " + profileName,
-				"Model:       " + models[0],
-			},
-			Footnote:       "Choose Launch to start the agent now, or Not now to stop after writing config.",
-			ConfirmLabel:   "Launch now",
-			CancelLabel:    "Not now",
-			DefaultConfirm: false,
-		})
-		if err != nil {
-			return err
-		}
-		if !launchNow {
-			return nil
-		}
-	}
-
 	fmt.Println(formatLaunchLine(r.String(), models[0], profileName))
-	enabledMcpCount := config.CountEnabledMcpServers(cfg.McpServers)
-	if enabledMcpCount > 0 {
+	agentKey := integrations.McpAgentKeyFor(name)
+	if agentKey != "" {
 		var names []string
-		for name, srv := range cfg.McpServers {
-			if srv != nil && srv.Enabled {
-				names = append(names, name)
-			}
+		for srvName := range cfg.McpServersForAgent(agentKey) {
+			names = append(names, srvName)
 		}
 		sort.Strings(names)
-		fmt.Printf("✓ MCP servers: %d injected (%s)\n", enabledMcpCount, strings.Join(names, ", "))
-	}
-	prompt, err := cfg.ResolvePromptInjection(strings.ToLower(name), models[0])
-	if err != nil {
-		return err
-	}
-	if prompt != nil {
-		fmt.Printf("✓ Prompt injection: %s (mode: %s)\n", prompt.Path, prompt.Mode)
-	} else if cfg.Prompts.IsEnabled() {
-		fmt.Printf("⚠ Prompt injection: not configured for %s/%s\n", strings.ToLower(name), models[0])
-	}
-	integration := cfg.Integration(name)
-	if cr, ok := r.(integrations.ConfiguredPromptRunner); ok {
-		return cr.RunWithConfigAndPrompt(profile, integration, models[0], opts.PassArgs, prompt)
-	}
-	if prompt != nil {
-		if pr, ok := r.(integrations.PromptRunner); ok {
-			return pr.RunWithPrompt(profile, models[0], opts.PassArgs, prompt)
+		if len(names) > 0 {
+			fmt.Printf("✓ MCP servers: %d enabled for %s (%s)\n", len(names), agentKey, strings.Join(names, ", "))
 		}
-		return fmt.Errorf("prompt binding exists for %s/%s, but integration does not support prompt injection", strings.ToLower(name), models[0])
+	}
+	if cRunner, ok := r.(integrations.ConfiguredRunner); ok {
+		return cRunner.RunWithIntegration(profile, cfg.Integration(name), models[0], opts.PassArgs)
 	}
 	return r.Run(profile, models[0], opts.PassArgs)
 }

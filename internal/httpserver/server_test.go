@@ -67,54 +67,6 @@ func TestProfilesDoNotExposeAPIKeyAndPreserveOnEmptyUpdate(t *testing.T) {
 	}
 }
 
-func TestPromptPresetCRUDWritesContentAndDeleteConflict(t *testing.T) {
-	h := newTestHandler(t)
-	postJSON(t, h, http.MethodPost, "/api/prompts/presets", `{
-		"name":"review",
-		"description":"Review prompt",
-		"mode":"append",
-		"content":"check changes"
-	}`, http.StatusOK)
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	preset := cfg.Prompts.Presets["review"]
-	if preset == nil || preset.File != "prompts/review.md" {
-		t.Fatalf("unexpected preset: %#v", preset)
-	}
-	path, err := config.ResolvePromptPath(preset.File)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "check changes" {
-		t.Fatalf("prompt content = %q", string(data))
-	}
-
-	postJSON(t, h, http.MethodPost, "/api/prompts/bindings", `{
-		"integration":"codex",
-		"model":"*",
-		"preset":"review",
-		"enabled":true
-	}`, http.StatusOK)
-	request(t, h, http.MethodDelete, "/api/prompts/presets/review", "", http.StatusConflict)
-}
-
-func TestPromptPresetRejectsEscapingPath(t *testing.T) {
-	h := newTestHandler(t)
-	postJSON(t, h, http.MethodPost, "/api/prompts/presets", `{
-		"name":"bad",
-		"file":"../bad.md",
-		"mode":"append",
-		"content":"x"
-	}`, http.StatusBadRequest)
-}
-
 func TestProfileDefaultAndDelete(t *testing.T) {
 	h := newTestHandler(t)
 	postJSON(t, h, http.MethodPost, "/api/profiles", `{

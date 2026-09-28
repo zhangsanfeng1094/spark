@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Sparkles, Layers, Cpu, Activity } from 'lucide-react';
+import { Sparkles, Cpu, Activity } from 'lucide-react';
 import { NavButton } from './components/NavButton';
-import { PromptsView } from './components/PromptsView';
 import { ProfilesView } from './components/ProfilesView';
 import './styles.css';
 
 function App() {
-  const [tab, setTab] = useState<'prompts' | 'profiles'>('prompts');
+  const [tab, setTab] = useState<'profiles'>('profiles');
 
   return (
     <div className="grid min-h-screen grid-cols-1 bg-gradient-to-br from-slate-50 via-white to-slate-100 text-sm text-slate-800 md:grid-cols-[260px_minmax(0,1fr)]">
@@ -20,9 +19,6 @@ function App() {
         </div>
 
         <div className="flex flex-row gap-1.5 md:flex-col md:gap-1.5">
-          <NavButton active={tab === 'prompts'} onClick={() => setTab('prompts')} icon={Layers}>
-            Prompts
-          </NavButton>
           <NavButton active={tab === 'profiles'} onClick={() => setTab('profiles')} icon={Cpu}>
             Profiles
           </NavButton>
@@ -40,7 +36,7 @@ function App() {
         </div>
       </aside>
       <main className="min-w-0 px-4 py-6 md:px-10 md:py-10">
-        {tab === 'prompts' ? <PromptsView /> : <ProfilesView />}
+        {tab === 'profiles' && <ProfilesView />}
       </main>
     </div>
   );

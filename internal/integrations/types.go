@@ -7,12 +7,10 @@ type Runner interface {
 	Run(profile *config.Profile, model string, args []string) error
 }
 
-type PromptRunner interface {
-	RunWithPrompt(profile *config.Profile, model string, args []string, prompt *config.PromptInjection) error
-}
-
-type ConfiguredPromptRunner interface {
-	RunWithConfigAndPrompt(profile *config.Profile, integration *config.IntegrationConfig, model string, args []string, prompt *config.PromptInjection) error
+// ConfiguredRunner is an optional capability for integrations that consume
+// per-integration launch configuration (e.g. Codex model catalog).
+type ConfiguredRunner interface {
+	RunWithIntegration(profile *config.Profile, integration *config.IntegrationConfig, model string, args []string) error
 }
 
 type Editor interface {

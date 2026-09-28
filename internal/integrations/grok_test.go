@@ -146,41 +146,23 @@ func TestGrokEditResetsSparkDefault(t *testing.T) {
 	}
 }
 
-func TestWriteGrokLaunchHome(t *testing.T) {
+func TestSyncGrokLaunchConfig(t *testing.T) {
 	userHome := t.TempDir()
 	t.Setenv("HOME", userHome)
 
 	realGrok := filepath.Join(userHome, ".grok")
-	if err := os.MkdirAll(filepath.Join(realGrok, "skills", "help"), 0o755); err != nil {
-		t.Fatalf("mkdir skills: %v", err)
+	if err := os.MkdirAll(realGrok, 0o755); err != nil {
+		t.Fatalf("mkdir .grok: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(realGrok, "skills", "help", "SKILL.md"), []byte("# help\n"), 0o644); err != nil {
-		t.Fatalf("write skill: %v", err)
-	}
-	// Auth must exist in the real home but never appear in the launch home.
 	if err := os.WriteFile(filepath.Join(realGrok, "auth.json"), []byte(`{"token":"oauth"}`), 0o600); err != nil {
 		t.Fatalf("write auth: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(realGrok, "auth.json.lock"), []byte("lock"), 0o644); err != nil {
-		t.Fatalf("write auth lock: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(realGrok, "mcp_credentials.json"), []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write mcp creds: %v", err)
-	}
-	// Real config carries MCP servers and marketplace that must survive isolation.
 	seed := "" +
 		"[cli]\n" +
 		"installer = \"internal\"\n" +
 		"\n" +
-		"[marketplace]\n" +
-		"official_marketplace_auto_installed = true\n" +
-		"\n" +
 		"[mcp_servers.codegraph]\n" +
 		"command = \"codegraph-mcp\"\n" +
-		"enabled = true\n" +
-		"\n" +
-		"[mcp_servers.deepwiki]\n" +
-		"url = \"https://mcp.deepwiki.com/mcp\"\n" +
 		"enabled = true\n" +
 		"\n" +
 		"[models]\n" +
@@ -190,40 +172,22 @@ func TestWriteGrokLaunchHome(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	dir := t.TempDir()
 	profile := &config.Profile{
 		OpenAIBaseURL: "http://gw.example/v1",
 		OpenAIAPIKey:  "sk-test",
 		OpenAIAPIType: "responses,chat_completions",
 	}
-	if err := writeGrokLaunchHome(dir, profile, "grok-4.5", "spark-grok-4.5"); err != nil {
-		t.Fatalf("write: %v", err)
+	if err := syncGrokLaunchConfig(profile, "grok-4.5", "spark-grok-4.5"); err != nil {
+		t.Fatalf("syncGrokLaunchConfig: %v", err)
 	}
 
-	// No auth.json — isolation from OAuth.
-	if _, err := os.Stat(filepath.Join(dir, "auth.json")); !os.IsNotExist(err) {
-		t.Fatalf("launch home must not create/link auth.json")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "auth.json.lock")); !os.IsNotExist(err) {
-		t.Fatalf("launch home must not link auth.json.lock")
+	// auth.json in real home stays untouched.
+	authData, err := os.ReadFile(filepath.Join(realGrok, "auth.json"))
+	if err != nil || string(authData) != `{"token":"oauth"}` {
+		t.Fatalf("auth.json was altered: %v", err)
 	}
 
-	// Skills / MCP credentials are shared from the real home.
-	skillTarget, err := os.Readlink(filepath.Join(dir, "skills"))
-	if err != nil {
-		t.Fatalf("skills should be symlinked: %v", err)
-	}
-	if skillTarget != filepath.Join(realGrok, "skills") {
-		t.Fatalf("skills link target=%q", skillTarget)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "skills", "help", "SKILL.md")); err != nil {
-		t.Fatalf("skills content not reachable: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(dir, "mcp_credentials.json")); err != nil {
-		t.Fatalf("mcp_credentials.json should be linked: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	data, err := os.ReadFile(filepath.Join(realGrok, "config.toml"))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -232,17 +196,10 @@ func TestWriteGrokLaunchHome(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// Launch default points at the spark model, but other config is preserved.
+	// Persistent default stays grok-4.5 so plain `grok` keeps working.
 	models := root["models"].(map[string]any)
-	if got := models["default"]; got != "spark-grok-4.5" {
-		t.Fatalf("launch default=%v", got)
-	}
-	if got := models["web_search"]; got != "spark-grok-4.5" {
-		t.Fatalf("launch web_search=%v", got)
-	}
-	ui := root["ui"].(map[string]any)
-	if got := ui["fork_secondary_model"]; got != "spark-grok-4.5" {
-		t.Fatalf("launch fork_secondary_model=%v", got)
+	if got := models["default"]; got != "grok-4.5" {
+		t.Fatalf("models.default=%v want grok-4.5", got)
 	}
 	if got := models["default_reasoning_effort"]; got != "high" {
 		t.Fatalf("reasoning effort not preserved: %v", got)
@@ -255,14 +212,10 @@ func TestWriteGrokLaunchHome(t *testing.T) {
 	if _, ok := mcpServers["codegraph"]; !ok {
 		t.Fatalf("mcp_servers.codegraph missing: %#v", mcpServers)
 	}
-	if _, ok := mcpServers["deepwiki"]; !ok {
-		t.Fatalf("mcp_servers.deepwiki missing: %#v", mcpServers)
-	}
 	entry := root["model"].(map[string]any)["spark-grok-4.5"].(map[string]any)
 	if got := entry["base_url"]; got != "http://gw.example/v1" {
 		t.Fatalf("base_url=%v", got)
 	}
-	// Default multi-type profile prefers responses for direct connect.
 	if got := entry["api_backend"]; got != "responses" {
 		t.Fatalf("api_backend=%v want responses", got)
 	}
@@ -270,23 +223,7 @@ func TestWriteGrokLaunchHome(t *testing.T) {
 		t.Fatalf("env_key=%v", got)
 	}
 	if strings.Contains(string(data), "sk-test") {
-		t.Fatalf("launch config must not embed api key")
-	}
-	if strings.Contains(string(data), "oauth") {
-		t.Fatalf("launch config must not embed oauth token")
-	}
-}
-
-func TestShouldSkipGrokMirror(t *testing.T) {
-	for _, name := range []string{"config.toml", "auth.json", "auth.json.lock", "auth.json.bak"} {
-		if !shouldSkipGrokMirror(name) {
-			t.Fatalf("expected skip %q", name)
-		}
-	}
-	for _, name := range []string{"skills", "mcp_credentials.json", "bundled", "sessions", "trusted_folders.toml"} {
-		if shouldSkipGrokMirror(name) {
-			t.Fatalf("did not expect skip %q", name)
-		}
+		t.Fatalf("config must not embed api key")
 	}
 }
 

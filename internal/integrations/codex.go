@@ -1,16 +1,13 @@
 package integrations
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
-
-	"github.com/BurntSushi/toml"
 
 	"spark/internal/auth"
 	"spark/internal/compat/daemon"
@@ -25,14 +22,10 @@ func (c *Codex) String() string { return "Codex" }
 const codexProviderName = "spark"
 
 func (c *Codex) args(model, baseURL string, extra []string) []string {
-	return c.argsWithConfigAndPrompt(model, baseURL, nil, extra, nil)
+	return c.argsWithIntegration(model, baseURL, nil, extra)
 }
 
-func (c *Codex) argsWithPrompt(model, baseURL string, extra []string, prompt *config.PromptInjection) []string {
-	return c.argsWithConfigAndPrompt(model, baseURL, nil, extra, prompt)
-}
-
-func (c *Codex) argsWithConfigAndPrompt(model, baseURL string, integration *config.IntegrationConfig, extra []string, prompt *config.PromptInjection) []string {
+func (c *Codex) argsWithIntegration(model, baseURL string, integration *config.IntegrationConfig, extra []string) []string {
 	cmdArgs := []string{
 		"-c", fmt.Sprintf(`model_providers.%s.name="Spark"`, codexProviderName),
 		"-c", fmt.Sprintf(`model_providers.%s.base_url="%s"`, codexProviderName, baseURL),
@@ -47,32 +40,17 @@ func (c *Codex) argsWithConfigAndPrompt(model, baseURL string, integration *conf
 	if model != "" {
 		cmdArgs = append(cmdArgs, "-m", model)
 	}
-	cmdArgs = append(cmdArgs, codexPromptArgs(prompt)...)
 	cmdArgs = append(cmdArgs, extra...)
 	return cmdArgs
 }
 
 func (c *Codex) Run(profile *config.Profile, model string, args []string) error {
-	return c.RunWithPrompt(profile, model, args, nil)
+	return c.RunWithIntegration(profile, nil, model, args)
 }
 
-func (c *Codex) RunWithPrompt(profile *config.Profile, model string, args []string, prompt *config.PromptInjection) error {
-	return c.RunWithConfigAndPrompt(profile, nil, model, args, prompt)
-}
-
-func (c *Codex) RunWithConfigAndPrompt(profile *config.Profile, integration *config.IntegrationConfig, model string, args []string, prompt *config.PromptInjection) error {
+func (c *Codex) RunWithIntegration(profile *config.Profile, integration *config.IntegrationConfig, model string, args []string) error {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return fmt.Errorf("codex is not installed, install with: npm install -g @openai/codex")
-	}
-
-	// For append mode, combine original prompt with custom content and write to temp file.
-	if prompt != nil && prompt.Mode == config.PromptModeAppend {
-		resolved, err := resolveCodexAppendPrompt(prompt)
-		if err != nil {
-			return err
-		}
-		prompt = resolved
-		defer os.Remove(prompt.Path)
 	}
 
 	apiType := profileOpenAIAPIType(profile)
@@ -111,334 +89,63 @@ func (c *Codex) RunWithConfigAndPrompt(profile *config.Profile, integration *con
 		fmt.Fprintln(os.Stderr, routeLine)
 	}
 
-	// Launch in an isolated CODEX_HOME mirroring the real ~/.codex assets
-	// (skills, sessions, history, ...) via symlinks, and injecting Spark's
-	// provider and enabled MCP servers into launch config.toml.
-	launchHome, err := createLaunchTempDir("spark-codex-home-*")
-	if err != nil {
-		return fmt.Errorf("create codex launch home: %w", err)
+	cmdArgs := c.argsWithIntegration(model, envBaseURL, integration, nil)
+	if sparkCfg, _ := config.Load(); sparkCfg != nil {
+		cmdArgs = append(cmdArgs, codexMCPArgs(sparkCfg.McpServersForAgent("codex"))...)
 	}
-	realHome, _ := realCodexHome()
-	defer func() {
-		if realHome != "" {
-			syncCodexHookTrustBack(launchHome, realHome)
-		}
-		_ = os.RemoveAll(launchHome)
-	}()
-
-	if err := writeCodexLaunchHome(launchHome, profile, envBaseURL, envKey, integration, model); err != nil {
-		return err
-	}
-
-	cmdArgs := c.argsWithConfigAndPrompt(model, envBaseURL, integration, args, prompt)
-	env := append(codexEnv(profile, envKey), "CODEX_HOME="+launchHome)
-	return runCmd("codex", cmdArgs, env)
+	cmdArgs = append(cmdArgs, args...)
+	return runCmd("codex", cmdArgs, codexEnv(profile, envKey))
 }
 
-// writeCodexLaunchHome builds a launch-time CODEX_HOME that:
-//   - reuses the user's real ~/.codex assets (skills, sessions, history, …) via symlinks
-//   - never links auth.json / auth.json.lock
-//   - writes a config.toml cloned from the real one with spark provider and spark enabled MCP servers
-func writeCodexLaunchHome(launchHome string, profile *config.Profile, envBaseURL, envKey string, integration *config.IntegrationConfig, model string) error {
-	if err := os.MkdirAll(launchHome, 0o755); err != nil {
-		return err
-	}
-	realHome, err := realCodexHome()
-	if err != nil {
-		return err
-	}
-	if err := mirrorCodexHome(realHome, launchHome); err != nil {
-		return err
-	}
-	return writeCodexLaunchConfig(launchHome, realHome, profile, envBaseURL, envKey, integration, model)
-}
-
-func realCodexHome() (string, error) {
-	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" && !strings.Contains(home, "spark-codex-home") {
-		return home, nil
-	}
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(userHome, ".codex"), nil
-}
-
-func mirrorCodexHome(src, dst string) error {
-	return symlinkEntries(src, dst, shouldSkipCodexMirror)
-}
-
-func shouldSkipCodexMirror(name string) bool {
-	switch name {
-	case "config.toml", "auth.json", "auth.json.lock":
-		return true
-	}
-	return strings.HasPrefix(name, "auth.json")
-}
-
-func writeCodexLaunchConfig(launchHome, realHome string, profile *config.Profile, envBaseURL, envKey string, integration *config.IntegrationConfig, model string) error {
-	cfgPath := filepath.Join(launchHome, "config.toml")
-	root, err := config.LoadCodexConfigMap(filepath.Join(realHome, "config.toml"))
-	if err != nil {
-		return err
-	}
-	if root == nil {
-		root = map[string]any{}
-	}
-
-	providers, _ := root["model_providers"].(map[string]any)
-	if providers == nil {
-		providers = map[string]any{}
-	}
-	providers[codexProviderName] = map[string]any{
-		"name":                 "Spark",
-		"base_url":             envBaseURL,
-		"env_key":              "OPENAI_API_KEY",
-		"wire_api":             "responses",
-		"requires_openai_auth": false,
-	}
-	root["model_providers"] = providers
-	root["model_provider"] = codexProviderName
-
-	// Injects enabled MCP servers from Spark config into mcp_servers table
-	if sparkCfg, _ := config.Load(); sparkCfg != nil && len(sparkCfg.McpServers) > 0 {
-		mcpTable, _ := root["mcp_servers"].(map[string]any)
-		if mcpTable == nil {
-			mcpTable = map[string]any{}
-		}
-		for name, srv := range sparkCfg.McpServers {
-			if srv != nil && srv.Enabled {
-				mcpTable[name] = config.EncodeCodexServerMap(srv)
-			}
-		}
-		root["mcp_servers"] = mcpTable
-	}
-
-	// Adapt hook trust state from realHome to launchHome so Codex doesn't prompt for hook reviews on every launch.
-	if hooksSection, ok := root["hooks"].(map[string]any); ok {
-		if stateSection, ok := hooksSection["state"].(map[string]any); ok {
-			for k, v := range stateSection {
-				if strings.HasPrefix(k, realHome) {
-					launchKey := strings.Replace(k, realHome, launchHome, 1)
-					stateSection[launchKey] = v
-				}
-			}
-			hooksSection["state"] = stateSection
-			root["hooks"] = hooksSection
-		}
-	}
-
-	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(root); err != nil {
-		return err
-	}
-	return os.WriteFile(cfgPath, buf.Bytes(), 0o644)
-}
-
-func syncCodexHookTrustBack(launchHome, realHome string) {
-	launchCfg, err := config.LoadCodexConfigMap(filepath.Join(launchHome, "config.toml"))
-	if err != nil || launchCfg == nil {
-		return
-	}
-	launchHooks, ok := launchCfg["hooks"].(map[string]any)
-	if !ok {
-		return
-	}
-	launchState, ok := launchHooks["state"].(map[string]any)
-	if !ok || len(launchState) == 0 {
-		return
-	}
-	realCfgPath := filepath.Join(realHome, "config.toml")
-	realCfg, err := config.LoadCodexConfigMap(realCfgPath)
-	if err != nil || realCfg == nil {
-		return
-	}
-	realHooks, _ := realCfg["hooks"].(map[string]any)
-	if realHooks == nil {
-		realHooks = map[string]any{}
-	}
-	realState, _ := realHooks["state"].(map[string]any)
-	if realState == nil {
-		realState = map[string]any{}
-	}
-	updated := false
-	for k, v := range launchState {
-		if strings.HasPrefix(k, launchHome) {
-			realKey := strings.Replace(k, launchHome, realHome, 1)
-			if _, exists := realState[realKey]; !exists {
-				realState[realKey] = v
-				updated = true
-			}
-		}
-	}
-	if updated {
-		realHooks["state"] = realState
-		realCfg["hooks"] = realHooks
-		var buf bytes.Buffer
-		if err := toml.NewEncoder(&buf).Encode(realCfg); err == nil {
-			_ = os.WriteFile(realCfgPath, buf.Bytes(), 0o644)
-		}
-	}
-}
-
-// codexPromptArgs returns the CLI args for file-based prompt injection.
-// All modes use model_instructions_file with a file path.
-func codexPromptArgs(prompt *config.PromptInjection) []string {
-	if prompt == nil {
+// codexMCPArgs encodes the codex-enabled MCP servers (binding overrides
+// applied) as Codex `-c` config overrides so Codex receives them per-process
+// without rewriting ~/.codex/config.toml.
+func codexMCPArgs(servers map[string]*config.McpServerConfig) []string {
+	if len(servers) == 0 {
 		return nil
 	}
-	if prompt.Path == "" {
-		return nil
-	}
-	return []string{"-c", fmt.Sprintf("model_instructions_file=%s", prompt.Path)}
-}
-
-// resolveCodexAppendPrompt handles append mode by fetching the original
-// Codex developer prompt and combining it with the custom content.
-// Returns a new PromptInjection with mode=replace pointing to a temp file.
-// Caller must remove the temp file when done.
-func resolveCodexAppendPrompt(prompt *config.PromptInjection) (*config.PromptInjection, error) {
-	original, err := fetchCodexDefaultPrompt()
-	if err != nil {
-		return nil, fmt.Errorf("fetch codex default prompt: %w", err)
-	}
-	combined := original
-	if prompt.Content != "" {
-		combined = original + "\n\n" + prompt.Content
-	}
-	tmpPath, err := writePromptTempFile(combined)
-	if err != nil {
-		return nil, err
-	}
-	return &config.PromptInjection{
-		Mode:    config.PromptModeReplace,
-		Path:    tmpPath,
-		Content: combined,
-	}, nil
-}
-
-// CodexModelInfo represents the model metadata from Codex model catalog.
-type CodexModelInfo struct {
-	Slug             string `json:"slug"`
-	DisplayName      string `json:"display_name"`
-	Description      string `json:"description"`
-	BaseInstructions string `json:"base_instructions"`
-	ContextWindow    int    `json:"context_window"`
-}
-
-// CodexModelCache represents the structure of models_cache.json.
-type CodexModelCache struct {
-	FetchedAt     string           `json:"fetched_at"`
-	Etag          string           `json:"etag"`
-	ClientVersion string           `json:"client_version"`
-	Models        []CodexModelInfo `json:"models"`
-}
-
-// getCodexHome returns the Codex home directory path.
-// Defaults to ~/.codex unless CODEX_HOME is set.
-func getCodexHome() (string, error) {
-	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
-		return home, nil
-	}
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(userHome, ".codex"), nil
-}
-
-// fetchCodexModelCatalog reads the models_cache.json file and returns all models.
-func fetchCodexModelCatalog() ([]CodexModelInfo, error) {
-	codexHome, err := getCodexHome()
-	if err != nil {
-		return nil, fmt.Errorf("get codex home: %w", err)
-	}
-
-	cachePath := filepath.Join(codexHome, "models_cache.json")
-	data, err := os.ReadFile(cachePath)
-	if err != nil {
-		return nil, fmt.Errorf("read models cache: %w", err)
-	}
-
-	var cache CodexModelCache
-	if err := json.Unmarshal(data, &cache); err != nil {
-		return nil, fmt.Errorf("parse models cache: %w", err)
-	}
-
-	return cache.Models, nil
-}
-
-// fetchCodexModelInstructions returns the base_instructions for a specific model slug.
-// If modelSlug is empty, returns the first model's instructions as default.
-func fetchCodexModelInstructions(modelSlug string) (string, error) {
-	models, err := fetchCodexModelCatalog()
-	if err != nil {
-		return "", err
-	}
-
-	if len(models) == 0 {
-		return "", fmt.Errorf("no models found in catalog")
-	}
-
-	// If no model slug specified, return first model's instructions
-	if strings.TrimSpace(modelSlug) == "" {
-		return models[0].BaseInstructions, nil
-	}
-
-	// Find exact match or prefix match
-	for _, model := range models {
-		if model.Slug == modelSlug || strings.HasPrefix(model.Slug, modelSlug) {
-			return model.BaseInstructions, nil
+	names := make([]string, 0, len(servers))
+	for name, srv := range servers {
+		if srv != nil && srv.Enabled {
+			names = append(names, name)
 		}
 	}
-
-	return "", fmt.Errorf("model not found: %s", modelSlug)
-}
-
-// fetchCodexDefaultPrompt reads the default model's base_instructions from models_cache.json.
-// Falls back to the legacy `codex debug prompt-input` method if the cache file is not available.
-func fetchCodexDefaultPrompt() (string, error) {
-	// Try reading from models_cache.json first
-	instructions, err := fetchCodexModelInstructions("")
-	if err == nil {
-		return instructions, nil
-	}
-
-	// Fallback to legacy method if cache file doesn't exist or is invalid
-	cmd := exec.Command("codex", "debug", "prompt-input")
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("codex debug prompt-input: %w", err)
-	}
-	return extractDeveloperPrompt(out)
-}
-
-// extractDeveloperPrompt parses the JSON output of `codex debug prompt-input`
-// and returns the concatenated text of the developer message content.
-func extractDeveloperPrompt(jsonOut []byte) (string, error) {
-	var messages []struct {
-		Role    string `json:"role"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(jsonOut, &messages); err != nil {
-		return "", fmt.Errorf("parse prompt-input JSON: %w", err)
-	}
-	for _, msg := range messages {
-		if msg.Role == "developer" {
-			var parts []string
-			for _, c := range msg.Content {
-				if c.Text != "" {
-					parts = append(parts, c.Text)
-				}
+	sort.Strings(names)
+	var out []string
+	for _, name := range names {
+		srv := servers[name]
+		prefix := "mcp_servers." + config.McpServerName(name)
+		if srv.Command != "" {
+			out = append(out, "-c", fmt.Sprintf("%s.command=%s", prefix, strconv.Quote(srv.Command)))
+		}
+		if len(srv.Args) > 0 {
+			quoted := make([]string, len(srv.Args))
+			for i, a := range srv.Args {
+				quoted[i] = strconv.Quote(a)
 			}
-			return strings.Join(parts, "\n"), nil
+			out = append(out, "-c", fmt.Sprintf("%s.args=[%s]", prefix, strings.Join(quoted, ", ")))
+		}
+		if len(srv.Env) > 0 {
+			envKeys := make([]string, 0, len(srv.Env))
+			for k := range srv.Env {
+				envKeys = append(envKeys, k)
+			}
+			sort.Strings(envKeys)
+			for _, k := range envKeys {
+				out = append(out, "-c", fmt.Sprintf("%s.env.%s=%s", prefix, k, strconv.Quote(srv.Env[k])))
+			}
+		}
+		if srv.URL != "" {
+			out = append(out, "-c", fmt.Sprintf("%s.url=%s", prefix, strconv.Quote(srv.URL)))
+		}
+		if srv.StartupTimeout != nil {
+			out = append(out, "-c", fmt.Sprintf("%s.startup_timeout_sec=%d", prefix, *srv.StartupTimeout))
+		}
+		if srv.ToolTimeout != nil {
+			out = append(out, "-c", fmt.Sprintf("%s.tool_timeout_sec=%d", prefix, *srv.ToolTimeout))
 		}
 	}
-	return "", fmt.Errorf("no developer message found in prompt-input output")
+	return out
 }
 
 func resolveOpenAIAPIKey(profileKey string) (key string, source string) {
